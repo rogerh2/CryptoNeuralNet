@@ -158,6 +158,7 @@ class DataSet:
         if google_list is None:
             google_list = ['Litecoin']
         cryp_obj = cryptocompare(date_from=date_from)
+        self.cryp_obj = cryp_obj
 
         sym = bitinfo_list[0]
 
@@ -171,15 +172,24 @@ class DataSet:
             fin_table = cryp_obj.minute_price_historical(symbol=sym)
             price_func = lambda symbol: cryp_obj.minute_price_historical(symbol=symbol)
 
-        for sym in bitinfo_list:
+        self.price_func = price_func
+        for sym in bitinfo_list[1:-1]:
             cryp_obj.symbol = sym
             temp_table = price_func(symbol=sym)
             temp_table = temp_table.drop(columns=['date'])
             fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
 
-        cryp_obj.symbol = prediction_ticker
-        sym = prediction_ticker
-        prediction_table = price_func(symbol=sym)
+        self.fin_table = fin_table
+        self.prediction_ticker = prediction_ticker
+        self.date_to = date_to
+        if days is not None:
+            self.days_out = days
+
+    def create_price_prediction_columns(self):
+        cryp_obj = self.cryp_obj
+        cryp_obj.symbol = self.prediction_ticker
+        sym = self.prediction_ticker
+        prediction_table = self.price_func(symbol=sym)
         prediction_table = prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
 
         # if google_list:
@@ -189,15 +199,29 @@ class DataSet:
         #     self.final_table = pd.concat([fin_table, prediction_table], axis=1,
         #                                  join_axes=[prediction_table.index])
 
-        fin_table = pd.concat([fin_table, prediction_table], axis=1, join_axes=[prediction_table.index])
+        fin_table = pd.concat([self.fin_table, prediction_table], axis=1, join_axes=[prediction_table.index])
         data_frame = fin_table.set_index('date')
-        self.final_table = data_frame[(data_frame.index <= date_to)]
+        self.final_table = data_frame[(data_frame.index <= self.date_to)]
 
-        if days is not None:
-            self.days_out = days
+    def create_difference_prediction_columns(self):
+        cryp_obj = self.cryp_obj
+        cryp_obj.symbol = self.prediction_ticker
+        sym = self.prediction_ticker
+        price_table = self.price_func(symbol=sym)
+        price_table = price_table.drop(
+            columns=['date', sym.upper() + '_low', sym.upper() + '_high',
+                     sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
+        close_values = price_table[sym.upper() + '_close'].values
+        open_values = price_table[sym.upper() + '_open'].values
+        del_values = close_values - open_values
+        prediction_table = pd.DataFrame(data=del_values, index=self.fin_table.index)
+        fin_table = pd.concat([self.fin_table, prediction_table], axis=1, join_axes=[prediction_table.index])
+        data_frame = fin_table.set_index('date')
+        self.final_table = data_frame[(data_frame.index <= self.date_to)]
 
     def create_arrays(self):
-        temp_input_table = self.final_table.drop(columns='date')
+        self.create_difference_prediction_columns()
+        temp_input_table = self.final_table#.drop(columns='date')
         fullArr = temp_input_table.values
         temp_array = fullArr[np.logical_not(np.isnan(np.sum(fullArr, axis=1))), ::]
         self.output_array = np.array(temp_array[self.days_out:-1, -1:])
@@ -222,7 +246,7 @@ class CoinPriceModel:
     google_list=None
 
     def __init__(self, date_from, date_to, model_path=None, days=None, bitinfo_list=None, google_list=None,
-               prediction_ticker='ltc', epochs=50, activ_func='sigmoid'):
+               prediction_ticker='ltc', epochs=50, activ_func='sigmoid', time_units='hours'):
         if model_path is not None:
             self.model = keras.models.load_model(model_path)
         if bitinfo_list is None:
@@ -233,7 +257,7 @@ class CoinPriceModel:
             self.days = days
         self.prediction_ticker = prediction_ticker
         self.dataObj = DataSet(date_from=date_from, date_to=date_to, days=self.days, bitinfo_list=bitinfo_list,
-                               google_list=google_list, prediction_ticker=prediction_ticker)
+                               google_list=google_list, prediction_ticker=prediction_ticker, time_units=time_units)
         self.epochs = epochs
         self.bitinfo_list = bitinfo_list
         self.google_list = google_list
@@ -270,33 +294,33 @@ class CoinPriceModel:
     def train_model(self, neuron_count=200):
         self.create_arrays()
         self.build_model(self.training_array_input, neurons=neuron_count)
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=3, verbose=0, mode='auto')
         self.model.fit(self.training_array_input, self.training_array_output, epochs=self.epochs, batch_size=32, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop])
 
-        if self.is_leakyrelu:
-            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/'+self.prediction_ticker + 'model_' + str(
-                self.days) + 'dys_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
-                self.epochs) + 'epochs_'+ str(neuron_count) + 'neuron'+'.h5')
-        else:
-            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/'+self.prediction_ticker + 'model_' + str(
-                self.days) + 'dys_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
-                self.epochs) + 'epochs_' + str(neuron_count) + 'neurons' + '.h5')
+        # if self.is_leakyrelu:
+        #     self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/'+self.prediction_ticker + 'model_' + str(
+        #         self.days) + 'dys_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
+        #         self.epochs) + 'epochs_'+ str(neuron_count) + 'neuron'+'.h5')
+        # else:
+        #     self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/'+self.prediction_ticker + 'model_' + str(
+        #         self.days) + 'dys_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
+        #         self.epochs) + 'epochs_' + str(neuron_count) + 'neurons' + '.h5')
 
-    def test_model(self, from_date, to_date):
+    def test_model(self, from_date, to_date, time_units='hours'):
         test_data = DataSet(date_from=from_date, date_to=to_date, days=self.days, bitinfo_list=self.bitinfo_list,
-                               google_list=self.google_list, prediction_ticker=self.prediction_ticker)
+                               google_list=self.google_list, prediction_ticker=self.prediction_ticker, time_units=time_units)
         test_data.create_arrays()
         test_input = test_data.input_array
         test_output = test_data.output_array
         prediction = self.model.predict(test_input)
 
         plt.plot(test_output - np.mean(test_output), 'bo--')
-        plt.plot(prediction - np.mean(prediction), 'rx')
+        plt.plot(prediction - np.mean(prediction), 'rx--')
         plt.show()
 
-#todo try to find a representative training set for the CoinPriceModel
-cp = CoinPriceModel("2018-01-04 20:00:00 EST", "2018-04-01 20:00:00 EST", days=2, epochs=400, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth'])
-cp.train_model(neuron_count=300)
+time_unit = 'hours'
+cp = CoinPriceModel("2018-04-12 21:00:00 EST", "2018-04-20 12:00:00 EST", days=3, epochs=400, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'ltc'], time_units=time_unit)
+cp.train_model(neuron_count=50)
 #cp = CoinPriceModel("2017-04-12", "2017-09-03", model_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/ltcmodel_7dys_leakyreluact_adamopt_maeloss_150epochs_200neuron.h5')
-cp.test_model(from_date="2018-04-01 20:00:00 EST", to_date="2018-04-12 20:00:00 EST")
+cp.test_model(from_date="2018-04-20 12:01:00 EST", to_date="2018-04-25 19:00:00 EST", time_units=time_unit)

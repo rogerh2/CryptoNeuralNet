@@ -10,9 +10,8 @@ from keras.layers import LSTM
 from keras.layers import Dropout
 from keras.layers import LeakyReLU
 from cryptory import Cryptory
-import pytrends as pyt
+from pytrends.request import TrendReq
 from sklearn.preprocessing import StandardScaler
-
 
 class DataSet:
     days_out=1
