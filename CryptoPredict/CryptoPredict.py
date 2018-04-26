@@ -219,8 +219,12 @@ class DataSet:
         data_frame = fin_table.set_index('date')
         self.final_table = data_frame[(data_frame.index <= self.date_to)]
 
-    def create_arrays(self):
-        self.create_difference_prediction_columns()
+    def create_arrays(self, type='price'):
+        if type == 'price':
+            self.create_price_prediction_columns()
+        elif type == 'difference':
+            self.create_difference_prediction_columns()
+
         temp_input_table = self.final_table#.drop(columns='date')
         fullArr = temp_input_table.values
         temp_array = fullArr[np.logical_not(np.isnan(np.sum(fullArr, axis=1))), ::]
@@ -229,6 +233,9 @@ class DataSet:
         scaler = StandardScaler()
         temp_input_array = scaler.fit_transform(temp_input_array)
         self.input_array = temp_input_array.reshape(temp_input_array.shape[0], temp_input_array.shape[1], 1)
+
+# TODO add a prediction_columns method (and supporting methods) for peaks and valleys that should be buy and sell points
+# TODO update the create_arrays method so that you can choose which prediction model to use
 
 class CoinPriceModel:
 
@@ -319,8 +326,11 @@ class CoinPriceModel:
         plt.plot(prediction - np.mean(prediction), 'rx--')
         plt.show()
 
-time_unit = 'hours'
-cp = CoinPriceModel("2018-04-12 21:00:00 EST", "2018-04-20 12:00:00 EST", days=3, epochs=400, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'ltc'], time_units=time_unit)
-cp.train_model(neuron_count=50)
-#cp = CoinPriceModel("2017-04-12", "2017-09-03", model_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/ltcmodel_7dys_leakyreluact_adamopt_maeloss_150epochs_200neuron.h5')
-cp.test_model(from_date="2018-04-20 12:01:00 EST", to_date="2018-04-25 19:00:00 EST", time_units=time_unit)
+# TODO add a prediction (for future data) method
+
+if __name__ == '__main__':
+    time_unit = 'hours'
+    cp = CoinPriceModel("2018-04-12 21:00:00 EST", "2018-04-20 12:00:00 EST", days=3, epochs=400, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'ltc'], time_units=time_unit)
+    cp.train_model(neuron_count=20)
+    #cp = CoinPriceModel("2017-04-12", "2017-09-03", model_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/ltcmodel_7dys_leakyreluact_adamopt_maeloss_150epochs_200neuron.h5')
+    cp.test_model(from_date="2018-04-20 12:01:00 EST", to_date="2018-04-25 19:00:00 EST", time_units=time_unit)
