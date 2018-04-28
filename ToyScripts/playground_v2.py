@@ -18,27 +18,50 @@ def get_nth_hr_block(test_data, start_time, n=24, time_unit='hours'):
     data_block = test_data[(test_data.index >= start_time) & (test_data.index <= start_time+timedelta)]
     return data_block
 
+def buy_trade_loop(x_point, y_point, m, max_iterations, iterable, delta, delta_start_point):
+    if x_point > (delta_start_point - delta):
+        for n in range(m, max_iterations):
+            y_point = np.partition(iterable, n)[n]
+            x_point = iterable.nsmallest(4).index[-1]
+            if x_point < (delta_start_point - delta):
+                break
+        return x_point, y_point, n
+    return x_point, y_point, 1
+
+#TODO fix sell_trade_loop to find sell data
+def sell_trade_loop(x_point, y_point, max_iterations, iterable, delta, delta_start_point):
+    if x_point < (delta_start_point + delta):
+        for n in range(1, max_iterations):
+            y_point = np.partition(iterable, n)[n]
+            x_point = iterable.nsmallest(4).index[-1]
+            if x_point < (delta_start_point - delta):
+                break
+        return x_point, y_point, n
+    return x_point, y_point, 1
+
 #TODO finish find_trades
-def find_trades(data_block, trade_data_frame=None, min_iterations=5, n=24, m=4, time_unit='hours'):
+def find_trades(data_block, trade_data_frame=None, n=12, m=4, max_iterations=5, time_unit='hours'):
     buy_y_point = np.min(data_block)
     buy_x_point = data_block.idxmin()
 
     if time_unit == 'days':
-        time_delta = timedelta(days=m)
+        time_delta = timedelta(days=n)
+        buy_sell_delta = timedelta(days=m)
     elif time_unit == 'hours':
-        time_delta = timedelta(hours=m)
+        time_delta = timedelta(hours=n)
+        buy_sell_delta = timedelta(hours=m)
     elif time_unit == 'minutes':
-        time_delta = timedelta(minutes=m)
+        time_delta = timedelta(minutes=n)
+        buy_sell_delta = timedelta(minutes=m)
 
-    if buy_x_point > (np.max(data_block.index) - time_delta):
-        for n in range(1, min_iterations):
-            buy_y_point = np.partition(data_block.LTC_open, n)[n]
-            buy_x_point = data_block.LTC_open.nsmallest(4).index[-1]
-            if buy_x_point < (np.max(data_block.index) - time_delta):
-                break
+    buy_x_point, buy_y_point, n_buy = buy_trade_loop(buy_x_point, buy_y_point, 1, max_iterations, data_block.LTC_open, time_delta, np.max(data_block.index))
     if buy_x_point > (np.max(data_block.index) - time_delta):
         return False
 
     data_after_buy = data_block[data_block.index > buy_x_point]
     sell_y_point = np.max(data_block)
     sell_x_point = data_block.idxmax
+
+    buy_x_point, buy_y_point, n_buy = buy_trade_loop(buy_x_point, buy_y_point, n_buy, max_iterations, data_block.LTC_open,
+                                                     buy_sell_delta, sell_x_point)
+
