@@ -235,7 +235,6 @@ class DataSet:
         self.input_array = temp_input_array.reshape(temp_input_array.shape[0], temp_input_array.shape[1], 1)
 
 # TODO add a prediction_columns method (and supporting methods) for peaks and valleys that should be buy and sell points
-# TODO update the create_arrays method so that you can choose which prediction model to use
 
 class CoinPriceModel:
 
