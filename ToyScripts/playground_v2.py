@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from datetime import timedelta
+import matplotlib.pyplot as plt
 
 
 def get_nth_hr_block(test_data, start_time, n=48, time_unit='hours'):
@@ -22,8 +23,8 @@ def buy_trade_loop(x_point, y_point, m, max_iterations, iterable, delta, delta_e
     if x_point > (delta_end_point - delta):
         n = 1
         for n in range(m, max_iterations):
-            y_point = np.partition(iterable, n)[n]
-            x_point = iterable.nsmallest(max_iterations-1).index[-1]
+            y_point = np.partition(iterable.values.T, n)[::, n][0]
+            x_point = iterable.nsmallest(max_iterations-1, columns='LTC_open').index[-1]
             if x_point < (delta_end_point - delta):
                 break
         return x_point, y_point, n
@@ -33,8 +34,8 @@ def sell_trade_loop(x_point, y_point, max_iterations, iterable, delta, delta_sta
     if x_point < (delta_start_point + delta):
         n = 1
         for n in range(1, max_iterations):
-            y_point = np.partition(iterable, -n)[-n]
-            x_point = iterable.nlargest(max_iterations-1).index[-1]
+            y_point = np.partition(iterable.values.T, -n)[::, -n][0]
+            x_point = iterable.nlargest(max_iterations-1, columns='LTC_open').index[-1]
             if x_point > (delta_start_point + delta):
                 break
         return x_point, y_point, n
@@ -42,8 +43,8 @@ def sell_trade_loop(x_point, y_point, max_iterations, iterable, delta, delta_sta
 
 
 def find_trades(data_block, trade_data_frame=None, n=24, m=4, max_iterations=5, time_unit='hours'):
-    buy_y_point = np.min(data_block)
-    buy_x_point = data_block.idxmin()
+    buy_y_point = np.min(data_block.values)
+    buy_x_point = data_block.idxmin()[0]
 
     if time_unit == 'days':
         time_delta = pd.Timedelta(days=n)
@@ -60,8 +61,8 @@ def find_trades(data_block, trade_data_frame=None, n=24, m=4, max_iterations=5, 
         return False
 
     data_after_buy = data_block[data_block.index > buy_x_point]
-    sell_y_point = np.max(data_after_buy)
-    sell_x_point = data_after_buy.idxmax()
+    sell_y_point = np.max(data_after_buy.values)
+    sell_x_point = data_after_buy.idxmax()[0]
 
     buy_x_point, buy_y_point, n_buy = buy_trade_loop(buy_x_point, buy_y_point, n_buy, max_iterations, data_after_buy,
                                                      buy_sell_delta, sell_x_point)
@@ -79,6 +80,9 @@ test_data = DataSet("2018-04-25 18:00:00 EST", "2018-04-30 18:00:00 EST", days=1
 test_data.create_arrays(type='price')
 df = test_data.final_table.LTC_open
 
-data_block = get_nth_hr_block(df, "2018-04-28 12:00:00 EST")
-final_data_frame = find_trades(df)
+data_block = get_nth_hr_block(df, "2018-04-27 14:00:00 EST")
+data_frame_block = data_block.to_frame()
+final_data_frame = find_trades(data_frame_block)
 print(final_data_frame)
+#df.plot()
+#plt.show()
