@@ -95,7 +95,7 @@ def find_all_trades(data_frame, time_unit='hours', n_0=48, m=6, max_iterations=5
     search_range = start_time + time_delta_0
 
     while search_range < (end_time - time_delta_0):
-        data_block = get_nth_hr_block(df, start_time_str + ' EST', n=n, time_unit=time_unit)
+        data_block = get_nth_hr_block(data_frame, start_time_str + ' EST', n=n, time_unit=time_unit)
         data_frame_block = data_block.to_frame()
         current_block_trades, current_buy, current_sell = find_trades(data_frame_block, trade_data_frame=block_trades, n=m, max_iterations=max_iterations, time_unit=time_unit)
         if (current_sell - current_buy) < 0.005*current_buy or type(current_block_trades) is not pd.DataFrame:
@@ -138,7 +138,7 @@ def create_single_prediction_column(price_data_frame, trade_data_frame, time_uni
         else:
             time_arr = np.vstack((time_arr, np.array([time_to_trade])))
 
-def  create_prediction_columns(price_data_frame, buy_sell_data_frame, time_units='hours'):
+def  create_buy_sell_prediction_columns(price_data_frame, buy_sell_data_frame, time_units='hours'):
     buy_column = create_single_prediction_column(price_data_frame, buy_sell_data_frame.Buy_X, time_units)
     sell_column = create_single_prediction_column(price_data_frame, buy_sell_data_frame.Sell_X, time_units)
     prediction_columns = np.hstack((buy_column, sell_column[0:len(buy_column)]))
@@ -153,7 +153,7 @@ df = test_data.final_table.LTC_open
 # final_data_frame = find_trades(data_frame_block, n=10, max_iterations=5, time_unit='minutes')
 
 final_data_frame = find_all_trades(df, time_unit='minutes', n_0=60, m=15, max_iterations=5)
-arr = create_prediction_columns(df, final_data_frame, time_units='minutes')
+arr = create_buy_sell_prediction_columns(df, final_data_frame, time_units='minutes')
 
 print(arr)
 #data_frame_block.plot()
