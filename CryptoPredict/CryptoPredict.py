@@ -185,6 +185,7 @@ class DataSet:
         self.date_to = date_to
         if days is not None:
             self.days_out = days
+        self.time_units = time_units
 
     def create_price_prediction_columns(self):
         cryp_obj = self.cryp_obj
@@ -313,8 +314,8 @@ class DataSet:
         search_range = start_time + time_delta_0
 
         while search_range < (end_time - time_delta_0):
-            data_block = self.get_nth_hr_block(data_frame, start_time_str + ' EST', n=n, time_unit=time_unit)
-            data_frame_block = data_block.to_frame()
+            data_frame_block = self.get_nth_hr_block(data_frame, start_time_str + ' EST', n=n, time_unit=time_unit)
+            #data_frame_block = data_block.to_frame()
             current_block_trades, current_buy, current_sell = self.find_trades(data_frame_block,
                                                                           trade_data_frame=block_trades, n=m,
                                                                           max_iterations=max_iterations,
@@ -331,6 +332,7 @@ class DataSet:
 
         return block_trades
 
+    #TODO try transformations to allow neural net to predict change
     def create_single_prediction_column(self, price_data_frame, trade_data_frame, time_units='hours'):
 
         if time_units == 'days':
@@ -344,7 +346,7 @@ class DataSet:
         trade_ind = 0
         trade_time = trade_data_frame[trade_ind]
         time_arr = None
-        for price_ind in range(0, loop_len):
+        for price_ind in range(0, loop_len[0]):
             price_time = price_data_frame.index[price_ind]
             if price_time > trade_time:
                 trade_ind += 1
@@ -359,25 +361,46 @@ class DataSet:
             else:
                 time_arr = np.vstack((time_arr, np.array([time_to_trade])))
 
-    def create_buy_sell_prediction_columns(self, price_data_frame, buy_sell_data_frame, time_units='hours'):
-        buy_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Buy_X, time_units)
-        sell_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Sell_X, time_units)
-        prediction_columns = np.hstack((buy_column, sell_column[0:len(buy_column)]))
-        return prediction_columns
+    def create_buy_sell_prediction_frame(self):
+        cryp_obj = self.cryp_obj
+        cryp_obj.symbol = self.prediction_ticker
+        sym = self.prediction_ticker
+        price_data_frame = self.price_func(symbol=sym)
+        price_data_frame = price_data_frame.drop(
+            columns=[sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high',
+                     sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
+        price_data_frame = price_data_frame.set_index('date')
+        buy_sell_data_frame = self.find_all_trades(price_data_frame, time_unit=self.time_units, n_0=24, m=6, max_iterations=5)
+        buy_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Buy_X, self.time_units)
+        sell_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Sell_X, self.time_units)
+        cutoff_len = len(buy_column)
+        frame_length = range(0, cutoff_len)
+        sell_column = sell_column[frame_length]
+        final_indxs = price_data_frame.index[frame_length]
+        prediction_frame = pd.DataFrame(data=np.hstack((buy_column, sell_column)), index=final_indxs, columns=['Buy', 'Sell'])
+        data_frame = self.fin_table.set_index('date')
+        data_frame = data_frame.head(cutoff_len)
+        self.final_table = pd.concat([data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.index])
 
-    # TODO update create_buy_sell_prediction_columns to work with class syntax
-
-    def create_arrays(self, type='price'):
+    def create_arrays(self, type='buy&sell'):
         if type == 'price':
             self.create_price_prediction_columns()
+            n = -1
+            m = n
         elif type == 'difference':
             self.create_difference_prediction_columns()
+            n = -1
+            m = n
+        elif type == 'buy&sell':
+            self.create_buy_sell_prediction_frame()
+            n = -2
+            m = -3
 
         temp_input_table = self.final_table#.drop(columns='date')
         fullArr = temp_input_table.values
         temp_array = fullArr[np.logical_not(np.isnan(np.sum(fullArr, axis=1))), ::]
-        self.output_array = np.array(temp_array[self.days_out:-1, -1:])
-        temp_input_array = np.array(temp_array[0:-(self.days_out+1), ::])
+        self.output_array = np.array(temp_array[self.days_out:-1, n:])
+        temp_input_array = np.array(temp_array[0:-(self.days_out+1), 0:m])
         scaler = StandardScaler()
         temp_input_array = scaler.fit_transform(temp_input_array)
         self.input_array = temp_input_array.reshape(temp_input_array.shape[0], temp_input_array.shape[1], 1)
@@ -390,7 +413,6 @@ class CoinPriceModel:
     dataObj = None
     days = 1
     activation_func=None
-    is_leakyrelu=True
     optimization_scheme="adam"
     loss_func="mae"
     epochs = None
@@ -398,7 +420,7 @@ class CoinPriceModel:
     google_list=None
 
     def __init__(self, date_from, date_to, model_path=None, days=None, bitinfo_list=None, google_list=None,
-               prediction_ticker='ltc', epochs=50, activ_func='sigmoid', time_units='hours'):
+               prediction_ticker='ltc', epochs=50, activ_func='sigmoid', time_units='hours', is_leakyrelu=True):
         if model_path is not None:
             self.model = keras.models.load_model(model_path)
         if bitinfo_list is None:
@@ -414,8 +436,9 @@ class CoinPriceModel:
         self.bitinfo_list = bitinfo_list
         self.google_list = google_list
         self.activation_func = activ_func
+        self.is_leakyrelu=is_leakyrelu
 
-    def build_model(self, inputs, neurons, output_size=1,
+    def build_model(self, inputs, neurons, output_size=2,
                     dropout=0.25):
         is_leaky = self.is_leakyrelu
         activ_func = self.activation_func
@@ -467,6 +490,8 @@ class CoinPriceModel:
         test_output = test_data.output_array
         prediction = self.model.predict(test_input)
 
+        print(np.mean(test_output) - np.mean(prediction))
+
         plt.plot(test_output - np.mean(test_output), 'bo--')
         plt.plot(prediction - np.mean(prediction), 'rx--')
         plt.show()
@@ -475,7 +500,7 @@ class CoinPriceModel:
 
 if __name__ == '__main__':
     time_unit = 'hours'
-    cp = CoinPriceModel("2018-04-12 21:00:00 EST", "2018-04-20 12:00:00 EST", days=3, epochs=400, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'ltc'], time_units=time_unit)
-    cp.train_model(neuron_count=20)
+    cp = CoinPriceModel("2018-04-12 21:00:00 EST", "2018-04-20 12:00:00 EST", days=3, epochs=10000, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'ltc'], time_units=time_unit, activ_func='relu', is_leakyrelu=False)
+    cp.train_model(neuron_count=10)
     #cp = CoinPriceModel("2017-04-12", "2017-09-03", model_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/ltcmodel_7dys_leakyreluact_adamopt_maeloss_150epochs_200neuron.h5')
     cp.test_model(from_date="2018-04-20 12:01:00 EST", to_date="2018-04-25 19:00:00 EST", time_units=time_unit)
