@@ -234,33 +234,34 @@ class DataSet:
             (test_data.index >= start_date_time) & (test_data.index <= (start_date_time + time_delta))]
         return data_block
 
-    def buy_trade_loop(self, x_point, y_point, m, max_iterations, iterable, delta, delta_end_point):
-        if x_point > (delta_end_point - delta):
+    def upper_bound_trade_loop(self, x_point, y_point, m, max_iterations, iterable, delta, upper_bound):
+        #This finds the best move available before the upper bound
+        if x_point > (upper_bound - delta):
             n = 1
             for n in range(m, max_iterations):
                 y_point = np.partition(iterable.values.T, n)[::, n][0]
                 x_point = iterable.nsmallest(max_iterations - 1, columns='LTC_open').index[-1] #TODO replace with general ticker based on input
-                if x_point < (delta_end_point - delta):
+                if x_point < (upper_bound - delta):
                     break
             return x_point, y_point, n
         return x_point, y_point, 1
 
-    def sell_trade_loop(self, x_point, y_point, max_iterations, iterable, delta, delta_start_point):
-        if x_point < (delta_start_point + delta):
+    def lower_bound_trade_loop(self, x_point, y_point, max_iterations, iterable, delta, lower_bound):
+        if x_point < (lower_bound + delta):
             n = 1
             for n in range(1, max_iterations):
                 y_point = np.partition(iterable.values.T, -n)[::, -n][0]
                 x_point = iterable.nlargest(max_iterations - 1, columns='LTC_open').index[-1] #TODO replace with general ticker based on input
-                if x_point > (delta_start_point + delta):
+                if x_point > (lower_bound + delta):
                     break
             return x_point, y_point, n
         return x_point, y_point, 1
 
     def find_trades(self, data_block, trade_data_frame=None, n=4, max_iterations=5, time_unit='hours'):
-        buy_y_point = np.min(data_block.values)
-        buy_x_point = data_block.idxmin()[0]
+        sell_y_point = np.max(data_block.values) #This finds the initial sell points (local max)
+        sell_x_point = data_block.idxmax()[0]
 
-        if time_unit == 'days':
+        if time_unit == 'days': #TODO replace this recurring if block with a function
             time_delta = pd.Timedelta(days=n)
             buy_sell_delta = pd.Timedelta(days=n)
         elif time_unit == 'hours':
@@ -270,20 +271,20 @@ class DataSet:
             time_delta = pd.Timedelta(minutes=n)
             buy_sell_delta = pd.Timedelta(minutes=n)
 
-        buy_x_point, buy_y_point, n_buy = self.buy_trade_loop(buy_x_point, buy_y_point, 1, max_iterations, data_block,
-                                                         time_delta, data_block.index[-1])
-        if buy_x_point > (np.max(data_block.index) - time_delta):
+        sell_x_point, sell_y_point, n_sell = self.lower_bound_trade_loop(sell_x_point, sell_y_point, max_iterations, data_block,
+                                                                        time_delta, data_block.index[0])
+        if sell_x_point < (np.min(data_block.index) + time_delta):
             return False, 0, 0
 
-        data_after_buy = data_block[data_block.index > buy_x_point]
-        sell_y_point = np.max(data_after_buy.values)
-        sell_x_point = data_after_buy.idxmax()[0]
+        data_before_sell = data_block[data_block.index < sell_x_point]
+        buy_y_point = np.min(data_before_sell.values)
+        buy_x_point = data_before_sell.idxmin()[0]
 
-        buy_x_point, buy_y_point, n_buy = self.buy_trade_loop(buy_x_point, buy_y_point, n_buy, max_iterations,
-                                                         data_after_buy,
-                                                         buy_sell_delta, sell_x_point)
-        sell_x_point, sell_y_point, n_sell = self.sell_trade_loop(sell_x_point, sell_y_point, max_iterations, data_after_buy,
-                                                             buy_sell_delta, buy_x_point)
+        buy_x_point, buy_y_point, n_buy = self.upper_bound_trade_loop(buy_x_point, buy_y_point, 1, max_iterations,
+                                                                      data_before_sell,
+                                                                      buy_sell_delta, sell_x_point)
+        # sell_x_point, sell_y_point, n_sell = self.lower_bound_trade_loop(sell_x_point, sell_y_point, max_iterations, data_after_buy,
+        #                                                                  buy_sell_delta, buy_x_point)
         df = pd.DataFrame([[buy_x_point, buy_y_point, sell_x_point, sell_y_point]],
                           columns=['Buy_X', 'Buy_Y', 'Sell_X', 'Sell_Y'])
         if trade_data_frame is not None:
@@ -347,6 +348,7 @@ class DataSet:
         time_arr = None
         price_time = price_data_frame.index[0]
         scale_time = (trade_time - price_time).total_seconds() / time_norm_constant
+        full_scale = np.max(price_data_frame.values) - np.min(price_data_frame.values) #This gives the full width scale to determine the size of the jumps
 
         for price_ind in range(0, loop_len[0]):
             price_time = price_data_frame.index[price_ind]
@@ -359,9 +361,13 @@ class DataSet:
             if scale_time == 0:
                 return time_arr
             #scale the data
-            unscaled_time_to_trade = (trade_time - price_time).total_seconds() * np.pi / time_norm_constant
-            transformation_coeff = ((-1)**trade_ind)*np.pi/(scale_time)
-            time_to_trade = 0.01*transformation_coeff*unscaled_time_to_trade + 0.5*(((-1)**trade_ind) > 0)
+
+            transformation_coeff = ((-1) ** trade_ind) / full_scale
+            time_to_trade = 0.1*(((-1)**trade_ind) > 0) + price_data_frame.values[price_ind]/full_scale #This line is meant to crate jumps at trade points
+
+            #transformation_coeff = ((-1) ** trade_ind) * np.pi / (scale_time)
+            #unscaled_time_to_trade = (trade_time - price_time).total_seconds() * np.pi / time_norm_constant
+            #transformation_coeff = ((-1) ** trade_ind) * np.pi / (scale_time)
             #time_to_trade = np.sin(transformation_coeff*unscaled_time_to_trade) #+ 0.45*(((-1)**trade_ind) > 0)
             #time_to_trade = np.exp(transformation_coeff * unscaled_time_to_trade - (((-1)**trade_ind) > 0))
 
@@ -403,7 +409,7 @@ class DataSet:
             n = -1
             m = n
         elif type == 'buy&sell':
-            self.create_buy_sell_prediction_frame(40, 10, 5) #TODO fix out of bounds error that happens with small numbers
+            self.create_buy_sell_prediction_frame(40, 20, 5) #TODO fix out of bounds error that happens with small numbers
             n = -2
             m = -3
 
@@ -461,12 +467,12 @@ class CoinPriceModel:
         self.model.add(Dropout(dropout))
 
         if is_leaky:
-            for i in range(0, 10):
+            for i in range(0, 5):
                 self.model.add(Dense(units=neurons, activation="linear"))
                 self.model.add(LeakyReLU(alpha=0.1))
         else:
-            self.model.add(Dense(units=neurons, activation=activ_func))
-            self.model.add(Dense(units=neurons, activation=activ_func))
+            for i in range(0, 10):
+                self.model.add(Dense(units=neurons, activation=activ_func))
 
         self.model.add(Dense(units=output_size, activation="linear"))
         self.model.compile(loss=loss, optimizer=optimizer)
@@ -512,11 +518,13 @@ class CoinPriceModel:
 
 if __name__ == '__main__':
     time_unit = 'minutes'
-    cp = CoinPriceModel("2018-05-02 03:04:00 EST", "2018-05-02 16:54:00 EST", days=1, epochs=400,
-                        google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['bnb', 'ltc'],
-                        time_units=time_unit, activ_func='sigmoid', is_leakyrelu=True)
+    cp = CoinPriceModel("2018-05-04 13:00:00 EST", "2018-05-04 21:00:00 EST", days=15, epochs=4000,
+                        google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['bnb', 'btc', 'ltc'],
+                        time_units=time_unit, activ_func='relu', is_leakyrelu=True)
+
+    cp.train_model(neuron_count=2)
+    cp.test_model(from_date="2018-05-04 21:01:00 EST", to_date="2018-05-05 12:30:00 EST", time_units=time_unit)
+
     #cp = CoinPriceModel("2018-04-07 20:00:00 EST", "2018-04-25 20:00:00 EST", days=3, epochs=400, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'bnb', 'ltc'], time_units=time_unit, activ_func='sigmoid', is_leakyrelu=True)#for hours
-    cp.train_model(neuron_count=20)
     #cp = CoinPriceModel("2017-04-12", "2017-09-03", model_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/ltcmodel_7dys_leakyreluact_adamopt_maeloss_150epochs_200neuron.h5')
     #cp.test_model(from_date="2018-04-20 20:00:00 EST", to_date="2018-05-02 21:00:00 EST", time_units=time_unit)#for hours
-    cp.test_model(from_date="2018-05-2 15:55:00 EST", to_date="2018-05-03 01:00:00 EST", time_units=time_unit)
