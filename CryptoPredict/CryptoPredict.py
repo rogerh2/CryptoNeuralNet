@@ -360,11 +360,11 @@ class DataSet:
                 trade_time = trade_data_frame[trade_ind]
                 scale_time = (trade_time - price_time).total_seconds() / time_norm_constant
             if scale_time == 0:
-                return time_arr
+                return time_arr #TODO fix error that happens when scale_time is 0 because the first trade is at the first index
             #scale the data
 
             transformation_coeff = ((-1) ** trade_ind) / full_scale
-            time_to_trade = 0.1*(((-1)**trade_ind) > 0)*full_scale + (price_data_frame.values[price_ind] - np.mean(price_data_frame.values))/full_scale + 1 #This line is meant to create jumps at trade points
+            time_to_trade = 0.2*(((-1)**trade_ind) > 0)*full_scale + (price_data_frame.values[price_ind] - np.mean(price_data_frame.values))/full_scale + 1 #This line is meant to create jumps at trade points
 
             #transformation_coeff = ((-1) ** trade_ind) * np.pi / (scale_time)
             #unscaled_time_to_trade = (trade_time - price_time).total_seconds() * np.pi / time_norm_constant
@@ -457,7 +457,7 @@ class CoinPriceModel:
         self.is_leakyrelu=is_leakyrelu
 
     def build_model(self, inputs, neurons, output_size=2,
-                    dropout=0.25):
+                    dropout=0.25):  #TODO make output_size someing editable outside the class
         is_leaky = self.is_leakyrelu
         activ_func = self.activation_func
         loss = self.loss_func
@@ -468,7 +468,7 @@ class CoinPriceModel:
         self.model.add(Dropout(dropout))
 
         if is_leaky:
-            for i in range(0, 5):
+            for i in range(0, 1):
                 self.model.add(Dense(units=neurons, activation="linear"))
                 self.model.add(LeakyReLU(alpha=0.1))
         else:
@@ -486,7 +486,8 @@ class CoinPriceModel:
     def train_model(self, neuron_count=200, time_block_length=24, min_distance_between_trades=3, model_type='buy&sell'):
         self.create_arrays(time_block_length, min_distance_between_trades, model_type=model_type)
         self.build_model(self.training_array_input, neurons=neuron_count)
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=3, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=2, verbose=0, mode='auto')
+
         hist = self.model.fit(self.training_array_input, self.training_array_output, epochs=self.epochs, batch_size=32, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop])
         return hist
@@ -499,10 +500,10 @@ class CoinPriceModel:
         #         self.days) + 'dys_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
         #         self.epochs) + 'epochs_' + str(neuron_count) + 'neurons' + '.h5')
 
-    def test_model(self, from_date, to_date, time_units='hours'):
+    def test_model(self, from_date, to_date, time_units='hours', model_type='buy&sell'):
         test_data = DataSet(date_from=from_date, date_to=to_date, days=self.days, bitinfo_list=self.bitinfo_list,
                                google_list=self.google_list, prediction_ticker=self.prediction_ticker, time_units=time_units)
-        test_data.create_arrays()
+        test_data.create_arrays(model_type=model_type)
         test_input = test_data.input_array
         test_output = test_data.output_array
         prediction = self.model.predict(test_input)
@@ -510,26 +511,27 @@ class CoinPriceModel:
         print(np.mean(test_output) - np.mean(prediction))
 
         #TODO get rid of hack method for plotting only one line here
-        plt.plot(test_output[::, 0] - np.mean(test_output[::, 0]), 'bo--')
-        plt.plot(prediction[::, 0] - np.mean(prediction[::, 0]), 'rx--')
+        plt.plot(test_input[::, -3] - np.mean(test_input[::, -3]), 'bo--')
+        plt.plot(prediction[::, 1] - np.mean(prediction[::, 1]), 'rx--')
         #plt.plot(test_output[::, 0], 'bo--')
         plt.show()
 
 # TODO add a prediction (for future data) method
+# TODO try using a classifier Neural Net
 
 if __name__ == '__main__':
-    time_unit = 'hours'
-    cp = CoinPriceModel("2018-03-06 23:00:00 EST", "2018-04-20 20:00:00 EST", days=10, epochs=400,
-                        google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['eth', 'btc', 'ltc'],
+    time_unit = 'minutes'
+    cp = CoinPriceModel("2018-05-07 00:00:00 EST", "2018-05-07 14:00:00 EST", days=15, epochs=400,
+                        google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['ltc'],
                         time_units=time_unit, activ_func='relu', is_leakyrelu=True)
 
-    cp.train_model(neuron_count=3, time_block_length=24, min_distance_between_trades=6)
-    cp.test_model(from_date="2018-05-01 17:00:00 EST", to_date="2018-05-06 19:00:00 EST", time_units=time_unit)
-    hist = []
-
-    #neuron_grid = [2,3,5,10,20,50,100,200,500,1000,5000]
-    #neuron_grid = [2,3,4,5,6,7,8,9,10,20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000]
-
+    cp.train_model(neuron_count=3, time_block_length=60, min_distance_between_trades=5, model_type='buy&sell')
+    cp.test_model(from_date="2018-05-07 14:05:00 EST", to_date="2018-05-07 23:30:00 EST", time_units=time_unit, model_type='buy&sell')
+    # hist = []
+    #
+    # neuron_grid = [2,3,5,10,20,50,100,200,500,1000,5000]
+    # neuron_grid = [2,3,4,5,6,7,8,9,10,20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000]
+    #
     # for neuron_count in neuron_grid:
     #     current_hist = cp.train_model(neuron_count=neuron_count, time_block_length=60, min_distance_between_trades=5)
     #     hist.append(current_hist.history['val_loss'][-1])
