@@ -145,7 +145,7 @@ def  create_buy_sell_prediction_columns(price_data_frame, buy_sell_data_frame, t
     return prediction_columns
 
 test_data = DataSet("2018-04-30 21:00:00 EST", "2018-05-01 20:30:00 EST", days=1, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'ltc'], time_units='minutes')
-test_data.create_arrays(type='price')
+test_data.create_arrays(model_type='price')
 df = test_data.final_table.LTC_open
 
 # data_block = get_nth_hr_block(df, "2018-04-30 12:00:00 EST", n=120, time_unit='minutes')
