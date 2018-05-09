@@ -59,14 +59,21 @@ class cryptocompare:
         return data
 
 
-    def create_data_frame(self, url, symbol='LTC'):
+    def create_data_frame(self, url, symbol='LTC', return_time_stamp=False):
         page = requests.get(url)
         symbol = symbol.upper()
         data = page.json()['Data']
         df = pd.DataFrame(data)
         df = df.add_prefix(symbol + '_')
         df.insert(loc=0, column='date', value=[datetime.fromtimestamp(d) for d in df[symbol + '_time']])
-        df = df.drop(columns=[symbol + '_time'])
+
+        if return_time_stamp:
+            time_stamps = df[symbol + '_time'].values
+            time_stamp = time_stamps[0]
+            df = df.drop(columns=[symbol + '_time'])
+            return df, time_stamp
+
+        df = df.drop(columns=[symbol + '_time']) #Drop this because the unix timestamp column is no longer needed
         return df
 
 
@@ -100,15 +107,32 @@ class cryptocompare:
         df = self.create_data_frame(url, symbol)
         return df
 
-    def minute_price_historical(self, symbol='LTC', aggregate = 1):
+    def minute_price_historical(self, symbol='LTC', aggregate = 1): #TODO this method returns a few hours too many points, reason unkown. Fix this
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         limit = self.datedelta("minutes")
+        first_lim = limit
+
+        if limit > 2000:
+            first_lim = 2000
 
         url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}' \
-            .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
+            .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate)
         if exchange:
             url += '&e={}'.format(exchange)
+
+        loop_len = int(np.ceil(limit/2000))
+        if limit > 2000: #This if statement is to allow the gathering of historical minute data beyond 2000 points (the limit)
+            df, time_stamp = self.create_data_frame(url, symbol, return_time_stamp=True)
+            for num in range(0, loop_len):
+                toTs = time_stamp - 60 # have to subtract a value of 60 had to be added to avoid repeated indices
+                url_new = url + '&toTs={}'.format(toTs)
+                if num == (loop_len - 1):
+                    url_new = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
+                        .format(symbol.upper(), comparison_symbol.upper(), limit - num*2000, aggregate, toTs)
+                df_to_append, time_stamp = self.create_data_frame(url_new, symbol, return_time_stamp=True)
+                df = df_to_append.append(df, ignore_index=True) #The earliest data goes on top
+            return df
 
         df = self.create_data_frame(url, symbol)
         return df
@@ -177,7 +201,6 @@ class DataSet:
         for sym in bitinfo_list[1:-1]:
             cryp_obj.symbol = sym
             temp_table = price_func(symbol=sym)
-            temp_table = temp_table.drop(columns=['date'])
             fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
 
         self.fin_table = fin_table
@@ -191,8 +214,9 @@ class DataSet:
         cryp_obj = self.cryp_obj
         cryp_obj.symbol = self.prediction_ticker
         sym = self.prediction_ticker
-        prediction_table = self.price_func(symbol=sym)
-        prediction_table = prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
+        temp_prediction_table = self.price_func(symbol=sym)
+        prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
+
 
         # if google_list:
         #     google_table = cryp_obj.get_google_trends(google_list)
@@ -236,22 +260,24 @@ class DataSet:
 
     def upper_bound_trade_loop(self, x_point, y_point, m, max_iterations, iterable, delta, upper_bound):
         #This finds the best move available before the upper bound
+        sym = self.prediction_ticker
         if x_point > (upper_bound - delta):
             n = 1
             for n in range(m, max_iterations):
                 y_point = np.partition(iterable.values.T, n)[::, n][0]
-                x_point = iterable.nsmallest(max_iterations - 1, columns='LTC_open').index[-1] #TODO replace with general ticker based on input
+                x_point = iterable.nsmallest(max_iterations - 1, columns=sym.upper() + '_open').index[-1]
                 if x_point < (upper_bound - delta):
                     break
             return x_point, y_point, n
         return x_point, y_point, 1
 
     def lower_bound_trade_loop(self, x_point, y_point, max_iterations, iterable, delta, lower_bound):
+        sym = self.prediction_ticker
         if x_point < (lower_bound + delta):
             n = 1
             for n in range(1, max_iterations):
                 y_point = np.partition(iterable.values.T, -n)[::, -n][0]
-                x_point = iterable.nlargest(max_iterations - 1, columns='LTC_open').index[-1] #TODO replace with general ticker based on input
+                x_point = iterable.nlargest(max_iterations - 1, columns=sym.upper() + '_open').index[-1]
                 if x_point > (lower_bound + delta):
                     break
             return x_point, y_point, n
@@ -319,7 +345,7 @@ class DataSet:
                                                                           trade_data_frame=block_trades, n=coeff*m,
                                                                           max_iterations=coeff*max_iterations,
                                                                           time_unit=time_unit)
-            if (current_sell - current_buy) < 0.001 * current_buy or type(current_block_trades) is not pd.DataFrame:
+            if (current_sell - current_buy) < 0.005 * current_buy or type(current_block_trades) is not pd.DataFrame:
                 n = n + n_0
                 coeff = int(n/n_0)
                 time_delta = self.timedelta_strunits(n, time_unit)
@@ -334,7 +360,7 @@ class DataSet:
 
         return block_trades
 
-    def create_single_prediction_column(self, price_data_frame, trade_data_frame, time_units='hours'):
+    def create_single_prediction_column(self, price_data_frame, trade_data_frame, buy_or_sell, time_units='hours'):
 
         if time_units == 'days':
             time_norm_constant = 24 * 3600
@@ -359,13 +385,14 @@ class DataSet:
                     return time_arr
                 trade_time = trade_data_frame[trade_ind]
                 scale_time = (trade_time - price_time).total_seconds() / time_norm_constant
-            if scale_time == 0:
+            if scale_time == 0 & trade_ind > 1:
                 return time_arr #TODO fix error that happens when scale_time is 0 because the first trade is at the first index
             #scale the data
 
-            transformation_coeff = ((-1) ** trade_ind) / full_scale
-            time_to_trade = 0.2*(((-1)**trade_ind) > 0)*full_scale + (price_data_frame.values[price_ind] - np.mean(price_data_frame.values))/full_scale + 1 #This line is meant to create jumps at trade points
+            time_to_trade = 0.05*((-1)**buy_or_sell)*trade_ind + ((price_data_frame.values[price_ind]- np.mean(price_data_frame.values))/full_scale) + 1
+            #0.1*((-1)**buy_or_sell)*trade_ind +
 
+            # transformation_coeff = ((-1) ** trade_ind) / full_scale
             #transformation_coeff = ((-1) ** trade_ind) * np.pi / (scale_time)
             #unscaled_time_to_trade = (trade_time - price_time).total_seconds() * np.pi / time_norm_constant
             #transformation_coeff = ((-1) ** trade_ind) * np.pi / (scale_time)
@@ -389,13 +416,14 @@ class DataSet:
                      sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
         price_data_frame = price_data_frame.set_index('date')
         buy_sell_data_frame = self.find_all_trades(price_data_frame, time_unit=self.time_units, n_0=n, m=m, max_iterations=max_iterations)
-        buy_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Buy_X, self.time_units)
-        sell_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Sell_X, self.time_units)
+        buy_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Buy_X, 1, self.time_units)
+        sell_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Sell_X, 0, self.time_units)
         cutoff_len = len(buy_column)
         frame_length = range(0, cutoff_len)
         sell_column = sell_column[frame_length]
         final_indxs = price_data_frame.index[frame_length]
-        prediction_frame = pd.DataFrame(data=np.hstack((buy_column, sell_column)), index=final_indxs, columns=['Buy', 'Sell'])
+
+        prediction_frame = pd.DataFrame(data=(buy_column + sell_column), index=final_indxs, columns=['Buy and Sell'])
         data_frame = self.fin_table.set_index('date')
         data_frame = data_frame.head(cutoff_len)
         self.final_table = pd.concat([data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.index])
@@ -411,8 +439,8 @@ class DataSet:
             m = n
         elif model_type == 'buy&sell':
             self.create_buy_sell_prediction_frame(time_block_length, min_distance_between_trades, 5) #TODO remove max_iterations from find_all trades as new fixes have made it redundant
-            n = -2
-            m = -3
+            n = -1 #This should be -2 for two columns
+            m = n #This should be -3 for two columns
 
         temp_input_table = self.final_table#.drop(columns='date')
         fullArr = temp_input_table.values
@@ -432,13 +460,13 @@ class CoinPriceModel:
     days = 1
     activation_func=None
     optimization_scheme="adam"
-    loss_func="mae"
+    loss_func="mean_absolute_percentage_error"
     epochs = None
     bitinfo_list = None
     google_list=None
 
     def __init__(self, date_from, date_to, model_path=None, days=None, bitinfo_list=None, google_list=None,
-               prediction_ticker='ltc', epochs=50, activ_func='sigmoid', time_units='hours', is_leakyrelu=True):
+               prediction_ticker='ltc', epochs=50, activ_func='relu', time_units='hours', is_leakyrelu=False):
         if model_path is not None:
             self.model = keras.models.load_model(model_path)
         if bitinfo_list is None:
@@ -456,7 +484,7 @@ class CoinPriceModel:
         self.activation_func = activ_func
         self.is_leakyrelu=is_leakyrelu
 
-    def build_model(self, inputs, neurons, output_size=2,
+    def build_model(self, inputs, neurons, output_size=1,
                     dropout=0.25):  #TODO make output_size someing editable outside the class
         is_leaky = self.is_leakyrelu
         activ_func = self.activation_func
@@ -468,12 +496,12 @@ class CoinPriceModel:
         self.model.add(Dropout(dropout))
 
         if is_leaky:
-            for i in range(0, 1):
-                self.model.add(Dense(units=neurons, activation="linear"))
+            for i in range(0, 3):
+                self.model.add(Dense(units=neurons, activation="linear", kernel_initializer='normal'))
                 self.model.add(LeakyReLU(alpha=0.1))
         else:
-            for i in range(0, 10):
-                self.model.add(Dense(units=neurons, activation=activ_func))
+            for i in range(0, 2):
+                self.model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         self.model.add(Dense(units=output_size, activation="linear"))
         self.model.compile(loss=loss, optimizer=optimizer)
@@ -485,10 +513,14 @@ class CoinPriceModel:
 
     def train_model(self, neuron_count=200, time_block_length=24, min_distance_between_trades=3, model_type='buy&sell'):
         self.create_arrays(time_block_length, min_distance_between_trades, model_type=model_type)
-        self.build_model(self.training_array_input, neurons=neuron_count)
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=2, verbose=0, mode='auto')
+        if model_type == 'buy&sell':
+            self.build_model(self.training_array_input, neurons=neuron_count, output_size=1)
+        else:
+            self.build_model(self.training_array_input, neurons=neuron_count)
 
-        hist = self.model.fit(self.training_array_input, self.training_array_output, epochs=self.epochs, batch_size=32, verbose=2,
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
+
+        hist = self.model.fit(self.training_array_input, self.training_array_output, epochs=self.epochs, batch_size=96, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop])
         return hist
         # if self.is_leakyrelu:
@@ -511,9 +543,10 @@ class CoinPriceModel:
         print(np.mean(test_output) - np.mean(prediction))
 
         #TODO get rid of hack method for plotting only one line here
-        plt.plot(test_input[::, -3] - np.mean(test_input[::, -3]), 'bo--')
-        plt.plot(prediction[::, 1] - np.mean(prediction[::, 1]), 'rx--')
-        #plt.plot(test_output[::, 0], 'bo--')
+        plt.plot(test_output[::, 0] - np.mean(test_output[::, 0]), 'bo--')
+        inds = np.array(range(0, len(prediction[::, 0])))
+        plt.plot(inds[prediction[::, 0] < np.mean(prediction[::, 0])], (test_output[prediction[::, 0] < np.mean(prediction[::, 0]), 0] - np.mean(test_output[::, 0])), 'rx') #0 is buy and -1 is sell
+        plt.title('Prediction')
         plt.show()
 
 # TODO add a prediction (for future data) method
@@ -521,23 +554,24 @@ class CoinPriceModel:
 
 if __name__ == '__main__':
     time_unit = 'minutes'
-    cp = CoinPriceModel("2018-05-07 00:00:00 EST", "2018-05-07 14:00:00 EST", days=15, epochs=400,
-                        google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['ltc'],
-                        time_units=time_unit, activ_func='relu', is_leakyrelu=True)
+    cp = CoinPriceModel("2018-05-05 23:00:00 EST", "2018-05-08 13:00:00 EST", days=15, epochs=400,
+                        google_list=['Etherium'], prediction_ticker='eth', bitinfo_list=['eth', 'btc'],
+                        time_units=time_unit, activ_func='relu', is_leakyrelu=True) #TODO Find and fix error  “Buffer has wrong number of dimensions (expected 1, got 2)” that appears when adding more than one entry in bitinfo_list
 
-    cp.train_model(neuron_count=3, time_block_length=60, min_distance_between_trades=5, model_type='buy&sell')
-    cp.test_model(from_date="2018-05-07 14:05:00 EST", to_date="2018-05-07 23:30:00 EST", time_units=time_unit, model_type='buy&sell')
-    # hist = []
-    #
-    # neuron_grid = [2,3,5,10,20,50,100,200,500,1000,5000]
+
+    cp.train_model(neuron_count=1, time_block_length=60, min_distance_between_trades=15, model_type='buy&sell')
+    cp.test_model(from_date="2018-05-08 13:00:00 EST", to_date="2018-05-08 20:30:00 EST", time_units=time_unit, model_type='buy&sell')
+    #hist = []
+
+    #neuron_grid = [2,3,5,10,20,30,40,50,100,200,500]
     # neuron_grid = [2,3,4,5,6,7,8,9,10,20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000]
-    #
-    # for neuron_count in neuron_grid:
-    #     current_hist = cp.train_model(neuron_count=neuron_count, time_block_length=60, min_distance_between_trades=5)
-    #     hist.append(current_hist.history['val_loss'][-1])
-    #
-    # plt.plot(neuron_grid, hist, 'bo--')
-    # plt.show()
+
+    #for neuron_count in neuron_grid:
+    #    current_hist = cp.train_model(neuron_count=neuron_count, time_block_length=60, min_distance_between_trades=5, model_type='price')
+    #    hist.append(current_hist.history['val_loss'][-1])
+
+    #plt.plot(neuron_grid, hist, 'bo--')
+    #plt.show()
 
 
     #cp = CoinPriceModel("2018-04-07 20:00:00 EST", "2018-04-25 20:00:00 EST", days=3, epochs=400, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'bnb', 'ltc'], time_units=time_unit, activ_func='sigmoid', is_leakyrelu=True)#for hours
