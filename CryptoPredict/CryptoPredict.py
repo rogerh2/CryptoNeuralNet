@@ -14,6 +14,7 @@ from keras.layers import LeakyReLU
 from cryptory import Cryptory
 from pytrends.request import TrendReq
 from sklearn.preprocessing import StandardScaler
+import pytz
 
 
 
@@ -31,11 +32,15 @@ class cryptocompare:
             self.exchange = exchange
 
         fmt = '%Y-%m-%d %H:%M:%S %Z'
-        self.date_from = datetime.strptime(date_from, fmt)
+        naive_date_from = datetime.strptime(date_from, fmt)
+        est = pytz.timezone('America/New_York')
+        est_date_from = est.localize(naive_date_from)
+        utc = pytz.UTC
+        self.date_from = est_date_from.astimezone(utc)
 
     def datedelta(self, units):
         d1_ts = time.mktime(self.date_from.timetuple())
-        d2_ts = time.mktime(datetime.now().timetuple())
+        d2_ts = time.mktime(datetime.utcnow().timetuple())
 
         if units == "days":
             del_date = int((d2_ts-d1_ts)/86400)
@@ -113,23 +118,23 @@ class cryptocompare:
         limit = self.datedelta("minutes")
         first_lim = limit
 
-        if limit > 2000:
-            first_lim = 2000
+        if limit > 2001:
+            first_lim = 2001
 
         url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}' \
             .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate)
         if exchange:
             url += '&e={}'.format(exchange)
 
-        loop_len = int(np.ceil(limit/2000))
-        if limit > 2000: #This if statement is to allow the gathering of historical minute data beyond 2000 points (the limit)
+        loop_len = int(np.ceil(limit/2001))
+        if limit > 2001: #This if statement is to allow the gathering of historical minute data beyond 2000 points (the limit)
             df, time_stamp = self.create_data_frame(url, symbol, return_time_stamp=True)
-            for num in range(0, loop_len):
+            for num in range(1, loop_len):
                 toTs = time_stamp - 60 # have to subtract a value of 60 had to be added to avoid repeated indices
                 url_new = url + '&toTs={}'.format(toTs)
                 if num == (loop_len - 1):
                     url_new = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                        .format(symbol.upper(), comparison_symbol.upper(), limit - num*2000, aggregate, toTs)
+                        .format(symbol.upper(), comparison_symbol.upper(), limit - num*2001, aggregate, toTs)
                 df_to_append, time_stamp = self.create_data_frame(url_new, symbol, return_time_stamp=True)
                 df = df_to_append.append(df, ignore_index=True) #The earliest data goes on top
             return df
@@ -158,7 +163,7 @@ class cryptocompare:
         data = page.json()['Data']
         return data
 
-    def live_social_status(self, symbol, symbol_id_dict={}):
+    def live_social_status(self, symbol, symbol_id_dict=None):
 
         if not symbol_id_dict:
             symbol_id_dict = {
@@ -169,6 +174,19 @@ class cryptocompare:
         symbol_id = symbol_id_dict[symbol.upper()]
         url = 'https://www.cryptocompare.com/api/data/socialstats/?id={}' \
             .format(symbol_id)
+        page = requests.get(url)
+        data = page.json()['Data']
+        return data
+
+    def news(self, symbol, date_before=None):
+        fmt = '%Y-%m-%d %H:%M:%S %Z'
+        naive_date_before = datetime.strptime(date_before, fmt)
+        est = pytz.timezone('America/New_York')
+        est_date_before = est.localize(naive_date_before)
+        utc = pytz.UTC
+        date_before = est_date_before.astimezone(utc)
+        url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={},Blockchain&lTs={}" \
+        .format(symbol.upper(), int(date_before.timestamp()))
         page = requests.get(url)
         data = page.json()['Data']
         return data
