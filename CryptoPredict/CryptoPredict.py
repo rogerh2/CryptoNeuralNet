@@ -112,7 +112,7 @@ class cryptocompare:
         df = self.create_data_frame(url, symbol)
         return df
 
-    def minute_price_historical(self, symbol='LTC', aggregate = 1): #TODO this method returns a few hours too many points, reason unkown. Fix this
+    def minute_price_historical(self, symbol='LTC', aggregate = 1): #TODO this method one hours less than it should, reason unkown. Fix this
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         limit = self.datedelta("minutes")
