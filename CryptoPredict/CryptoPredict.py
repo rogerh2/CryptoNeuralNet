@@ -198,9 +198,11 @@ class DataSet:
             price_func = lambda symbol: cryp_obj.minute_price_historical(symbol=symbol)
 
         self.price_func = price_func
-        for sym in bitinfo_list[1:-1]:
-            cryp_obj.symbol = sym
+        for num in range(1,len(bitinfo_list)):
+            #cryp_obj.symbol = sym
+            sym = bitinfo_list[num]
             temp_table = price_func(symbol=sym)
+            temp_table = temp_table.drop(columns='date')
             fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
 
         self.fin_table = fin_table
@@ -426,7 +428,7 @@ class DataSet:
         prediction_frame = pd.DataFrame(data=(buy_column + sell_column), index=final_indxs, columns=['Buy and Sell'])
         data_frame = self.fin_table.set_index('date')
         data_frame = data_frame.head(cutoff_len)
-        self.final_table = pd.concat([data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.index])
+        self.final_table = pd.concat([data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.drop_duplicates().index])
 
     def create_arrays(self, model_type='buy&sell', time_block_length=24, min_distance_between_trades=3):
         if model_type == 'price':
@@ -544,10 +546,11 @@ class CoinPriceModel:
 
         #TODO get rid of hack method for plotting only one line here
         plt.plot(test_output[::, 0] - np.mean(test_output[::, 0]), 'bo--')
-        inds = np.array(range(0, len(prediction[::, 0])))
-        plt.plot(inds[prediction[::, 0] < np.mean(prediction[::, 0])], (test_output[prediction[::, 0] < np.mean(prediction[::, 0]), 0] - np.mean(test_output[::, 0])), 'rx') #0 is buy and -1 is sell
         plt.title('Prediction')
+        plt.plot(prediction[::, 0] - np.mean(prediction[::, 0]), 'rx--')
         plt.show()
+        # inds = np.array(range(0, len(prediction[::, 0])))
+        # plt.plot(inds[prediction[::, 0] < np.mean(prediction[::, 0])], (test_output[prediction[::, 0] < np.mean(prediction[::, 0]), 0] - np.mean(test_output[::, 0])), 'rx') #0 is buy and -1 is sell
 
 # TODO add a prediction (for future data) method
 # TODO try using a classifier Neural Net
@@ -555,8 +558,8 @@ class CoinPriceModel:
 if __name__ == '__main__':
     time_unit = 'minutes'
     cp = CoinPriceModel("2018-05-05 23:00:00 EST", "2018-05-08 13:00:00 EST", days=15, epochs=400,
-                        google_list=['Etherium'], prediction_ticker='eth', bitinfo_list=['eth', 'btc'],
-                        time_units=time_unit, activ_func='relu', is_leakyrelu=True) #TODO Find and fix error  “Buffer has wrong number of dimensions (expected 1, got 2)” that appears when adding more than one entry in bitinfo_list
+                        google_list=['Etherium'], prediction_ticker='eth', bitinfo_list=['eth', 'btc', 'bnb'],
+                        time_units=time_unit, activ_func='relu', is_leakyrelu=True)
 
 
     cp.train_model(neuron_count=1, time_block_length=60, min_distance_between_trades=15, model_type='buy&sell')
