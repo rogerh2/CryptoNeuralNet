@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import keras
 import pytz
+import pickle
 from textblob import TextBlob as txb
 from keras.models import Sequential
 from keras.layers import Activation, Dense
@@ -30,7 +31,7 @@ class cryptocompare:
     comparison_symbols = ['USD']
     exchange = ''
 
-    def __init__(self, comparison_symbols=None, exchange=None, date_from=None):
+    def __init__(self, comparison_symbols=None, exchange=None, date_from=None, date_to=None):
 
         if comparison_symbols:
             self.comparison_symbols = comparison_symbols
@@ -45,9 +46,18 @@ class cryptocompare:
         utc = pytz.UTC
         self.date_from = est_date_from.astimezone(utc)
 
+        if date_to:
+            naive_date_to = datetime.strptime(date_to, fmt)
+            est_date_to = est.localize(naive_date_to)
+
+        self.date_to = est_date_to.astimezone(utc)
+
     def datedelta(self, units):
         d1_ts = time.mktime(self.date_from.timetuple())
-        d2_ts = time.mktime(datetime.utcnow().timetuple())
+        if self.date_to:
+            d2_ts = time.mktime(self.date_to.timetuple())
+        else:
+            d2_ts = time.mktime(datetime.utcnow().timetuple())
 
         if units == "days":
             del_date = int((d2_ts-d1_ts)/86400)
@@ -96,8 +106,12 @@ class cryptocompare:
             all_data=False
             limit = self.datedelta("days")
 
-        url = 'https://min-api.cryptocompare.com/data/histoday?fsym={}&tsym={}&limit={}&aggregate={}' \
-            .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
+        if self.date_to:
+            url = 'https://min-api.cryptocompare.com/data/histoday?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
+                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate, self.date_to.timestamp())
+        else:
+            url = 'https://min-api.cryptocompare.com/data/histoday?fsym={}&tsym={}&limit={}&aggregate={}' \
+                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
         if exchange:
             url += '&e={}'.format(exchange)
         if all_data:
@@ -111,8 +125,12 @@ class cryptocompare:
         exchange = self.exchange
         limit = self.datedelta("hours")
 
-        url = 'https://min-api.cryptocompare.com/data/histohour?fsym={}&tsym={}&limit={}&aggregate={}' \
-            .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
+        if self.date_to:
+            url = 'https://min-api.cryptocompare.com/data/histohour?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
+                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate, self.date_to.timestamp())
+        else:
+            url = 'https://min-api.cryptocompare.com/data/histohour?fsym={}&tsym={}&limit={}&aggregate={}' \
+                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
         if exchange:
             url += '&e={}'.format(exchange)
 
@@ -128,8 +146,13 @@ class cryptocompare:
         if limit > 2001:
             first_lim = 2001
 
-        url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}' \
-            .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate)
+        if self.date_to:
+            url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
+                .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate, self.date_to.timestamp())
+        else:
+            url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}' \
+                .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate)
+
         if exchange:
             url += '&e={}'.format(exchange)
 
@@ -207,7 +230,7 @@ class DataSet:
             bitinfo_list = ['btc', 'eth']
         if google_list is None:
             google_list = ['Litecoin']
-        cryp_obj = cryptocompare(date_from=date_from)
+        cryp_obj = cryptocompare(date_from=date_from, date_to=date_to)
         self.cryp_obj = cryp_obj
 
         #This adds the price data from the bitinfo_list currencies to the DataFrame
@@ -269,7 +292,7 @@ class DataSet:
         cryp_obj.symbol = self.prediction_ticker
         sym = self.prediction_ticker
         temp_prediction_table = self.price_func(symbol=sym)
-        prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
+        unscaled_prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
 
 
         # if google_list:
@@ -278,6 +301,10 @@ class DataSet:
         # else:
         #     self.final_table = pd.concat([fin_table, prediction_table], axis=1,
         #                                  join_axes=[prediction_table.index])
+
+        zerod_prediction_values = unscaled_prediction_table.values - np.min(unscaled_prediction_table.values)
+        scaled_prediction_values = zerod_prediction_values/np.max(zerod_prediction_values)
+        prediction_table = pd.DataFrame({'Future Open':scaled_prediction_values[::, 0]}, index=unscaled_prediction_table.index)
 
         fin_table = pd.concat([self.fin_table, prediction_table], axis=1, join_axes=[prediction_table.index])
         data_frame = fin_table.set_index('date')
@@ -459,7 +486,6 @@ class DataSet:
                 time_arr = np.vstack((time_arr, np.array([time_to_trade])))
         return time_arr
 
-
     def create_buy_sell_prediction_frame(self, n, m, max_iterations):
         cryp_obj = self.cryp_obj
         cryp_obj.symbol = self.prediction_ticker
@@ -607,7 +633,7 @@ class CoinPriceModel:
 
 if __name__ == '__main__':
     time_unit = 'hours'
-    cp = CoinPriceModel("2018-04-10 23:00:00 EST", "2018-05-5 13:00:00 EST", days=15, epochs=400,
+    cp = CoinPriceModel("2018-04-05 22:00:00 EST", "2018-05-05 22:00:00 EST", days=4, epochs=400,
                         google_list=['Etherium'], prediction_ticker='eth', bitinfo_list=['eth'],
                         time_units=time_unit, activ_func='relu', is_leakyrelu=True)
 
