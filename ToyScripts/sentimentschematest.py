@@ -6,7 +6,7 @@ from CryptoPredict.CryptoPredict import cryptocompare
 from textblob import TextBlob as txb
 from datetime import datetime
 
-cp = cryptocompare(date_from="2018-05-03 08:30:00 EST")
+cp = cryptocompare(date_from="2018-04-10 08:30:00 EST")
 price_df = cp.hourly_price_historical(symbol='ETH', aggregate=1)
 sentiment_schema_1 = [] #sentiment sum
 sentiment_schema_2 = [] #number of articles in last 5hrs
@@ -45,7 +45,7 @@ for current_dt in price_df.index.values:
     sentiment_schema_3.append(news_count+news_count_sentiment_sum)
 
     iterations_complete += 1
-    print(str(int(100*iterations_complete/total_len)) + '% complete')
+    print(str(round(100*iterations_complete/total_len, 1)) + '% complete')
 
 
 open_price_df = pd.DataFrame({'Price':roge_normalization(price_df.ETH_open.values)}, index=price_df.index)

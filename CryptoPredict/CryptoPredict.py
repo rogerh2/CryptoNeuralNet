@@ -6,6 +6,8 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import keras
+import pytz
+from textblob import TextBlob as txb
 from keras.models import Sequential
 from keras.layers import Activation, Dense
 from keras.layers import LSTM
@@ -14,9 +16,14 @@ from keras.layers import LeakyReLU
 from cryptory import Cryptory
 from pytrends.request import TrendReq
 from sklearn.preprocessing import StandardScaler
-import pytz
 
 
+def convert_time_to_uct(naive_date_from):
+    est = pytz.timezone('America/New_York')
+    est_date_from = est.localize(naive_date_from)
+    utc = pytz.UTC
+    utc_date = est_date_from.astimezone(utc)
+    return utc_date
 
 class cryptocompare:
 
@@ -185,7 +192,7 @@ class cryptocompare:
         est_date_before = est.localize(naive_date_before)
         utc = pytz.UTC
         date_before = est_date_before.astimezone(utc)
-        url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={},Blockchain&lTs={}" \
+        url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={},Blockchain,Mining,Trading,Market&lTs={}" \
         .format(symbol.upper(), int(date_before.timestamp()))
         page = requests.get(url)
         data = page.json()['Data']
@@ -203,6 +210,7 @@ class DataSet:
         cryp_obj = cryptocompare(date_from=date_from)
         self.cryp_obj = cryp_obj
 
+        #This adds the price data from the bitinfo_list currencies to the DataFrame
         sym = bitinfo_list[0]
 
         if time_units == 'days':
@@ -223,6 +231,32 @@ class DataSet:
             temp_table = temp_table.drop(columns='date')
             fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
 
+        #This section adds the news data
+        total_len = len(fin_table)
+        news_sentiment = []
+        news_count = []
+        iterations_complete = 0
+
+        for current_dt in fin_table.date.values:
+            current_dt = pd.to_datetime(current_dt)
+            current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
+            current_sentiment = [txb(news['title']).sentiment.polarity for news in current_news]
+
+            sentiment_sum = np.sum(current_sentiment)
+            news_sentiment.append(sentiment_sum)
+
+            utc_current_dt = convert_time_to_uct(current_dt)
+            delta_ts = utc_current_dt.timestamp() - 5 * 3600
+            current_news_count = np.sum([news['published_on'] > delta_ts for news in current_news])
+            news_count.append(current_news_count)
+
+            iterations_complete += 1
+            print('news scraping ' + str(round(100 * iterations_complete / total_len, 1)) + '% complete')
+
+        temp_table = pd.DataFrame({'Sentiment': news_sentiment, 'News Frequency': news_count}, index=fin_table.index)
+        fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
+
+        #This section adds the relevat data to the DataSet
         self.fin_table = fin_table
         self.prediction_ticker = prediction_ticker
         self.date_to = date_to
@@ -560,8 +594,6 @@ class CoinPriceModel:
         test_output = test_data.output_array
         prediction = self.model.predict(test_input)
 
-        print(np.mean(test_output) - np.mean(prediction))
-
         #TODO get rid of hack method for plotting only one line here
         plt.plot(test_output[::, 0] - np.mean(test_output[::, 0]), 'bo--')
         plt.title('Prediction')
@@ -574,14 +606,14 @@ class CoinPriceModel:
 # TODO try using a classifier Neural Net
 
 if __name__ == '__main__':
-    time_unit = 'minutes'
-    cp = CoinPriceModel("2018-05-05 23:00:00 EST", "2018-05-08 13:00:00 EST", days=15, epochs=400,
-                        google_list=['Etherium'], prediction_ticker='eth', bitinfo_list=['eth', 'btc', 'bnb'],
+    time_unit = 'hours'
+    cp = CoinPriceModel("2018-04-10 23:00:00 EST", "2018-05-5 13:00:00 EST", days=15, epochs=400,
+                        google_list=['Etherium'], prediction_ticker='eth', bitinfo_list=['eth'],
                         time_units=time_unit, activ_func='relu', is_leakyrelu=True)
 
 
-    cp.train_model(neuron_count=1, time_block_length=60, min_distance_between_trades=15, model_type='buy&sell')
-    cp.test_model(from_date="2018-05-08 13:00:00 EST", to_date="2018-05-08 20:30:00 EST", time_units=time_unit, model_type='buy&sell')
+    cp.train_model(neuron_count=100, time_block_length=60, min_distance_between_trades=15, model_type='price')
+    cp.test_model(from_date="2018-05-05 14:00:00 EST", to_date="2018-05-10 20:30:00 EST", time_units=time_unit, model_type='price')
     #hist = []
 
     #neuron_grid = [2,3,5,10,20,30,40,50,100,200,500]
