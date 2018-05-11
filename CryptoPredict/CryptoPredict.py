@@ -108,7 +108,7 @@ class cryptocompare:
 
         if self.date_to:
             url = 'https://min-api.cryptocompare.com/data/histoday?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate, self.date_to.timestamp())
+                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate, int(self.date_to.timestamp()))
         else:
             url = 'https://min-api.cryptocompare.com/data/histoday?fsym={}&tsym={}&limit={}&aggregate={}' \
                 .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
@@ -127,7 +127,7 @@ class cryptocompare:
 
         if self.date_to:
             url = 'https://min-api.cryptocompare.com/data/histohour?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate, self.date_to.timestamp())
+                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate, int(self.date_to.timestamp()))
         else:
             url = 'https://min-api.cryptocompare.com/data/histohour?fsym={}&tsym={}&limit={}&aggregate={}' \
                 .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
@@ -152,7 +152,8 @@ class cryptocompare:
         else:
             url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}' \
                 .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate)
-
+        temp_url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}' \
+            .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate)
         if exchange:
             url += '&e={}'.format(exchange)
 
@@ -161,7 +162,7 @@ class cryptocompare:
             df, time_stamp = self.create_data_frame(url, symbol, return_time_stamp=True)
             for num in range(1, loop_len):
                 toTs = time_stamp - 60 # have to subtract a value of 60 had to be added to avoid repeated indices
-                url_new = url + '&toTs={}'.format(toTs)
+                url_new = temp_url + '&toTs={}'.format(toTs)
                 if num == (loop_len - 1):
                     url_new = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
                         .format(symbol.upper(), comparison_symbol.upper(), limit - num*2001, aggregate, toTs)
@@ -292,19 +293,7 @@ class DataSet:
         cryp_obj.symbol = self.prediction_ticker
         sym = self.prediction_ticker
         temp_prediction_table = self.price_func(symbol=sym)
-        unscaled_prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
-
-
-        # if google_list:
-        #     google_table = cryp_obj.get_google_trends(google_list)
-        #     self.final_table = pd.concat([fin_table, google_table, prediction_table], axis=1, join_axes=[prediction_table.index])
-        # else:
-        #     self.final_table = pd.concat([fin_table, prediction_table], axis=1,
-        #                                  join_axes=[prediction_table.index])
-
-        zerod_prediction_values = unscaled_prediction_table.values - np.min(unscaled_prediction_table.values)
-        scaled_prediction_values = zerod_prediction_values/np.max(zerod_prediction_values)
-        prediction_table = pd.DataFrame({'Future Open':scaled_prediction_values[::, 0]}, index=unscaled_prediction_table.index)
+        prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
 
         fin_table = pd.concat([self.fin_table, prediction_table], axis=1, join_axes=[prediction_table.index])
         data_frame = fin_table.set_index('date')
@@ -531,6 +520,17 @@ class DataSet:
         temp_input_array = scaler.fit_transform(temp_input_array)
         self.input_array = temp_input_array.reshape(temp_input_array.shape[0], temp_input_array.shape[1], 1)
 
+    def create_prediction_arrays(self):
+        data_frame = self.fin_table.set_index('date')
+        temp_input_array = data_frame.values
+        scaler = StandardScaler()
+        temp_array = temp_input_array[np.logical_not(np.isnan(np.sum(temp_input_array, axis=1))), ::]
+        temp_array = scaler.fit_transform(temp_array)
+        self.input_array = temp_array.reshape(temp_array.shape[0], temp_array.shape[1], 1)
+        self.output_array = data_frame[self.prediction_ticker.upper() + '_open'].values
+        self.final_table=data_frame
+
+
 class CoinPriceModel:
 
     model = None
@@ -546,7 +546,7 @@ class CoinPriceModel:
     google_list=None
 
     def __init__(self, date_from, date_to, model_path=None, days=None, bitinfo_list=None, google_list=None,
-               prediction_ticker='ltc', epochs=50, activ_func='relu', time_units='hours', is_leakyrelu=False):
+               prediction_ticker='ltc', epochs=50, activ_func='relu', time_units='hours', is_leakyrelu=False, need_data_obj=True):
         if model_path is not None:
             self.model = keras.models.load_model(model_path)
         if bitinfo_list is None:
@@ -556,8 +556,9 @@ class CoinPriceModel:
         if days is not None:
             self.days = days
         self.prediction_ticker = prediction_ticker
-        self.dataObj = DataSet(date_from=date_from, date_to=date_to, days=self.days, bitinfo_list=bitinfo_list,
-                               google_list=google_list, prediction_ticker=prediction_ticker, time_units=time_units)
+        if need_data_obj:
+            self.dataObj = DataSet(date_from=date_from, date_to=date_to, days=self.days, bitinfo_list=bitinfo_list,
+                                google_list=google_list, prediction_ticker=prediction_ticker, time_units=time_units)
         self.epochs = epochs
         self.bitinfo_list = bitinfo_list
         self.google_list = google_list
@@ -591,7 +592,7 @@ class CoinPriceModel:
         self.training_array_input = self.dataObj.input_array
         self.training_array_output = self.dataObj.output_array
 
-    def train_model(self, neuron_count=200, time_block_length=24, min_distance_between_trades=3, model_type='buy&sell'):
+    def train_model(self, neuron_count=200, time_block_length=24, min_distance_between_trades=3, model_type='buy&sell', save_model=False):
         self.create_arrays(time_block_length, min_distance_between_trades, model_type=model_type)
         if model_type == 'buy&sell':
             self.build_model(self.training_array_input, neurons=neuron_count, output_size=1)
@@ -602,17 +603,19 @@ class CoinPriceModel:
 
         hist = self.model.fit(self.training_array_input, self.training_array_output, epochs=self.epochs, batch_size=96, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop])
-        return hist
-        # if self.is_leakyrelu:
-        #     self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/'+self.prediction_ticker + 'model_' + str(
-        #         self.days) + 'dys_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
-        #         self.epochs) + 'epochs_'+ str(neuron_count) + 'neuron'+'.h5')
-        # else:
-        #     self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/'+self.prediction_ticker + 'model_' + str(
-        #         self.days) + 'dys_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
-        #         self.epochs) + 'epochs_' + str(neuron_count) + 'neurons' + '.h5')
 
-    def test_model(self, from_date, to_date, time_units='hours', model_type='buy&sell'):
+        if self.is_leakyrelu & save_model: #TODO add more detail to saves
+            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/'+self.prediction_ticker + 'model_' + str(
+                self.days) + 'dys_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
+                self.epochs) + 'epochs_'+ str(neuron_count) + 'neuron'+'.h5')
+        elif save_model:
+            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/'+self.prediction_ticker + 'model_' + str(
+                self.days) + 'dys_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
+                self.epochs) + 'epochs_' + str(neuron_count) + 'neurons' + '.h5')
+
+        return hist
+
+    def test_model(self, from_date, to_date, time_units='hours', model_type='price'):
         test_data = DataSet(date_from=from_date, date_to=to_date, days=self.days, bitinfo_list=self.bitinfo_list,
                                google_list=self.google_list, prediction_ticker=self.prediction_ticker, time_units=time_units)
         test_data.create_arrays(model_type=model_type)
@@ -621,38 +624,74 @@ class CoinPriceModel:
         prediction = self.model.predict(test_input)
 
         #TODO get rid of hack method for plotting only one line here
-        plt.plot(test_output[::, 0] - np.mean(test_output[::, 0]), 'bo--')
+        zerod_output = test_output[::, 0] - np.mean(test_output[::, 0])
+        zerod_prediction = prediction[::, 0] - np.mean(prediction[::, 0])
+        plt.plot(zerod_output/(np.max(zerod_output)), 'bo--')
+        plt.plot(zerod_prediction/(np.max(zerod_prediction)), 'rx--')
         plt.title('Prediction')
-        plt.plot(prediction[::, 0] - np.mean(prediction[::, 0]), 'rx--')
         plt.show()
         # inds = np.array(range(0, len(prediction[::, 0])))
         # plt.plot(inds[prediction[::, 0] < np.mean(prediction[::, 0])], (test_output[prediction[::, 0] < np.mean(prediction[::, 0]), 0] - np.mean(test_output[::, 0])), 'rx') #0 is buy and -1 is sell
 
+    def create_standard_dates(self, date):
+        utc_to_date = datetime.utcnow()
+        utc = pytz.UTC
+        est = pytz.timezone('America/New_York')
+        utc_to_date = utc.localize(utc_to_date)
+        to_date = utc_to_date.astimezone(est)
+        return to_date
+
+    def predict(self, time_units='hours'):
+        fmt = '%Y-%m-%d %H:%M:%S %Z'
+        to_date = self.create_standard_dates(datetime.utcnow())
+        delta = timedelta(minutes=15)#TODO make this variable for hours or minutes or days
+        from_delta = timedelta(hours=1)
+        from_date = to_date - from_delta
+        test_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt), days=self.days, bitinfo_list=self.bitinfo_list,
+                            google_list=self.google_list, prediction_ticker=self.prediction_ticker,
+                            time_units=time_units)
+        test_data.create_prediction_arrays()
+        prediction_input = test_data.input_array #do not use the create array methods here because the output is not needed
+        prediction = self.model.predict(prediction_input)
+        price_array = test_data.output_array
+        final_price = price_array[-1]
+
+        zerod_prediction = prediction[::, 0]-np.min(prediction)
+        zerod_price = price_array-np.min(price_array)
+        prediction_table = pd.DataFrame({'Predicted': zerod_prediction/np.max(zerod_prediction)}, index=test_data.final_table.index + delta)
+        price_table = pd.DataFrame({'Current': zerod_price/np.max(zerod_price)},index=test_data.final_table.index)
+        ax1 = prediction_table.plot(style='rx--')
+        price_table.plot(style='bo--', ax=ax1)
+        plt.title(self.prediction_ticker.upper() + ' 15min Prediction')
+        plt.show()
+
+
+
 # TODO add a prediction (for future data) method
 # TODO try using a classifier Neural Net
+# TODO predict hourly price as well as minute by minute to determine best buy/sell time
 
 if __name__ == '__main__':
-    time_unit = 'hours'
-    cp = CoinPriceModel("2018-04-05 22:00:00 EST", "2018-05-05 22:00:00 EST", days=4, epochs=400,
-                        google_list=['Etherium'], prediction_ticker='eth', bitinfo_list=['eth'],
-                        time_units=time_unit, activ_func='relu', is_leakyrelu=True)
+    time_unit = 'minutes'
+    #cp = CoinPriceModel("2018-05-09 22:00:00 EST", "2018-05-10 22:00:00 EST", days=15, epochs=400,
+    #                    google_list=['Etherium'], prediction_ticker='eth', bitinfo_list=['eth'],
+    #                    time_units=time_unit, activ_func='relu', is_leakyrelu=True)
 
 
-    cp.train_model(neuron_count=100, time_block_length=60, min_distance_between_trades=15, model_type='price')
-    cp.test_model(from_date="2018-05-05 14:00:00 EST", to_date="2018-05-10 20:30:00 EST", time_units=time_unit, model_type='price')
+    #cp.train_model(neuron_count=100, time_block_length=60, min_distance_between_trades=15, model_type='price')
+    #cp.test_model(from_date="2018-05-05 14:00:00 EST", to_date="2018-05-10 20:30:00 EST", time_units=time_unit, model_type='price')
     #hist = []
 
-    #neuron_grid = [2,3,5,10,20,30,40,50,100,200,500]
+    #neuron_grid = [2,3,5,10,20,30,40,50,100,200,300,400,500]
     # neuron_grid = [2,3,4,5,6,7,8,9,10,20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000]
 
     #for neuron_count in neuron_grid:
-    #    current_hist = cp.train_model(neuron_count=neuron_count, time_block_length=60, min_distance_between_trades=5, model_type='price')
+    #    current_hist = cp.train_model(neuron_count=neuron_count, time_block_length=60, min_distance_between_trades=5, model_type='price', save_model=True)
     #    hist.append(current_hist.history['val_loss'][-1])
 
     #plt.plot(neuron_grid, hist, 'bo--')
     #plt.show()
 
-
-    #cp = CoinPriceModel("2018-04-07 20:00:00 EST", "2018-04-25 20:00:00 EST", days=3, epochs=400, google_list=['Etherium'], prediction_ticker='ltc', bitinfo_list=['btc', 'eth', 'bnb', 'ltc'], time_units=time_unit, activ_func='sigmoid', is_leakyrelu=True)#for hours
-    #cp = CoinPriceModel("2017-04-12", "2017-09-03", model_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/ToyModels/ltcmodel_7dys_leakyreluact_adamopt_maeloss_150epochs_200neuron.h5')
-    #cp.test_model(from_date="2018-04-20 20:00:00 EST", to_date="2018-05-02 21:00:00 EST", time_units=time_unit)#for hours
+    cp = CoinPriceModel("2018-05-09 22:00:00 EST", "2018-05-10 22:00:00 EST", days=15, prediction_ticker='ETH', bitinfo_list=['eth'], time_units=time_unit, model_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ethmodel_15dys_leakyreluact_adamopt_mean_absolute_percentage_errorloss_400epochs_50neuron.h5', need_data_obj=False)
+    #cp.test_model(from_date="2018-05-10 23:20:00 EST", to_date="2018-05-10 23:50:00 EST", time_units=time_unit, model_type='price')
+    cp.predict(time_units='minutes')
