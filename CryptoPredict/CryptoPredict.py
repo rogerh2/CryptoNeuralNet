@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import keras
 import pytz
+import dill
 import pickle
 from textblob import TextBlob as txb
 from keras.models import Sequential
@@ -226,11 +227,9 @@ class DataSet:
     prediction_length=1
 
 
-    def __init__(self, date_from, date_to, days=None, bitinfo_list = None, google_list = None, prediction_ticker = 'ltc', time_units='hours'):
+    def __init__(self, date_from, date_to, days=None, bitinfo_list = None, prediction_ticker = 'ltc', time_units='hours', fin_table=None):
         if bitinfo_list is None:
             bitinfo_list = ['btc', 'eth']
-        if google_list is None:
-            google_list = ['Litecoin']
         cryp_obj = cryptocompare(date_from=date_from, date_to=date_to)
         self.cryp_obj = cryp_obj
 
@@ -248,40 +247,44 @@ class DataSet:
             price_func = lambda symbol: cryp_obj.minute_price_historical(symbol=symbol)
 
         self.price_func = price_func
-        for num in range(1,len(bitinfo_list)):
-            #cryp_obj.symbol = sym
-            sym = bitinfo_list[num]
-            temp_table = price_func(symbol=sym)
-            temp_table = temp_table.drop(columns='date')
+
+        if fin_table is not None:
+            self.fin_table = fin_table
+        else:
+            for num in range(1,len(bitinfo_list)):
+                #cryp_obj.symbol = sym
+                sym = bitinfo_list[num]
+                temp_table = price_func(symbol=sym)
+                temp_table = temp_table.drop(columns='date')
+                fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
+
+            #This section adds the news data
+            total_len = len(fin_table)
+            news_sentiment = []
+            news_count = []
+            iterations_complete = 0
+
+            for current_dt in fin_table.date.values:
+                current_dt = pd.to_datetime(current_dt)
+                current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
+                current_sentiment = [txb(news['title']).sentiment.polarity for news in current_news]
+
+                sentiment_sum = np.sum(current_sentiment)
+                news_sentiment.append(sentiment_sum)
+
+                utc_current_dt = convert_time_to_uct(current_dt)
+                delta_ts = utc_current_dt.timestamp() - 5 * 3600
+                current_news_count = np.sum([news['published_on'] > delta_ts for news in current_news])
+                news_count.append(current_news_count)
+
+                iterations_complete += 1
+                print('news scraping ' + str(round(100 * iterations_complete / total_len, 1)) + '% complete')
+
+            temp_table = pd.DataFrame({'Sentiment': news_sentiment, 'News Frequency': news_count}, index=fin_table.index)
             fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
 
-        #This section adds the news data
-        total_len = len(fin_table)
-        news_sentiment = []
-        news_count = []
-        iterations_complete = 0
-
-        for current_dt in fin_table.date.values:
-            current_dt = pd.to_datetime(current_dt)
-            current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
-            current_sentiment = [txb(news['title']).sentiment.polarity for news in current_news]
-
-            sentiment_sum = np.sum(current_sentiment)
-            news_sentiment.append(sentiment_sum)
-
-            utc_current_dt = convert_time_to_uct(current_dt)
-            delta_ts = utc_current_dt.timestamp() - 5 * 3600
-            current_news_count = np.sum([news['published_on'] > delta_ts for news in current_news])
-            news_count.append(current_news_count)
-
-            iterations_complete += 1
-            print('news scraping ' + str(round(100 * iterations_complete / total_len, 1)) + '% complete')
-
-        temp_table = pd.DataFrame({'Sentiment': news_sentiment, 'News Frequency': news_count}, index=fin_table.index)
-        fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
-
-        #This section adds the relevat data to the DataSet
-        self.fin_table = fin_table
+            #This section adds the relevat data to the DataSet
+            self.fin_table = fin_table
         self.prediction_ticker = prediction_ticker
         self.date_to = date_to
         if days is not None:
@@ -530,7 +533,6 @@ class DataSet:
         self.output_array = data_frame[self.prediction_ticker.upper() + '_open'].values
         self.final_table=data_frame
 
-
 class CoinPriceModel:
 
     model = None
@@ -556,12 +558,17 @@ class CoinPriceModel:
         if days is not None:
             self.prediction_length = days
         self.prediction_ticker = prediction_ticker
+
         if need_data_obj:
-            self.data_obj = DataSet(date_from=date_from, date_to=date_to, days=self.prediction_length, bitinfo_list=bitinfo_list,
-                                    google_list=google_list, prediction_ticker=prediction_ticker, time_units=time_units)
-        elif data_set_path:
-            with open(data_set_path, 'rb') as ds_file:
-                self.data_obj = pickle.load(ds_file)
+            if data_set_path:
+                with open(data_set_path, 'rb') as ds_file:
+                    saved_table = pickle.load(ds_file)
+            else:
+                saved_table=None
+
+            self.data_obj = DataSet(date_from=date_from, date_to=date_to, days=self.prediction_length,
+                                    bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, fin_table=saved_table)
+
 
         self.epochs = epochs
         self.bitinfo_list = bitinfo_list
@@ -621,7 +628,7 @@ class CoinPriceModel:
 
     def test_model(self, from_date, to_date, time_units='hours', model_type='price'):
         test_data = DataSet(date_from=from_date, date_to=to_date, days=self.prediction_length, bitinfo_list=self.bitinfo_list,
-                            google_list=self.google_list, prediction_ticker=self.prediction_ticker, time_units=time_units)
+                            prediction_ticker=self.prediction_ticker, time_units=time_units)
         test_data.create_arrays(model_type=model_type)
         test_input = test_data.input_array
         test_output = test_data.output_array
@@ -637,7 +644,7 @@ class CoinPriceModel:
         # inds = np.array(range(0, len(prediction[::, 0])))
         # plt.plot(inds[prediction[::, 0] < np.mean(prediction[::, 0])], (test_output[prediction[::, 0] < np.mean(prediction[::, 0]), 0] - np.mean(test_output[::, 0])), 'rx') #0 is buy and -1 is sell
 
-    def create_standard_dates(self, date):
+    def create_standard_dates(self):
         utc_to_date = datetime.utcnow()
         utc = pytz.UTC
         est = pytz.timezone('America/New_York')
@@ -645,29 +652,53 @@ class CoinPriceModel:
         to_date = utc_to_date.astimezone(est)
         return to_date
 
-    def predict(self, time_units='hours'):
+    def predict(self, time_units='hours', show_plots=True):
         fmt = '%Y-%m-%d %H:%M:%S %Z'
-        to_date = self.create_standard_dates(datetime.utcnow())
-        delta = timedelta(minutes=self.prediction_length)
-        from_delta = timedelta(hours=1)
+        to_date = self.create_standard_dates()
+
+        if time_units == 'minutes':
+            delta = timedelta(minutes=self.prediction_length)
+            from_delta = timedelta(hours=1)
+        elif time_units == 'hours':
+            delta = timedelta(hours=self.prediction_length)
+            from_delta = timedelta(days=3)
+        elif time_units == 'days':
+            delta = timedelta(days=self.prediction_length)
+            from_delta = timedelta(days=30)
+
         from_date = to_date - from_delta
         test_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt), days=self.prediction_length, bitinfo_list=self.bitinfo_list,
-                            google_list=self.google_list, prediction_ticker=self.prediction_ticker,
-                            time_units=time_units)
+                            prediction_ticker=self.prediction_ticker, time_units=time_units)
         test_data.create_prediction_arrays()
         prediction_input = test_data.input_array #do not use the create array methods here because the output is not needed
         prediction = self.model.predict(prediction_input)
         price_array = test_data.output_array
-        final_price = price_array[-1]
 
         zerod_prediction = prediction[::, 0]-np.min(prediction)
         zerod_price = price_array-np.min(price_array)
         prediction_table = pd.DataFrame({'Predicted': zerod_prediction/np.max(zerod_prediction)}, index=test_data.final_table.index + delta)
         price_table = pd.DataFrame({'Current': zerod_price/np.max(zerod_price)},index=test_data.final_table.index)
-        ax1 = prediction_table.plot(style='rx--')
-        price_table.plot(style='bo--', ax=ax1)
-        plt.title(self.prediction_ticker.upper() + ' 15min Prediction')
-        plt.show()
+
+        if show_plots:
+            ax1 = prediction_table.plot(style='rx--')
+            price_table.plot(style='bo--', ax=ax1)
+            plt.title(self.prediction_ticker.upper() + ' 15min Prediction')
+            plt.show()
+        else:
+            return prediction_table, price_table
+
+class BaseTradingBot: #TODO FInish BaseTradingBot
+    def __init__(self, hourly_model, minute_model, hourly_len=4, minute_len=15, prediction_ticker='ETH'):
+
+        temp = "2018-05-05 00:00:00 EST"
+        self.hourly_cp = CoinPriceModel(temp, temp, days=hourly_len, prediction_ticker=prediction_ticker,
+                                        bitinfo_list=bitinfo_list, time_units='hours', model_path=hourly_model, need_data_obj=False)
+
+        self.minute_cp = CoinPriceModel(date_from, date_to, days=minute_len, prediction_ticker=prediction_ticker,
+                                        bitinfo_list=bitinfo_list, time_units='minutes', model_path=minute_model, need_data_obj=False)
+
+#    def find_trades(self):
+
 
 
 
@@ -685,10 +716,10 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
         cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
                             time_units=time_unit, activ_func=activ_func, is_leakyrelu=isleakyrelu)
 
-        cp_file_name = '_from_' + date_from + '_to_' + date_to
-        cp_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + cp_file_name.replace(' ', '_')
-        with open(cp_file_name, 'wb') as cp_file_handle:
-            pickle.dump(cp.data_obj, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+        table_file_name = '_' + time_unit + '_' + model_type + '_from_' + date_from + '_to_' + date_to + '.pickle'
+        table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + table_file_name.replace(' ', '_')
+        with open(table_file_name, 'wb') as cp_file_handle:
+            pickle.dump(cp.data_obj.fin_table, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     # 'test' will train a model with given conditions then test it, 'optimize' optimizes neuron count by evaluation data loss, 'predict' predicts data
     if use_type == 'test':
@@ -712,20 +743,20 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
                             bitinfo_list=bitinfo_list, time_units=time_unit,
                             model_path=model_path,
                             need_data_obj=False)
-        cp.predict(time_units='minutes')
+        cp.predict(time_units='minutes', show_plots=False)
 
 
 if __name__ == '__main__':
 
-    date_from = "2018-05-09 00:00:00 EST"
-    date_to = "2018-05-12 00:00:00 EST"
-    test_date_from = "2018-05-05 14:00:00 EST"
-    test_date_to = "2018-05-10 20:30:00 EST"
-    prediction_length = 15
+    date_from = "2018-05-08 01:00:00 EST"
+    date_to = "2018-05-12 01:00:00 EST"
+    test_date_from = "2018-05-09 00:00:00 EST"
+    test_date_to = "2018-05-12 00:00:00 EST"
+    prediction_length = 1
     epochs = 500
     prediction_ticker = 'ETH'
     bitinfo_list = ['eth']
-    time_unit = 'minutes'
+    time_unit = 'hours'
     activ_func = 'relu'
     isleakyrelu = True
     neuron_count = 50
@@ -733,8 +764,9 @@ if __name__ == '__main__':
     min_distance_between_trades = 5
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy 15Min Predictions_first_test/ethmodel_15dys_leakyreluact_adamopt_mean_absolute_percentage_errorloss_400epochs_5neuron.h5'
     model_type = 'price'
-    use_type = 'predict'
+    use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+    pickle_path = None #'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_from_2018-05-05_00:00:00_EST_to_2018-05-09_00:00:00_EST.pickle'
 
     run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
                    bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
-                   min_distance_between_trades, model_path, model_type, use_type)
+                   min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path)
