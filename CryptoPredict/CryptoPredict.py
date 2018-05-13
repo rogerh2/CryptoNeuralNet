@@ -233,6 +233,7 @@ class DataSet:
         cryp_obj = cryptocompare(date_from=date_from, date_to=date_to)
         self.cryp_obj = cryp_obj
 
+        temp_fin_table = fin_table
         #This adds the price data from the bitinfo_list currencies to the DataFrame
         sym = bitinfo_list[0]
 
@@ -248,8 +249,8 @@ class DataSet:
 
         self.price_func = price_func
 
-        if fin_table is not None:
-            self.fin_table = fin_table
+        if temp_fin_table is not None:
+            self.fin_table = temp_fin_table
         else:
             for num in range(1,len(bitinfo_list)):
                 #cryp_obj.symbol = sym
@@ -723,7 +724,7 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
 
     # 'test' will train a model with given conditions then test it, 'optimize' optimizes neuron count by evaluation data loss, 'predict' predicts data
     if use_type == 'test':
-        cp.train_model(neuron_count=neuron_count, time_block_length=time_block_length, min_distance_between_trades=min_distance_between_trades, model_type=model_type)
+        cp.train_model(neuron_count=neuron_count, time_block_length=time_block_length, min_distance_between_trades=min_distance_between_trades, model_type=model_type, save_model=True)
         cp.test_model(from_date=test_date_from, to_date=test_date_to, time_units=time_unit,
                       model_type=model_type)
 
@@ -743,29 +744,29 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
                             bitinfo_list=bitinfo_list, time_units=time_unit,
                             model_path=model_path,
                             need_data_obj=False)
-        cp.predict(time_units='minutes', show_plots=False)
+        cp.predict(time_units=time_unit, show_plots=True)
 
 
 if __name__ == '__main__':
 
-    date_from = "2018-05-08 01:00:00 EST"
-    date_to = "2018-05-12 01:00:00 EST"
-    test_date_from = "2018-05-09 00:00:00 EST"
-    test_date_to = "2018-05-12 00:00:00 EST"
-    prediction_length = 1
+    date_from = "2018-04-08 19:00:00 EST"
+    date_to = "2018-05-09 09:00:00 EST"
+    test_date_from = "2018-05-09 10:00:00 EST"
+    test_date_to = "2018-05-12 20:00:00 EST"
+    prediction_length = 4
     epochs = 500
     prediction_ticker = 'ETH'
     bitinfo_list = ['eth']
     time_unit = 'hours'
     activ_func = 'relu'
     isleakyrelu = True
-    neuron_count = 50
+    neuron_count = 500
     time_block_length = 60
     min_distance_between_trades = 5
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy 15Min Predictions_first_test/ethmodel_15dys_leakyreluact_adamopt_mean_absolute_percentage_errorloss_400epochs_5neuron.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_4hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_500neuron1526188510.486146.h5'
     model_type = 'price'
-    use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-    pickle_path = None #'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_from_2018-05-05_00:00:00_EST_to_2018-05-09_00:00:00_EST.pickle'
+    use_type = 'predict' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+    pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_price_from_2018-04-08_19:00:00_EST_to_2018-05-09_09:00:00_EST.pickle'
 
     run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
                    bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
