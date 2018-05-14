@@ -18,6 +18,9 @@ from keras.layers import LeakyReLU
 from cryptory import Cryptory
 from pytrends.request import TrendReq
 from sklearn.preprocessing import StandardScaler
+import smtplib
+from email.mime.text import MIMEText
+
 
 
 def convert_time_to_uct(naive_date_from):
@@ -604,6 +607,8 @@ class CoinPriceModel:
         self.training_array_input = self.data_obj.input_array
         self.training_array_output = self.data_obj.output_array
 
+    #TODO create method to save Data Frames without testing the models
+
     def train_model(self, neuron_count=200, time_block_length=24, min_distance_between_trades=3, model_type='buy&sell', save_model=False):
         self.create_arrays(time_block_length, min_distance_between_trades, model_type=model_type)
         if model_type == 'buy&sell':
@@ -635,15 +640,13 @@ class CoinPriceModel:
         test_output = test_data.output_array
         prediction = self.model.predict(test_input)
 
-        #TODO get rid of hack method for plotting only one line here
+
         zerod_output = test_output[::, 0] - np.mean(test_output[::, 0])
         zerod_prediction = prediction[::, 0] - np.mean(prediction[::, 0])
         plt.plot(zerod_output/(np.max(zerod_output)), 'bo--')
         plt.plot(zerod_prediction/(np.max(zerod_prediction)), 'rx--')
         plt.title('Prediction')
         plt.show()
-        # inds = np.array(range(0, len(prediction[::, 0])))
-        # plt.plot(inds[prediction[::, 0] < np.mean(prediction[::, 0])], (test_output[prediction[::, 0] < np.mean(prediction[::, 0]), 0] - np.mean(test_output[::, 0])), 'rx') #0 is buy and -1 is sell
 
     def create_standard_dates(self):
         utc_to_date = datetime.utcnow()
@@ -677,18 +680,19 @@ class CoinPriceModel:
 
         zerod_prediction = prediction[::, 0]-np.min(prediction)
         zerod_price = price_array-np.min(price_array)
-        prediction_table = pd.DataFrame({'Predicted': zerod_prediction/np.max(zerod_prediction)}, index=test_data.final_table.index + delta)
+        columstr = 'Predicted' + time_units
+        prediction_table = pd.DataFrame({columstr: zerod_prediction/np.max(zerod_prediction)}, index=test_data.final_table.index + delta)
         price_table = pd.DataFrame({'Current': zerod_price/np.max(zerod_price)},index=test_data.final_table.index)
 
         if show_plots:
             ax1 = prediction_table.plot(style='rx--')
             price_table.plot(style='bo--', ax=ax1)
-            plt.title(self.prediction_ticker.upper() + ' 15min Prediction')
+            plt.title(self.prediction_ticker.upper() + ' ' + str(self.prediction_length) + ' ' + time_units + 'Prediction')
             plt.show()
         else:
-            return prediction_table, price_table
+            return prediction_table
 
-class BaseTradingBot: #TODO FInish BaseTradingBot
+class BaseTradingBot: #TODO Finish BaseTradingBot
     def __init__(self, hourly_model, minute_model, hourly_len=4, minute_len=15, prediction_ticker='ETH'):
 
         temp = "2018-05-05 00:00:00 EST"
@@ -698,15 +702,34 @@ class BaseTradingBot: #TODO FInish BaseTradingBot
         self.minute_cp = CoinPriceModel(date_from, date_to, days=minute_len, prediction_ticker=prediction_ticker,
                                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=minute_model, need_data_obj=False)
 
-#    def find_trades(self):
+    def find_data(self):
+        full_hourly_prediction = self.hourly_cp.predict(time_units='hours', show_plots=False)
+        self.hourly_prediction = full_hourly_prediction[-5::]
+        full_minute_prediction = self.minute_cp.predict(time_units='minutes', show_plots=False)
+        self.minute_prediction = full_minute_prediction[-5::]
 
+    def send_data(self):
+        #Setup SMTP server
+        s = smtplib.SMTP('smtp.gmail.com', 587)
+        s.starttls()
+        s.login('rogeh2@gmail.com', 'Neutrino#0')
 
+        send_str = str(round(self.minute_prediction, 3)) + '\n' +  str(round(self.hourly_prediction, 3))
 
+        #Create message
+        msg = MIMEText(send_str)
+        msg['From'] = 'rogeh2@gmail.com'
+        msg['To'] = 'rogeh2@gmail.com'
+        msg['Subject'] = 'Test'
+
+        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg.as_string())
+
+    #TODO add loop to send data throughout the day
 
 # TODO try using a classifier Neural Net
 # TODO predict hourly price as well as minute by minute to determine best buy/sell time
 
-def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None):
+def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None, save_test_model=True):
 
     #This creates a CoinPriceModel and saves the data
     if (data_set_path is not None) & (use_type != 'predict'):
@@ -724,13 +747,13 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
 
     # 'test' will train a model with given conditions then test it, 'optimize' optimizes neuron count by evaluation data loss, 'predict' predicts data
     if use_type == 'test':
-        cp.train_model(neuron_count=neuron_count, time_block_length=time_block_length, min_distance_between_trades=min_distance_between_trades, model_type=model_type, save_model=True)
+        cp.train_model(neuron_count=neuron_count, time_block_length=time_block_length, min_distance_between_trades=min_distance_between_trades, model_type=model_type, save_model=save_test_model)
         cp.test_model(from_date=test_date_from, to_date=test_date_to, time_units=time_unit,
                       model_type=model_type)
 
     elif use_type == 'optimize':
         hist = []
-        neuron_grid = [2, 3, 5, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+        neuron_grid = [2, 3, 5, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500]
         for neuron_count in neuron_grid:
             current_hist = cp.train_model(neuron_count=neuron_count, time_block_length=time_block_length,
                                           min_distance_between_trades=min_distance_between_trades, model_type='price', save_model=True)
@@ -749,25 +772,32 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
 
 if __name__ == '__main__':
 
-    date_from = "2018-04-08 19:00:00 EST"
-    date_to = "2018-05-09 09:00:00 EST"
-    test_date_from = "2018-05-09 10:00:00 EST"
-    test_date_to = "2018-05-12 20:00:00 EST"
-    prediction_length = 4
+    date_from = "2018-05-10 01:00:00 EST"
+    date_to = "2018-05-13 00:00:00 EST"
+    test_date_from = "2018-05-13 0:01:00 EST"
+    test_date_to = "2018-05-14 01:00:00 EST"
+    prediction_length = 15
     epochs = 500
     prediction_ticker = 'ETH'
     bitinfo_list = ['eth']
-    time_unit = 'hours'
+    time_unit = 'minutes'
     activ_func = 'relu'
     isleakyrelu = True
-    neuron_count = 500
+    neuron_count = 10
     time_block_length = 60
     min_distance_between_trades = 5
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_4hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_500neuron1526188510.486146.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_200neuron1526313868.068116.h5'
     model_type = 'price'
     use_type = 'predict' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-    pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_price_from_2018-04-08_19:00:00_EST_to_2018-05-09_09:00:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_price_from_2018-05-10_01:00:00_EST_to_2018-05-13_00:00:00_EST.pickle'
+    test_model_save_bool = False;
 
-    run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
-                   bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
-                   min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path)
+    #run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
+    #               bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
+    #               min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
+
+    hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_4hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_100neuron1526188487.734038.h5'
+    minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_200neuron1526313868.068116.h5'
+    naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
+    naive_bot.find_data()
+    naive_bot.send_data()
