@@ -20,6 +20,8 @@ from pytrends.request import TrendReq
 from sklearn.preprocessing import StandardScaler
 import smtplib
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 
 
 
@@ -34,6 +36,7 @@ class cryptocompare:
 
     comparison_symbols = ['USD']
     exchange = ''
+    aggregate = 1
 
     def __init__(self, comparison_symbols=None, exchange=None, date_from=None, date_to=None):
 
@@ -103,7 +106,7 @@ class cryptocompare:
         return df
 
 
-    def daily_price_historical(self, symbol='LTC', all_data=True, limit=1, aggregate=1):
+    def daily_price_historical(self, symbol='LTC', all_data=True, limit=1):
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         if self.date_from:
@@ -112,10 +115,10 @@ class cryptocompare:
 
         if self.date_to:
             url = 'https://min-api.cryptocompare.com/data/histoday?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate, int(self.date_to.timestamp()))
+                .format(symbol.upper(), comparison_symbol.upper(), limit, self.aggregate, int(self.date_to.timestamp()))
         else:
             url = 'https://min-api.cryptocompare.com/data/histoday?fsym={}&tsym={}&limit={}&aggregate={}' \
-                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
+                .format(symbol.upper(), comparison_symbol.upper(), limit, self.aggregate)
         if exchange:
             url += '&e={}'.format(exchange)
         if all_data:
@@ -124,24 +127,24 @@ class cryptocompare:
         df = self.create_data_frame(url, symbol)
         return df
 
-    def hourly_price_historical(self, symbol = 'LTC', aggregate=1):
+    def hourly_price_historical(self, symbol = 'LTC'):
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         limit = self.datedelta("hours")
 
         if self.date_to:
             url = 'https://min-api.cryptocompare.com/data/histohour?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate, int(self.date_to.timestamp()))
+                .format(symbol.upper(), comparison_symbol.upper(), limit, self.aggregate, int(self.date_to.timestamp()))
         else:
             url = 'https://min-api.cryptocompare.com/data/histohour?fsym={}&tsym={}&limit={}&aggregate={}' \
-                .format(symbol.upper(), comparison_symbol.upper(), limit, aggregate)
+                .format(symbol.upper(), comparison_symbol.upper(), limit, self.aggregate)
         if exchange:
             url += '&e={}'.format(exchange)
 
         df = self.create_data_frame(url, symbol)
         return df
 
-    def minute_price_historical(self, symbol='LTC', aggregate = 1): #TODO this method one hours less than it should, reason unkown. Fix this
+    def minute_price_historical(self, symbol='LTC'): #TODO this method returns one hour less than it should, reason unkown. Fix this
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         limit = self.datedelta("minutes")
@@ -152,12 +155,12 @@ class cryptocompare:
 
         if self.date_to:
             url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate, self.date_to.timestamp())
+                .format(symbol.upper(), comparison_symbol.upper(), first_lim, self.aggregate, self.date_to.timestamp())
         else:
             url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}' \
-                .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate)
+                .format(symbol.upper(), comparison_symbol.upper(), first_lim, self.aggregate)
         temp_url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}' \
-            .format(symbol.upper(), comparison_symbol.upper(), first_lim, aggregate)
+            .format(symbol.upper(), comparison_symbol.upper(), first_lim, self.aggregate)
         if exchange:
             url += '&e={}'.format(exchange)
 
@@ -169,7 +172,7 @@ class cryptocompare:
                 url_new = temp_url + '&toTs={}'.format(toTs)
                 if num == (loop_len - 1):
                     url_new = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                        .format(symbol.upper(), comparison_symbol.upper(), limit - num*2001, aggregate, toTs)
+                        .format(symbol.upper(), comparison_symbol.upper(), limit - num*2001, self.aggregate, toTs)
                 df_to_append, time_stamp = self.create_data_frame(url_new, symbol, return_time_stamp=True)
                 df = df_to_append.append(df, ignore_index=True) #The earliest data goes on top
             return df
@@ -230,10 +233,11 @@ class DataSet:
     prediction_length=1
 
 
-    def __init__(self, date_from, date_to, days=None, bitinfo_list = None, prediction_ticker = 'ltc', time_units='hours', fin_table=None):
+    def __init__(self, date_from, date_to, days=None, bitinfo_list = None, prediction_ticker = 'ltc', time_units='hours', fin_table=None, aggregate=1):
         if bitinfo_list is None:
             bitinfo_list = ['btc', 'eth']
         cryp_obj = cryptocompare(date_from=date_from, date_to=date_to)
+        cryp_obj.aggregate = aggregate
         self.cryp_obj = cryp_obj
 
         temp_fin_table = fin_table
@@ -282,7 +286,7 @@ class DataSet:
                 news_count.append(current_news_count)
 
                 iterations_complete += 1
-                print('news scraping ' + str(round(100 * iterations_complete / total_len, 1)) + '% complete')
+                print('news scraping ' + str(round(100 * iterations_complete / total_len, 2)) + '% complete')
 
             temp_table = pd.DataFrame({'Sentiment': news_sentiment, 'News Frequency': news_count}, index=fin_table.index)
             fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
@@ -552,7 +556,7 @@ class CoinPriceModel:
     google_list=None
 
     def __init__(self, date_from, date_to, model_path=None, days=None, bitinfo_list=None, google_list=None,
-               prediction_ticker='ltc', epochs=50, activ_func='relu', time_units='hours', is_leakyrelu=False, need_data_obj=True, data_set_path=None):
+                 prediction_ticker='ltc', epochs=50, activ_func='relu', time_units='hours', is_leakyrelu=False, need_data_obj=True, data_set_path=None, aggregate_val=1):
         if model_path is not None:
             self.model = keras.models.load_model(model_path)
         if bitinfo_list is None:
@@ -571,7 +575,7 @@ class CoinPriceModel:
                 saved_table=None
 
             self.data_obj = DataSet(date_from=date_from, date_to=date_to, days=self.prediction_length,
-                                    bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, fin_table=saved_table)
+                                    bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, fin_table=saved_table, aggregate=aggregate_val)
 
 
         self.epochs = epochs
@@ -596,7 +600,7 @@ class CoinPriceModel:
                 self.model.add(Dense(units=neurons, activation="linear", kernel_initializer='normal'))
                 self.model.add(LeakyReLU(alpha=0.1))
         else:
-            for i in range(0, 2):
+            for i in range(0, 3):
                 self.model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         self.model.add(Dense(units=output_size, activation="linear"))
@@ -678,22 +682,28 @@ class CoinPriceModel:
         prediction = self.model.predict(prediction_input)
         price_array = test_data.output_array
 
-        zerod_prediction = prediction[::, 0]-np.min(prediction)
-        zerod_price = price_array-np.min(price_array)
-        columstr = 'Predicted' + time_units
-        prediction_table = pd.DataFrame({columstr: zerod_prediction/np.max(zerod_prediction)}, index=test_data.final_table.index + delta)
-        price_table = pd.DataFrame({'Current': zerod_price/np.max(zerod_price)},index=test_data.final_table.index)
+        zerod_price = price_array - np.min(price_array)
+        scaled_price = zerod_price/np.max(zerod_price)
+        scaled_prediction = (prediction[::,0] - np.min(prediction))/np.max(prediction - np.min(prediction))
+        zerod_prediction = scaled_prediction + scaled_price[-1] - scaled_prediction[-self.prediction_length-1]
+        columstr = 'Predicted ' + time_units
+        prediction_table = pd.DataFrame({columstr: zerod_prediction}, index=test_data.final_table.index + delta)
+        price_table = pd.DataFrame({'Current': scaled_price},index=test_data.final_table.index)
 
         if show_plots:
             ax1 = prediction_table.plot(style='rx--')
             price_table.plot(style='bo--', ax=ax1)
-            plt.title(self.prediction_ticker.upper() + ' ' + str(self.prediction_length) + ' ' + time_units + 'Prediction')
+            plt.title(self.prediction_ticker.upper() + ' ' + str(self.prediction_length) + ' ' + time_units + ' Prediction')
             plt.show()
         else:
-            return prediction_table
+            return prediction_table, price_table
 
-class BaseTradingBot: #TODO Finish BaseTradingBot
-    def __init__(self, hourly_model, minute_model, hourly_len=4, minute_len=15, prediction_ticker='ETH'):
+class BaseTradingBot:
+
+    image_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Images//'
+    last_true_countdown = 4
+
+    def __init__(self, hourly_model, minute_model, hourly_len=6, minute_len=15, prediction_ticker='ETH'):
 
         temp = "2018-05-05 00:00:00 EST"
         self.hourly_cp = CoinPriceModel(temp, temp, days=hourly_len, prediction_ticker=prediction_ticker,
@@ -702,29 +712,121 @@ class BaseTradingBot: #TODO Finish BaseTradingBot
         self.minute_cp = CoinPriceModel(date_from, date_to, days=minute_len, prediction_ticker=prediction_ticker,
                                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=minute_model, need_data_obj=False)
 
+        self.hour_length = hourly_len
+        self.minute_length = minute_len
+        self.prediction_ticker = prediction_ticker
+
     def find_data(self):
-        full_hourly_prediction = self.hourly_cp.predict(time_units='hours', show_plots=False)
-        self.hourly_prediction = full_hourly_prediction[-5::]
-        full_minute_prediction = self.minute_cp.predict(time_units='minutes', show_plots=False)
-        self.minute_prediction = full_minute_prediction[-5::]
+        full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
+        self.hourly_prediction = full_hourly_prediction[-(self.hour_length + 4)::]
+        self.hourly_price = full_hourly_price[-4::]
+
+        full_minute_prediction, full_minute_price = self.minute_cp.predict(time_units='minutes', show_plots=False)
+        self.minute_prediction = full_minute_prediction[-(self.minute_length + 10)::]
+        self.minute_price = full_minute_price[-10::]
+
+    def prepare_images(self):
+        #This method creates, saves, and closes the figures
+        #Create minute by minute image
+        minute_ax = self.minute_prediction.plot(style='rx--')
+        self.minute_price.plot(style='bo--', ax=minute_ax)
+        minute_fig_title = self.prediction_ticker.upper() + ' ' + str(self.minute_length) + 'min' + ' Prediction'
+        plt.title(minute_fig_title)
+
+        self.current_minute_fig_filename = self.image_path + str(datetime.utcnow().timestamp()) + minute_fig_title.replace(' ', '') + '.png'
+        plt.savefig(self.current_minute_fig_filename)
+
+        #Create hourly
+        hourly_ax = self.hourly_prediction.plot(style='rx--')
+        self.hourly_price.plot(style='bo--', ax=hourly_ax)
+        hourly_fig_title = self.prediction_ticker.upper() + ' ' + str(self.hour_length) + 'hrs' + ' Prediction'
+        plt.title(hourly_fig_title)
+
+        self.current_hourly_fig_filename = self.image_path + str(datetime.utcnow().timestamp()) + hourly_fig_title.replace(' ', '') + '.png'
+        plt.savefig(self.current_hourly_fig_filename)
+
+        plt.close('all')
 
     def send_data(self):
-        #Setup SMTP server
+        #Create the message
+
+        altMsgText = MIMEText('Graphs not displaying properly!' + '\n' + str(round(self.minute_prediction, 3)) + '\n' + str(round(self.hourly_prediction, 3)))
+
+        # Create the root message and fill in the from, to, and subject headers
+        msg_root = MIMEMultipart('related')
+        msg_root['From'] = 'rogeh2@gmail.com'
+        msg_root['To'] = 'rogeh2@gmail.com'
+        msg_root['Subject'] = 'Ethereum Prediction From Your Digital Broker'
+
+        # Encapsulate the plain and HTML versions of the message body in an
+        # 'alternative' part, so message agents can decide which they want to display.
+        msg_alternative = MIMEMultipart('alternative')
+        msg_root.attach(msg_alternative)
+        msg_alternative.attach(altMsgText)
+
+        # We reference the image in the IMG SRC attribute by the ID we give it below
+        msg_text = MIMEText('Crypto currency prediction plots below.<br><img src="cid:imagem"><br><br><img src="cid:imageh"><br>', 'html')
+        msg_alternative.attach(msg_text)
+
+        self.prepare_images()
+
+        minute_fp = open(self.current_minute_fig_filename, 'rb')
+        minute_image = MIMEImage(minute_fp.read())
+        minute_fp.close()
+
+        hourly_fp = open(self.current_hourly_fig_filename, 'rb')
+        hourly_image = MIMEImage(hourly_fp.read())
+        hourly_fp.close()
+
+
+        # Define the image's ID as referenced above
+        minute_image.add_header('Content-ID', '<imagem>')
+        msg_root.attach(minute_image)
+        hourly_image.add_header('Content-ID', '<imageh>')
+        msg_root.attach(hourly_image)
+
+        # Setup the SMTP server
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
         s.login('rogeh2@gmail.com', 'Neutrino#0')
+        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg_root.as_string())
 
-        send_str = str(round(self.minute_prediction, 3)) + '\n' +  str(round(self.hourly_prediction, 3))
+    def trade_logic(self, last_bool):
+        current_price = self.hourly_prediction.values[-(self.hour_length + 1)]
+        next_price = self.hourly_prediction.values[-self.hour_length]
+        check_price = self.hourly_prediction.values[-(self.hour_length - 1)]
+        val_price = self.hourly_prediction.values[-(self.hour_length - 2)]
 
-        #Create message
-        msg = MIMEText(send_str)
-        msg['From'] = 'rogeh2@gmail.com'
-        msg['To'] = 'rogeh2@gmail.com'
-        msg['Subject'] = 'Test'
+        #This tells the bot to send an email if the next predicted price is an inflection point for the next two hours
+        if (next_price > current_price) & (next_price > check_price) & (next_price > (val_price + 0.05)):
+            self.last_true_countdown = int(60 / self.minute_length)
+            return True
+        elif (next_price < current_price) & (next_price < check_price) & (next_price < (val_price - 0.05)):
+            self.last_true_countdown = int(60 / self.minute_length)
+            return True
+        else:
+            #If the next price is no longer an inflection point but the last one was keep sending until this hour passes
+            if (self.last_true_countdown > 0) & last_bool:
+                self.last_true_countdown -= 1
+                return True
 
-        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg.as_string())
+            return False
 
-    #TODO add loop to send data throughout the day
+
+    def continuous_monitoring(self):
+        current_time = datetime.utcnow().timestamp()
+        last_check = 0
+        cutoff_time = current_time + 14*3600
+        should_send_email = True
+
+        while current_time < cutoff_time:
+            if current_time > (last_check + 15*60):
+                self.find_data()
+                last_check = current_time
+                should_send_email = self.trade_logic(should_send_email)
+                if should_send_email:
+                    self.send_data()
+
 
 # TODO try using a classifier Neural Net
 # TODO predict hourly price as well as minute by minute to determine best buy/sell time
@@ -773,31 +875,41 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
 if __name__ == '__main__':
 
     date_from = "2018-05-10 01:00:00 EST"
-    date_to = "2018-05-13 00:00:00 EST"
-    test_date_from = "2018-05-13 0:01:00 EST"
-    test_date_to = "2018-05-14 01:00:00 EST"
+    date_to = "2018-05-13 02:00:00 EST"
+    test_date_from = "2018-05-13 00:00:00 EST"
+    test_date_to = "2018-05-14 23:00:00 EST"
     prediction_length = 15
-    epochs = 500
+    epochs = 5000
     prediction_ticker = 'ETH'
     bitinfo_list = ['eth']
     time_unit = 'minutes'
     activ_func = 'relu'
     isleakyrelu = True
-    neuron_count = 10
+    neuron_count = 200
     time_block_length = 60
     min_distance_between_trades = 5
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_200neuron1526313868.068116.h5'
     model_type = 'price'
-    use_type = 'predict' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_price_from_2018-05-10_01:00:00_EST_to_2018-05-13_00:00:00_EST.pickle'
-    test_model_save_bool = False;
+    use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+    pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-10_01:00:00_EST_to_2018-05-14_00:00:00_EST.pickle'
+    test_model_save_bool = False
 
     #run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
-    #               bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
+    #              bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
     #               min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
 
     hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_4hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_100neuron1526188487.734038.h5'
     minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_200neuron1526313868.068116.h5'
+
     naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
-    naive_bot.find_data()
-    naive_bot.send_data()
+    naive_bot.continuous_monitoring()
+
+    #The below code would make a great unit test
+    # fake_prediction = pd.DataFrame({'Test':np.array([0.1, 0.2, 0.1, 0, 0.1, 0.1, 0.1])})
+    # naive_bot.hourly_prediction = fake_prediction
+    # ans = naive_bot.trade_logic(True)
+    # print(str(ans))
+    # fake_prediction = pd.DataFrame({'Test': np.array([0.1, 0.0, 0.1, 0.2, 0.1, 0.1, 0.1])})
+    # naive_bot.hourly_prediction = fake_prediction
+    # ans = naive_bot.trade_logic(True)
+    # print(str(ans))
