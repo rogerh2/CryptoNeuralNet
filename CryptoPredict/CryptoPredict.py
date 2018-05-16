@@ -272,8 +272,21 @@ class DataSet:
             news_count = []
             iterations_complete = 0
 
+            rate_limit_url = url = 'https://min-api.cryptocompare.com/stats/rate/limit'
+            page = requests.get(rate_limit_url)
             for current_dt in fin_table.date.values:
                 current_dt = pd.to_datetime(current_dt)
+                current_minute_limit = page.json()['Minute']['CallsLeft']['News']
+                current_hour_limit = page.json()['Hour']['CallsLeft']['News']
+                if current_minute_limit < 2:
+                    time.sleep(60)
+
+                if current_hour_limit < 2:
+                    while current_hour_limit < 2:
+                        time.sleep(60)
+                        current_hour_limit = page.json()['Hour']['CallsLeft']['News']
+
+
                 current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
                 current_sentiment = [txb(news['title']).sentiment.polarity for news in current_news]
 
@@ -628,11 +641,11 @@ class CoinPriceModel:
         if self.is_leakyrelu & save_model: #TODO add more detail to saves
             self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/' + self.prediction_ticker + 'model_' + str(
                 self.prediction_length) + self.data_obj.time_units + '_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
-                self.epochs) + 'epochs_' + str(neuron_count) + 'neuron' + str(datetime.utcnow().timestamp()) + '.h5')
+                np.max(hist.epoch)) + 'epochs_' + str(neuron_count) + 'neuron' + str(datetime.utcnow().timestamp()) + '.h5')
         elif save_model:
             self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/' + self.prediction_ticker + 'model_' + str(
                 self.prediction_length) + self.data_obj.time_units + '_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(
-                self.epochs) + 'epochs_' + str(neuron_count) + 'neurons' + str(datetime.utcnow().timestamp()) + '.h5')
+                np.max(hist.epoch)) + 'epochs_' + str(neuron_count) + 'neurons' + str(datetime.utcnow().timestamp()) + '.h5')
 
         return hist
 
@@ -647,10 +660,11 @@ class CoinPriceModel:
 
         zerod_output = test_output[::, 0] - np.mean(test_output[::, 0])
         zerod_prediction = prediction[::, 0] - np.mean(prediction[::, 0])
-        plt.plot(zerod_output/(np.max(zerod_output)), 'bo--')
-        plt.plot(zerod_prediction/(np.max(zerod_prediction)), 'rx--')
-        plt.title('Prediction')
-        plt.show()
+        #TODO uncomment plots
+        #plt.plot(zerod_output/(np.max(zerod_output)), 'bo--')
+        #plt.plot(zerod_prediction/(np.max(zerod_prediction)), 'rx--')
+        #plt.title('Prediction')
+        #plt.show()
 
     def create_standard_dates(self):
         utc_to_date = datetime.utcnow()
@@ -701,7 +715,7 @@ class CoinPriceModel:
 class BaseTradingBot:
 
     image_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Images//'
-    last_true_countdown = 4
+    last_true_countdown = 6
 
     def __init__(self, hourly_model, minute_model, hourly_len=6, minute_len=15, prediction_ticker='ETH'):
 
@@ -717,13 +731,16 @@ class BaseTradingBot:
         self.prediction_ticker = prediction_ticker
 
     def find_data(self):
-        full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
-        self.hourly_prediction = full_hourly_prediction[-(self.hour_length + 4)::]
-        self.hourly_price = full_hourly_price[-4::]
 
+        t_0 = datetime.utcnow().timestamp()
         full_minute_prediction, full_minute_price = self.minute_cp.predict(time_units='minutes', show_plots=False)
         self.minute_prediction = full_minute_prediction[-(self.minute_length + 10)::]
         self.minute_price = full_minute_price[-10::]
+        t_f = datetime.utcnow().timestamp()
+
+        full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
+        self.hourly_prediction = full_hourly_prediction[-(self.hour_length + 4)::]
+        self.hourly_price = full_hourly_price[-4::]
 
     def prepare_images(self):
         #This method creates, saves, and closes the figures
@@ -798,11 +815,11 @@ class BaseTradingBot:
         val_price = self.hourly_prediction.values[-(self.hour_length - 2)]
 
         #This tells the bot to send an email if the next predicted price is an inflection point for the next two hours
-        if (next_price > current_price) & (next_price > check_price) & (next_price > (val_price + 0.05)):
-            self.last_true_countdown = int(60 / self.minute_length)
+        if (next_price > current_price) & (next_price > check_price) & (next_price > (val_price + 0.01)):
+            self.last_true_countdown = 6
             return True
-        elif (next_price < current_price) & (next_price < check_price) & (next_price < (val_price - 0.05)):
-            self.last_true_countdown = int(60 / self.minute_length)
+        elif (next_price < current_price) & (next_price < check_price) & (next_price < (val_price - 0.01)):
+            self.last_true_countdown = 6
             return True
         else:
             #If the next price is no longer an inflection point but the last one was keep sending until this hour passes
@@ -817,19 +834,22 @@ class BaseTradingBot:
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         cutoff_time = current_time + 14*3600
-        should_send_email = True
+        should_send_email = False
 
         while current_time < cutoff_time:
-            if current_time > (last_check + 15*60):
+            if current_time > (last_check + 10*60):
                 self.find_data()
                 last_check = current_time
                 should_send_email = self.trade_logic(should_send_email)
                 if should_send_email:
                     self.send_data()
+            else:
+                time.sleep(1)
+            current_time = datetime.utcnow().timestamp()
 
 
 # TODO try using a classifier Neural Net
-# TODO predict hourly price as well as minute by minute to determine best buy/sell time
+# TODO eliminate unnecessary legacy variables from run_neural_net and CryptoPredict
 
 def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None, save_test_model=True):
 
@@ -874,10 +894,10 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
 
 if __name__ == '__main__':
 
-    date_from = "2018-05-10 01:00:00 EST"
-    date_to = "2018-05-13 02:00:00 EST"
-    test_date_from = "2018-05-13 00:00:00 EST"
-    test_date_to = "2018-05-14 23:00:00 EST"
+    date_from = "2018-05-11 18:30:00 EST"
+    date_to = "2018-05-15 06:30:00 EST"
+    test_date_from = "2018-05-15 06:31:00 EST"
+    test_date_to = "2018-05-15 06:50:00 EST"
     prediction_length = 15
     epochs = 5000
     prediction_ticker = 'ETH'
@@ -888,18 +908,18 @@ if __name__ == '__main__':
     neuron_count = 200
     time_block_length = 60
     min_distance_between_trades = 5
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_200neuron1526313868.068116.h5'
-    model_type = 'price'
-    use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-    pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-10_01:00:00_EST_to_2018-05-14_00:00:00_EST.pickle'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_4epochs_200neuron1526404187.251125.h5'
+    model_type = 'price' #Don't change this
+    use_type = 'predict' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-11_18:30:00_EST_to_2018-05-15_06:30:00_EST.pickle'
     test_model_save_bool = False
 
     #run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
     #              bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
     #               min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
 
-    hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_4hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_100neuron1526188487.734038.h5'
-    minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_500epochs_200neuron1526313868.068116.h5'
+    hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_125epochs_50neuron1526405263.252535.h5'
+    minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_4epochs_200neuron1526404187.251125.h5'
 
     naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
     naive_bot.continuous_monitoring()
