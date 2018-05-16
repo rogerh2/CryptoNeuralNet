@@ -1,4 +1,6 @@
 import requests
+from requests.adapters import HTTPAdapter
+
 from datetime import datetime
 from datetime import timedelta
 import pandas as pd
@@ -732,11 +734,9 @@ class BaseTradingBot:
 
     def find_data(self):
 
-        t_0 = datetime.utcnow().timestamp()
         full_minute_prediction, full_minute_price = self.minute_cp.predict(time_units='minutes', show_plots=False)
         self.minute_prediction = full_minute_prediction[-(self.minute_length + 10)::]
         self.minute_price = full_minute_price[-10::]
-        t_f = datetime.utcnow().timestamp()
 
         full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
         self.hourly_prediction = full_hourly_prediction[-(self.hour_length + 4)::]
@@ -808,6 +808,18 @@ class BaseTradingBot:
         s.login('rogeh2@gmail.com', 'Neutrino#0')
         s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg_root.as_string())
 
+    def send_err(self):
+        s = smtplib.SMTP('smtp.gmail.com', 587)
+        s.starttls()
+        s.login('rogeh2@gmail.com', 'Neutrino#0')
+        msg = MIMEText('Error detected, will try again in 10min')
+        msg['Subject'] = 'Ethereum Prediction Error From Your Digital Broker'
+        msg['From'] = 'rogeh2@gmail.com'
+        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg.as_string())
+
+
+
+
     def trade_logic(self, last_bool):
         current_price = self.hourly_prediction.values[-(self.hour_length + 1)]
         next_price = self.hourly_prediction.values[-self.hour_length]
@@ -835,12 +847,15 @@ class BaseTradingBot:
         last_check = 0
         cutoff_time = current_time + 14*3600
         should_send_email = False
-
         while current_time < cutoff_time:
             if current_time > (last_check + 10*60):
-                self.find_data()
+                try:
+                    self.find_data()
+                    should_send_email = self.trade_logic(should_send_email)
+                except:
+                    self.send_err()
+                    should_send_email = False
                 last_check = current_time
-                should_send_email = self.trade_logic(should_send_email)
                 if should_send_email:
                     self.send_data()
             else:
@@ -894,10 +909,10 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
 
 if __name__ == '__main__':
 
-    date_from = "2018-05-11 18:30:00 EST"
-    date_to = "2018-05-15 06:30:00 EST"
-    test_date_from = "2018-05-15 06:31:00 EST"
-    test_date_to = "2018-05-15 06:50:00 EST"
+    date_from = "2018-05-12 18:30:00 EST"
+    date_to = "2018-05-16 07:25:00 EST"
+    test_date_from = "2018-05-16 08:00:00 EST"
+    test_date_to = "2018-05-15 09:00:00 EST"
     prediction_length = 15
     epochs = 5000
     prediction_ticker = 'ETH'
@@ -910,7 +925,7 @@ if __name__ == '__main__':
     min_distance_between_trades = 5
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_4epochs_200neuron1526404187.251125.h5'
     model_type = 'price' #Don't change this
-    use_type = 'predict' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+    use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
     pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-11_18:30:00_EST_to_2018-05-15_06:30:00_EST.pickle'
     test_model_save_bool = False
 
