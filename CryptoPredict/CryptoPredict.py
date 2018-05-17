@@ -34,7 +34,7 @@ def convert_time_to_uct(naive_date_from):
     utc_date = est_date_from.astimezone(utc)
     return utc_date
 
-class cryptocompare:
+class CryptoCompare:
 
     comparison_symbols = ['USD']
     exchange = ''
@@ -107,7 +107,6 @@ class cryptocompare:
         df = df.drop(columns=[symbol + '_time']) #Drop this because the unix timestamp column is no longer needed
         return df
 
-
     def daily_price_historical(self, symbol='LTC', all_data=True, limit=1):
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
@@ -173,7 +172,7 @@ class cryptocompare:
                 toTs = time_stamp - 60 # have to subtract a value of 60 had to be added to avoid repeated indices
                 url_new = temp_url + '&toTs={}'.format(toTs)
                 if num == (loop_len - 1):
-                    url_new = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
+                    url_new = 'https://min-api.CryptoCompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
                         .format(symbol.upper(), comparison_symbol.upper(), limit - num*2001, self.aggregate, toTs)
                 df_to_append, time_stamp = self.create_data_frame(url_new, symbol, return_time_stamp=True)
                 df = df_to_append.append(df, ignore_index=True) #The earliest data goes on top
@@ -188,7 +187,7 @@ class cryptocompare:
         data = page.json()['Data']
         return data
 
-    def coin_snapshot_full_by_id(self, symbol='LTC', symbol_id_dict={}):
+    def coin_snapshot_full_by_id(self, symbol='LTC', symbol_id_dict={}):#TODO fix the thid argument mutability
 
         if not symbol_id_dict:
             symbol_id_dict = {
@@ -238,7 +237,7 @@ class DataSet:
     def __init__(self, date_from, date_to, days=None, bitinfo_list = None, prediction_ticker = 'ltc', time_units='hours', fin_table=None, aggregate=1):
         if bitinfo_list is None:
             bitinfo_list = ['btc', 'eth']
-        cryp_obj = cryptocompare(date_from=date_from, date_to=date_to)
+        cryp_obj = CryptoCompare(date_from=date_from, date_to=date_to)
         cryp_obj.aggregate = aggregate
         self.cryp_obj = cryp_obj
 
@@ -523,7 +522,7 @@ class DataSet:
         data_frame = data_frame.head(cutoff_len)
         self.final_table = pd.concat([data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.drop_duplicates().index])
 
-    def create_arrays(self, model_type='buy&sell', time_block_length=24, min_distance_between_trades=3):
+    def create_arrays(self, model_type='price', time_block_length=24, min_distance_between_trades=3):
         if model_type == 'price':
             self.create_price_prediction_columns()
             n = -1
@@ -817,9 +816,6 @@ class BaseTradingBot:
         msg['From'] = 'rogeh2@gmail.com'
         s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg.as_string())
 
-
-
-
     def trade_logic(self, last_bool):
         current_price = self.hourly_prediction.values[-(self.hour_length + 1)]
         next_price = self.hourly_prediction.values[-self.hour_length]
@@ -861,6 +857,7 @@ class BaseTradingBot:
             else:
                 time.sleep(1)
             current_time = datetime.utcnow().timestamp()
+
 
 
 # TODO try using a classifier Neural Net
@@ -913,31 +910,31 @@ if __name__ == '__main__':
     date_to = "2018-05-16 07:25:00 EST"
     test_date_from = "2018-05-16 08:00:00 EST"
     test_date_to = "2018-05-15 09:00:00 EST"
-    prediction_length = 15
+    prediction_length = 6
     epochs = 5000
     prediction_ticker = 'ETH'
     bitinfo_list = ['eth']
-    time_unit = 'minutes'
+    time_unit = 'hours'
     activ_func = 'relu'
     isleakyrelu = True
     neuron_count = 200
     time_block_length = 60
     min_distance_between_trades = 5
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_4epochs_200neuron1526404187.251125.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_125epochs_50neuron1526405263.252535.h5'
     model_type = 'price' #Don't change this
-    use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+    use_type = 'predict' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
     pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-11_18:30:00_EST_to_2018-05-15_06:30:00_EST.pickle'
     test_model_save_bool = False
 
-    #run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
-    #              bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
-    #               min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
+    run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
+                  bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
+                   min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
 
-    hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_125epochs_50neuron1526405263.252535.h5'
-    minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_4epochs_200neuron1526404187.251125.h5'
+    #hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_125epochs_50neuron1526405263.252535.h5'
+    #minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_4epochs_200neuron1526404187.251125.h5'
 
-    naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
-    naive_bot.continuous_monitoring()
+    #naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
+    #naive_bot.continuous_monitoring()
 
     #The below code would make a great unit test
     # fake_prediction = pd.DataFrame({'Test':np.array([0.1, 0.2, 0.1, 0, 0.1, 0.1, 0.1])})

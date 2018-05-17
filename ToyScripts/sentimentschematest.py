@@ -2,11 +2,11 @@ import numpy as np
 import pytz
 import pandas as pd
 import matplotlib.pyplot as plt
-from CryptoPredict.CryptoPredict import cryptocompare
+from CryptoPredict.CryptoPredict import CryptoCompare
 from textblob import TextBlob as txb
 from datetime import datetime
 
-cp = cryptocompare(date_from="2018-04-10 08:30:00 EST")
+cp = CryptoCompare(date_from="2018-04-10 08:30:00 EST")
 price_df = cp.hourly_price_historical(symbol='ETH', aggregate=1)
 sentiment_schema_1 = [] #sentiment sum
 sentiment_schema_2 = [] #number of articles in last 5hrs
