@@ -455,50 +455,75 @@ class DataSet:
 
         return block_trades
 
-    def create_single_prediction_column(self, price_data_frame, trade_data_frame, buy_or_sell, time_units='hours'):
+    def create_single_prediction_column(self, price_data_frame, n):
+        #This finds the optimal trading strategy
+        all_times = price_data_frame.index
+        all_prices = price_data_frame.values
+        eps = 1000.0 #Needs to be float
+        iter = 0 #Counts number of iterations in loop
+        sell_arr = np.zeros((len(price_data_frame), 1))
+        buy_arr = np.zeros((len(price_data_frame), 1))
+        val = 0 #This is the money gained by the chosen strategy
+        should_sell = True #If true the script should look for max, if False it looks for min
+        has_checked_block_counter = n
+        last_sell = None #This will throw an error if someone tries to reverse the direction of the trades (starts with buy)
+        target_eps = 0.03 #0.03 chosen as the cutoff for eps because that is the highest GDAX fee and because it seems like a reasonable number to get from one buy-sell cycle due to past experience
+        from_n = len(all_times) - n
+        val_arr = np.array([])
+        strategy_dict = {}
 
-        if time_units == 'days':
-            time_norm_constant = 24 * 3600
-        elif time_units == 'hours':
-            time_norm_constant = 3600
-        else:
-            time_norm_constant = 60
+        #This loop keeps making new trade strategies until the change in money earned is under eps
+        while (eps > target_eps) & (iter < 1000):
+            if iter > 0:
+                ind = np.argwhere(1==buy_arr)[-1][0]
+                current_price_block = all_prices[ind::]
+                last_sell = np.max(current_price_block)
+                sell_arr = np.zeros((len(price_data_frame), 1))
+                from_n = np.argmax(current_price_block) + ind
+                sell_arr[from_n] = 1
+                buy_arr = np.zeros((len(price_data_frame), 1))
+                should_sell = False
 
-        loop_len = price_data_frame.count()
-        trade_ind = 0
-        trade_time = trade_data_frame[trade_ind]
-        time_arr = None
-        price_time = price_data_frame.index[0]
-        scale_time = (trade_time - price_time).total_seconds() / time_norm_constant
-        full_scale = np.max(price_data_frame.values) - np.min(price_data_frame.values) #This gives the full width scale to determine the size of the jumps
 
-        for price_ind in range(0, loop_len[0]):
-            price_time = price_data_frame.index[price_ind]
-            if price_time > trade_time:
-                trade_ind += 1
-                if trade_ind >= trade_data_frame.count():
-                    return time_arr
-                trade_time = trade_data_frame[trade_ind]
-                scale_time = (trade_time - price_time).total_seconds() / time_norm_constant
-            if scale_time == 0 & trade_ind > 1:
-                return time_arr #TODO fix error that happens when scale_time is 0 because the first trade is at the first index
-            #scale the data
+            for i in range(len(all_times) - from_n, len(all_times) - n):
+                if has_checked_block_counter > 0:
+                    has_checked_block_counter -= 1
+                    continue
 
-            time_to_trade = 0.05*((-1)**buy_or_sell)*trade_ind + ((price_data_frame.values[price_ind]- np.mean(price_data_frame.values))/full_scale) + 1
-            #0.1*((-1)**buy_or_sell)*trade_ind +
+                ind = len(all_times) - i #To optimize we need to start at the end and go back
+                current_price_block = all_prices[(ind-n):ind]
+                del_percent_check = (np.max(current_price_block) - np.min(current_price_block))/np.max(current_price_block) #This number needs to be less than 0.03 for this to be considered low volatility enough to trade
 
-            # transformation_coeff = ((-1) ** trade_ind) / full_scale
-            #transformation_coeff = ((-1) ** trade_ind) * np.pi / (scale_time)
-            #unscaled_time_to_trade = (trade_time - price_time).total_seconds() * np.pi / time_norm_constant
-            #transformation_coeff = ((-1) ** trade_ind) * np.pi / (scale_time)
-            #time_to_trade = np.sin(transformation_coeff*unscaled_time_to_trade) #+ 0.45*(((-1)**trade_ind) > 0)
-            #time_to_trade = np.exp(transformation_coeff * unscaled_time_to_trade - (((-1)**trade_ind) > 0))
+                if del_percent_check > 2*target_eps: #From past trades it has been determined that 0.03 is a reasonable number from one trade
+                    continue
+                elif should_sell: #This says that the bot should sell at the max and buy at the min
+                    sell_arr[np.argmax(current_price_block) + (ind-n)] = 1
+                    last_sell = np.max(current_price_block)
+                    should_sell = False
+                    has_checked_block_counter = n
+                else:
+                    buy_price = np.min(current_price_block)
+                    if (last_sell - buy_price) > 2*target_eps:
+                        should_sell = True
+                        buy_arr[np.argmin(current_price_block) + (ind-n)] = 1 #These statements do not have off by one errors because python indexes from 0
+                        has_checked_block_counter = n
 
-            if time_arr is None:
-                time_arr = np.array([time_to_trade])
-            else:
-                time_arr = np.vstack((time_arr, np.array([time_to_trade])))
-        return time_arr
+            sell_arr[0:np.argmax(buy_arr)] = 0 #This always starts with a buy and ends with a sell
+
+            sell_bool = [x[0] == 1 for x in sell_arr] #must add [0] or else each x will be a seperate array and unindexable
+            buy_bool = [x[0] == 1 for x in buy_arr]
+            val_new = np.sum(all_prices[sell_bool]) - np.sum(all_prices[buy_bool]) #This calculates the money earned
+            val_arr = np.hstack((val_arr, val_new))
+            strategy_dict[iter] = {'buy':buy_arr, 'sell':sell_arr}
+            eps = np.abs(val_new - val)
+            print('on iteration ' + str(iter) + ' with trade value of ' + str(val_new))
+            val = val_new
+            iter += 1
+
+        best_strategy_ind = val_arr.argmax()
+        fin_buy_arr = strategy_dict[best_strategy_ind]['buy']
+        fin_sell_arr = strategy_dict[best_strategy_ind]['sell']
+        return fin_sell_arr, fin_buy_arr
 
     def create_buy_sell_prediction_frame(self, n, m, max_iterations):
         cryp_obj = self.cryp_obj
@@ -509,18 +534,12 @@ class DataSet:
             columns=[sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high',
                      sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
         price_data_frame = price_data_frame.set_index('date')
-        buy_sell_data_frame = self.find_all_trades(price_data_frame, time_unit=self.time_units, n_0=n, m=m, max_iterations=max_iterations)
-        buy_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Buy_X, 1, self.time_units)
-        sell_column = self.create_single_prediction_column(price_data_frame, buy_sell_data_frame.Sell_X, 0, self.time_units)
-        cutoff_len = len(buy_column)
-        frame_length = range(0, cutoff_len)
-        sell_column = sell_column[frame_length]
-        final_indxs = price_data_frame.index[frame_length]
 
-        prediction_frame = pd.DataFrame(data=(buy_column + sell_column), index=final_indxs, columns=['Buy and Sell'])
+        sell_column, buy_column = self.create_single_prediction_column(price_data_frame, 5)
+
+        prediction_frame = pd.DataFrame(data=np.hstack((buy_column, sell_column)), index=price_data_frame.index, columns=['Buy', 'Sell'])
         data_frame = self.fin_table.set_index('date')
-        data_frame = data_frame.head(cutoff_len)
-        self.final_table = pd.concat([data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.drop_duplicates().index])
+        self.final_table = pd.concat([data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.index])
 
     def create_arrays(self, model_type='price', time_block_length=24, min_distance_between_trades=3):
         if model_type == 'price':
@@ -662,10 +681,10 @@ class CoinPriceModel:
         zerod_output = test_output[::, 0] - np.mean(test_output[::, 0])
         zerod_prediction = prediction[::, 0] - np.mean(prediction[::, 0])
         #TODO uncomment plots
-        #plt.plot(zerod_output/(np.max(zerod_output)), 'bo--')
-        #plt.plot(zerod_prediction/(np.max(zerod_prediction)), 'rx--')
-        #plt.title('Prediction')
-        #plt.show()
+        plt.plot(zerod_output/(np.max(zerod_output)), 'bo--')
+        plt.plot(zerod_prediction/(np.max(zerod_prediction)), 'rx--')
+        plt.title('Prediction')
+        plt.show()
 
     def create_standard_dates(self):
         utc_to_date = datetime.utcnow()
@@ -715,8 +734,9 @@ class CoinPriceModel:
 
 class BaseTradingBot:
 
+    #TODO create method to train and optimize models (including during continuous usage)
     image_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Images//'
-    last_true_countdown = 6
+    last_true_countdown = 2
 
     def __init__(self, hourly_model, minute_model, hourly_len=6, minute_len=15, prediction_ticker='ETH'):
 
@@ -844,7 +864,7 @@ class BaseTradingBot:
         cutoff_time = current_time + 14*3600
         should_send_email = False
         while current_time < cutoff_time:
-            if current_time > (last_check + 10*60):
+            if current_time > (last_check + 5*60):
                 try:
                     self.find_data()
                     should_send_email = self.trade_logic(should_send_email)
@@ -859,6 +879,11 @@ class BaseTradingBot:
             current_time = datetime.utcnow().timestamp()
 
 
+class CryptoTradeStrategyModel(CoinPriceModel):
+    def test_model(self, from_date, to_date, time_units='hours', model_type='buy&sell'):
+        super().test_model(from_date, to_date,  time_units='hours', model_type='buy&sell')
+
+
 
 # TODO try using a classifier Neural Net
 # TODO eliminate unnecessary legacy variables from run_neural_net and CryptoPredict
@@ -867,8 +892,13 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
 
     #This creates a CoinPriceModel and saves the data
     if (data_set_path is not None) & (use_type != 'predict'):
-        cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
+
+        cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs,
+                            prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
                         time_units=time_unit, activ_func=activ_func, is_leakyrelu=isleakyrelu, data_set_path=data_set_path)
+
+        #cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
+        #                time_units=time_unit, activ_func=activ_func, is_leakyrelu=isleakyrelu, data_set_path=data_set_path)
 
     elif use_type != 'predict':
         cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
@@ -904,34 +934,37 @@ def run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_
         cp.predict(time_units=time_unit, show_plots=True)
 
 
+
 if __name__ == '__main__':
 
-    date_from = "2018-05-12 18:30:00 EST"
-    date_to = "2018-05-16 07:25:00 EST"
-    test_date_from = "2018-05-16 08:00:00 EST"
-    test_date_to = "2018-05-15 09:00:00 EST"
-    prediction_length = 6
+    date_from = "2018-05-15 00:00:00 EST"
+    date_to = "2018-05-15 01:00:00 EST"
+    test_date_from = "2018-05-14 23:01:00 EST"
+    test_date_to = "2018-05-15 01:00:00 EST"
+    prediction_length = 15
     epochs = 5000
     prediction_ticker = 'ETH'
     bitinfo_list = ['eth']
-    time_unit = 'hours'
+    time_unit = 'minutes'
     activ_func = 'relu'
     isleakyrelu = True
-    neuron_count = 200
+    neuron_count = 30
     time_block_length = 60
     min_distance_between_trades = 5
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_125epochs_50neuron1526405263.252535.h5'
-    model_type = 'price' #Don't change this
-    use_type = 'predict' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-11_18:30:00_EST_to_2018-05-15_06:30:00_EST.pickle'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_13epochs_50neuron1526575949.141267.h5'
+    model_type = 'buy&sell' #Don't change this
+    use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+    pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-13_00:00:00_EST_to_2018-05-17_00:15:00_EST.pickle'
     test_model_save_bool = False
 
     run_neural_net(date_from, date_to, test_date_from, test_date_to, prediction_length, epochs, prediction_ticker,
                   bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, time_block_length,
                    min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
 
-    #hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_125epochs_50neuron1526405263.252535.h5'
-    #minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_4epochs_200neuron1526404187.251125.h5'
+
+
+    #hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_46epochs_30neuron1526576145.902216.h5'
+    #minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_13epochs_50neuron1526575949.141267.h5'
 
     #naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
     #naive_bot.continuous_monitoring()
