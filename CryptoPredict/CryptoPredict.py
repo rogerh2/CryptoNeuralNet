@@ -255,7 +255,7 @@ class DataSet:
             fin_table = cryp_obj.minute_price_historical(symbol=sym)
             price_func = lambda symbol: cryp_obj.minute_price_historical(symbol=symbol)
 
-        self.price_func = price_func
+        self.price_func = price_func #TODO eliminate  need for price_func when a saved pickle table is used. Price_func depends on the url which won't work for minutes after 7 days
 
         if temp_fin_table is not None:
             self.fin_table = temp_fin_table
@@ -340,7 +340,7 @@ class DataSet:
         data_frame = fin_table.set_index('date')
         self.final_table = data_frame[(data_frame.index <= self.date_to)]
 
-    def create_single_prediction_column(self, price_data_frame, n):
+    def create_single_prediction_column(self, price_data_frame, n, show_plots=False):
         #This finds the optimal trading strategy
         all_times = price_data_frame.index
         all_prices = price_data_frame.values
@@ -357,6 +357,7 @@ class DataSet:
         val_arr = np.array([])
         strategy_dict = {}
 
+        #TODO, this loop is actually really (and I mean really!) bad at finding strategies, fix this
         #This loop keeps making new trade strategies until the change in money earned is under eps
         while (eps > target_eps) & (iter < 1000):
             if iter > 0:
@@ -408,7 +409,16 @@ class DataSet:
         best_strategy_ind = val_arr.argmax()
         fin_buy_arr = strategy_dict[best_strategy_ind]['buy']
         fin_sell_arr = strategy_dict[best_strategy_ind]['sell']
-        return fin_sell_arr, fin_buy_arr
+
+        if show_plots:
+            #set show_plots to true for debug only
+            #TODO make plot for all the data show minutes
+            plt.plot(all_times[sell_bool], all_prices[sell_bool], 'rx')
+            plt.plot(all_times[buy_bool], all_prices[buy_bool], 'gx')
+            plt.plot(all_times, all_prices, 'b--')
+            plt.show()
+        else:
+            return fin_sell_arr, fin_buy_arr
 
     def create_buy_sell_prediction_frame(self, m):
         cryp_obj = self.cryp_obj
@@ -882,46 +892,49 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 
 
 if __name__ == '__main__':
-    # date_from = "2018-05-11 18:30:00 EST"
-    # date_to = "2018-05-15 06:20:00 EST"
-    # bitinfo_list = ['eth']
-    # prediction_ticker = 'ETH'
-    # time_units = 'minutes'
-    # pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-11_18:30:00_EST_to_2018-05-15_06:30:00_EST.pickle'
-    #
-    # strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list,
-    #                                           prediction_ticker=prediction_ticker, time_units=time_units,
-    #                                           data_set_path=pickle_path)
-    #
-    # strategy_model.create_strategy_prediction_frame('buy', 10)
 
-    date_from = "2018-05-13 00:00:00 EST"
-    date_to = "2018-05-17 00:15:00 EST"
-    prediction_length = 15
-    epochs = 5000
-    prediction_ticker = 'ETH'
-    bitinfo_list = ['eth']
-    time_unit = 'minutes'
-    activ_func = 'relu'
-    isleakyrelu = True
-    neuron_count = 30
-    time_block_length = 60
-    min_distance_between_trades = 5
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_13epochs_50neuron1526575949.141267.h5'
-    model_type = 'price' #Don't change this
-    use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-13_00:00:00_EST_to_2018-05-17_00:15:00_EST.pickle'
-    test_model_save_bool = False
+    code_block = 1
 
-    run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
+    if code_block == 1:
+        date_from = "2018-05-14 20:00:00 EST"
+        date_to = "2018-05-15 01:00:00 EST"
+        bitinfo_list = ['eth']
+        prediction_ticker = 'ETH'
+        time_units = 'minutes'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_buy&sell_from_2018-05-14_20:00:00_EST_to_2018-05-15_01:00:00_EST.pickle'
 
+        strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
+        strategy_model.create_strategy_prediction_frame('buy', 10)
 
+    elif code_block == 2:
 
-    #hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_46epochs_30neuron1526576145.902216.h5'
-    #minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_13epochs_50neuron1526575949.141267.h5'
+        date_from = "2018-05-13 00:00:00 EST"
+        date_to = "2018-05-17 00:15:00 EST"
+        prediction_length = 15
+        epochs = 5000
+        prediction_ticker = 'ETH'
+        bitinfo_list = ['eth']
+        time_unit = 'minutes'
+        activ_func = 'relu'
+        isleakyrelu = True
+        neuron_count = 30
+        time_block_length = 60
+        min_distance_between_trades = 5
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_13epochs_50neuron1526575949.141267.h5'
+        model_type = 'price' #Don't change this
+        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-13_00:00:00_EST_to_2018-05-17_00:15:00_EST.pickle'
+        test_model_save_bool = False
 
-    #naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
-    #naive_bot.continuous_monitoring()
+        run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
+
+    elif code_block == 3:
+
+        hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_46epochs_30neuron1526576145.902216.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_13epochs_50neuron1526575949.141267.h5'
+
+        naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
+        naive_bot.continuous_monitoring()
 
     #The below code would make a great unit test
     # fake_prediction = pd.DataFrame({'Test':np.array([0.1, 0.2, 0.1, 0, 0.1, 0.1, 0.1])})
