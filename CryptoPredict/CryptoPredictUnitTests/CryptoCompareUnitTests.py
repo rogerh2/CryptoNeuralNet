@@ -1,6 +1,6 @@
 import unittest
 from CryptoPredict.CryptoPredict import CryptoCompare
-from CryptoPredict.CryptoPredict import DataSet
+
 
 class TestCryptoCompare(unittest.TestCase):
     def setUp(self):
@@ -36,27 +36,5 @@ class TestCryptoCompare(unittest.TestCase):
         news_data = self.cp.news('ETH', date_before="2018-05-16 08:00:00 EST")
         self.assertEqual(len(news_data), 50)
 
-class TestDataSet(unittest.TestCase):
-    def setUp(self):
-        date_from = "2018-05-15 09:00:00 EST"
-        date_to = "2018-05-16 09:00:00 EST"
-        bitinfo_list = ['eth']
-        prediction_ticker = 'ETH'
-        time_units = 'hours'
-
-        self.data_obj = DataSet(date_from=date_from, date_to=date_to, days=6, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units)
-        self.data_obj.create_arrays()
-
-    def test_create_price_prediction_columns_creates_correct_number_of_columns_and(self):
-        self.assertEqual(len(self.data_obj.final_table.columns), 9)
-
-    def test_create_price_prediction_columns_creates_correct_number_of_rows(self):
-        self.assertEqual(len(self.data_obj.final_table.index), 25)
-
-    def test_dataset_creates_correct_predictions(self):
-        self.assertEqual(self.data_obj.fin_table['ETH_open'][7], self.data_obj.output_array[1])
-
-
 if __name__ == '__main__':
-    TestCryptoCompare.run()
-    TestDataSet.run()
+    unittest.main()
