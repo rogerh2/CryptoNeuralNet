@@ -340,7 +340,21 @@ class DataSet:
         data_frame = fin_table.set_index('date')
         self.final_table = data_frame[(data_frame.index <= self.date_to)]
 
-    def create_single_prediction_column(self, price_data_frame, n, show_plots=False):
+    def find_trade_strategy_value(self, buy_bool, sell_bool, all_prices):
+        #This finds how much money was gained from a starting value of $100 given a particular strategy
+        usd_available = 100
+        all_buys = all_prices[buy_bool]
+        all_sells = all_prices[sell_bool]
+        for i in range(0,len(all_buys)):
+            eth_available = usd_available/all_buys[i]
+            usd_available = all_sells[i]*eth_available
+
+        value = usd_available - 100
+
+        return value
+
+
+    def create_single_prediction_column(self, price_data_frame, n, show_plots=True):
         #This finds the optimal trading strategy
         all_times = price_data_frame.index
         all_prices = price_data_frame.values
@@ -351,45 +365,59 @@ class DataSet:
         val = 0 #This is the money gained by the chosen strategy
         should_sell = True #If true the script should look for max, if False it looks for min
         has_checked_block_counter = n
-        last_sell = None #This will throw an error if someone tries to reverse the direction of the trades (starts with buy)
+        last_sell = 0
         target_eps = 0.03 #0.03 chosen as the cutoff for eps because that is the highest GDAX fee and because it seems like a reasonable number to get from one buy-sell cycle due to past experience
         from_n = len(all_times) - n
         val_arr = np.array([])
         strategy_dict = {}
 
-        #TODO, this loop is actually really (and I mean really!) bad at finding strategies, fix this
         #This loop keeps making new trade strategies until the change in money earned is under eps
         while (eps > target_eps) & (iter < 1000):
             if iter > 0:
+                #calculate new final sell
                 ind = np.argwhere(1==buy_arr)[-1][0]
+                s_ind = np.argwhere(1==sell_arr)[-2][0]
                 current_price_block = all_prices[ind::]
                 last_sell = np.max(current_price_block)
                 sell_arr = np.zeros((len(price_data_frame), 1))
                 from_n = np.argmax(current_price_block) + ind
                 sell_arr[from_n] = 1
+
+                #calculate new final sell
                 buy_arr = np.zeros((len(price_data_frame), 1))
-                should_sell = False
+                current_price_block = all_prices[s_ind:from_n]
+                from_n = np.argmin(current_price_block) + s_ind
+                buy_arr[from_n] = 1
+                should_sell = True
 
 
-            for i in range(len(all_times) - from_n, len(all_times) - n):
+            for i in range(len(all_times) - from_n, len(all_times) - 2*n):
                 if has_checked_block_counter > 0:
                     has_checked_block_counter -= 1
                     continue
 
                 ind = len(all_times) - i #To optimize we need to start at the end and go back
                 current_price_block = all_prices[(ind-n):ind]
-                del_percent_check = (np.max(current_price_block) - np.min(current_price_block))/np.max(current_price_block) #This number needs to be less than 0.03 for this to be considered low volatility enough to trade
+                next_price_block = all_prices[(ind-2*n):(ind-n)]
 
-                if del_percent_check > 2*target_eps: #From past trades it has been determined that 0.03 is a reasonable number from one trade
-                    continue
-                elif should_sell: #This says that the bot should sell at the max and buy at the min
-                    sell_arr[np.argmax(current_price_block) + (ind-n)] = 1
-                    last_sell = np.max(current_price_block)
-                    should_sell = False
-                    has_checked_block_counter = n
+                # del_percent_check = (np.max(current_price_block) - np.min(current_price_block))/np.max(current_price_block) #This number needs to be less than 0.03 for this to be considered low volatility enough to trade
+                #
+                # if del_percent_check > 2*target_eps: #From past trades it has been determined that 0.03 is a reasonable number from one trade
+                #     continue
+
+                if should_sell: #This says that the bot should sell at the max and buy at the min
+                    current_sell = np.max(current_price_block)
+                    next_sell = np.max(next_price_block)
+
+                    if (current_sell - next_sell) > 2*target_eps:
+                        sell_arr[np.argmax(current_price_block) + (ind-n)] = 1
+                        last_sell = np.max(current_price_block)
+                        should_sell = False
+                        has_checked_block_counter = n
                 else:
                     buy_price = np.min(current_price_block)
-                    if (last_sell - buy_price) > 2*target_eps:
+                    next_buy = np.min(next_price_block)
+                    if ((last_sell - buy_price) > 2*target_eps) & ((next_buy - buy_price) > 2*target_eps):
                         should_sell = True
                         buy_arr[np.argmin(current_price_block) + (ind-n)] = 1 #These statements do not have off by one errors because python indexes from 0
                         has_checked_block_counter = n
@@ -398,7 +426,7 @@ class DataSet:
 
             sell_bool = [x[0] == 1 for x in sell_arr] #must add [0] or else each x will be a seperate array and unindexable
             buy_bool = [x[0] == 1 for x in buy_arr]
-            val_new = np.sum(all_prices[sell_bool]) - np.sum(all_prices[buy_bool]) #This calculates the money earned
+            val_new = self.find_trade_strategy_value(buy_bool, sell_bool, all_prices) #This calculates the money earned
             val_arr = np.hstack((val_arr, val_new))
             strategy_dict[iter] = {'buy':buy_arr, 'sell':sell_arr}
             eps = np.abs(val_new - val)
