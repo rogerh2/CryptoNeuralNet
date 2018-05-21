@@ -272,31 +272,46 @@ class DataSet:
             news_count = []
             iterations_complete = 0
 
-            rate_limit_url = url = 'https://min-api.cryptocompare.com/stats/rate/limit'
+            rate_limit_url = 'https://min-api.cryptocompare.com/stats/rate/limit'
             page = requests.get(rate_limit_url)
-            for current_dt in fin_table.date.values:
+            date_len = len(fin_table.date.values)
+            last_news = None
+
+            for i in range(1, date_len + 1):
+                ind = date_len - i
+                current_dt = fin_table.date.values[ind]
                 current_dt = pd.to_datetime(current_dt)
+                utc_current_dt = convert_time_to_uct(current_dt)
+                delta_ts = utc_current_dt.timestamp() - 5 * 3600
+
                 current_minute_limit = page.json()['Minute']['CallsLeft']['News']
                 current_hour_limit = page.json()['Hour']['CallsLeft']['News']
                 if current_minute_limit < 2:
                     time.sleep(60)
-
                 if current_hour_limit < 2:
                     while current_hour_limit < 2:
                         time.sleep(60)
                         current_hour_limit = page.json()['Hour']['CallsLeft']['News']
 
+                if last_news is not None:
+                    last_news_publication_times = [news['published_on'] < utc_current_dt.timestamp() for news in last_news]
+                    if all(last_news_publication_times):
+                        current_news = last_news
+                    else:
+                        current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
+                else:
+                    current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
 
-                current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
+                last_news = current_news
+
+
                 current_sentiment = [txb(news['title']).sentiment.polarity for news in current_news]
 
                 sentiment_sum = np.sum(current_sentiment)
-                news_sentiment.append(sentiment_sum)
+                news_sentiment.insert(0, sentiment_sum)
 
-                utc_current_dt = convert_time_to_uct(current_dt)
-                delta_ts = utc_current_dt.timestamp() - 5 * 3600
                 current_news_count = np.sum([news['published_on'] > delta_ts for news in current_news])
-                news_count.append(current_news_count)
+                news_count.insert(0, current_news_count)
 
                 iterations_complete += 1
                 print('news scraping ' + str(round(100 * iterations_complete / total_len, 2)) + '% complete')
@@ -531,6 +546,12 @@ class CoinPriceModel:
 
             self.data_obj = DataSet(date_from=date_from, date_to=date_to, days=self.prediction_length,
                                     bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, fin_table=saved_table, aggregate=aggregate_val)
+            if saved_table is None:
+                table_file_name = '_' + time_units + '_from_' + date_from + '_to_' + date_to + '.pickle'
+                table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + table_file_name.replace(
+                    ' ', '_')
+                with open(table_file_name, 'wb') as cp_file_handle:
+                    pickle.dump(self.data_obj.fin_table, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
         self.epochs = epochs
@@ -672,10 +693,11 @@ class CoinPriceModel:
             return prediction_table, price_table
 
 class CryptoTradeStrategyModel(CoinPriceModel):
+    #TODO add all data to the strategy fin table and have one column for prediction and one for price (instead of n), because this is an LSTM
 
     strategy_loss_fun = 'binary_crossentropy'
 
-    strategy_is_leakyrelu = True
+    strategy_is_leakyrelu = False
 
     #TODO move the create methods to the DataSet class
 
@@ -701,7 +723,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         for ind in range(0, column_len):
             price_columns[ind, ::] = price_data[0, ind:(ind+n)]
             prediction_columns[ind, ::] = prediction_data[0, (ind + n):(ind + 2*n)]
-            time_columns.append(all_times[ind+n])
+            time_columns.insert(0, all_times[ind+n])
 
         return price_columns, prediction_columns, time_columns #TODO add ability to return dates as well remember that each prediction is at ind+n
 
@@ -727,7 +749,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
             return buy_strategy_frame, sell_strategy_frame
 
     #TODO make model methods more modular for simpler integration of new models (like the strategy model)
-    def build_strategy_model(self, inputs, neurons, strategy_activ_func = 'relu', output_size=1, dropout=0.25, layers=3):
+    def build_strategy_model(self, inputs, neurons, strategy_activ_func = 'relu', output_size=1, dropout=0.5, layers=1):
         is_leaky = self.strategy_is_leakyrelu
         activ_func = strategy_activ_func
         loss = self.strategy_loss_fun
@@ -748,9 +770,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         strategy_model.add(Dense(units=output_size, activation="sigmoid"))
         strategy_model.compile(loss=loss, optimizer=optimizer)
 
-        self.buy_model = strategy_model
-        self.sell_model = strategy_model
-
+        return strategy_model
     def prep_arrays_for_model(self, arr, training_len, should_reshape):
 
         if should_reshape:
@@ -765,7 +785,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         return training_output, test_output
 
-    def train_strategy_model(self, neuron_count=200, min_distance_between_trades=5, save_model=False):
+    def train_strategy_model(self, neuron_count=40, min_distance_between_trades=5, save_model=False):
         buy_frame, sell_frame = self.create_strategy_prediction_frame(min_distance_between_trades=min_distance_between_trades, n=10)
 
         buy_values = buy_frame['Buy'].values
@@ -781,14 +801,15 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
 
 
-        self.build_strategy_model(training_input, neurons=neuron_count)
+        self.buy_model = self.build_strategy_model(training_input, neurons=neuron_count)
+        self.sell_model = self.build_strategy_model(training_input, neurons=neuron_count)
 
         estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
 
-        self.buy_model.fit(training_input, training_buy_output, epochs=self.epochs, batch_size=96, verbose=2,
+        self.buy_model.fit(training_input, training_buy_output, epochs=self.epochs, batch_size=16, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop])
 
-        self.sell_model.fit(training_input, training_sell_output, epochs=self.epochs, batch_size=96, verbose=2,
+        self.sell_model.fit(training_input, training_sell_output, epochs=self.epochs, batch_size=16, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop])
 
         return test_buy_output, test_input, test_sell_output
@@ -986,10 +1007,10 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
         cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
                             time_units=time_unit, activ_func=activ_func, is_leakyrelu=isleakyrelu)
 
-        table_file_name = '_' + time_unit + '_' + model_type + '_from_' + date_from + '_to_' + date_to + '.pickle'
-        table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + table_file_name.replace(' ', '_')
-        with open(table_file_name, 'wb') as cp_file_handle:
-            pickle.dump(cp.data_obj.fin_table, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # table_file_name = '_' + time_unit + '_' + model_type + '_from_' + date_from + '_to_' + date_to + '.pickle'
+        # table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + table_file_name.replace(' ', '_')
+        # with open(table_file_name, 'wb') as cp_file_handle:
+        #     pickle.dump(cp.data_obj.fin_table, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     # 'test' will train a model with given conditions then test it, 'optimize' optimizes neuron count by evaluation data loss, 'predict' predicts data
     if use_type == 'test':
@@ -1024,12 +1045,12 @@ if __name__ == '__main__':
     # 3 BaseTradingBot
 
     if code_block == 1:
-        date_from = "2018-05-14 20:00:00 EST"
-        date_to = "2018-05-15 01:00:00 EST"
+        date_from = "2018-05-19 22:00:00 EST"
+        date_to = "2018-05-20 22:00:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_buy&sell_from_2018-05-14_20:00:00_EST_to_2018-05-15_01:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-19_22:00:00_EST_to_2018-05-20_22:00:00_EST.pickle'
 
         strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
         strategy_model.test_strategy_model()
