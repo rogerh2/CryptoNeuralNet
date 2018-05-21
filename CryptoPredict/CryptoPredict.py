@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import keras
 import pytz
-import dill
 import pickle
 from textblob import TextBlob as txb
 from keras.models import Sequential
@@ -487,7 +486,6 @@ class DataSet:
         temp_input_array = scaler.fit_transform(temp_input_array)
         self.input_array = temp_input_array.reshape(temp_input_array.shape[0], temp_input_array.shape[1], 1)
 
-
     def create_prediction_arrays(self):
         data_frame = self.fin_table.set_index('date')
         temp_input_array = data_frame.values
@@ -675,6 +673,12 @@ class CoinPriceModel:
 
 class CryptoTradeStrategyModel(CoinPriceModel):
 
+    strategy_loss_fun = 'binary_crossentropy'
+
+    strategy_is_leakyrelu = True
+
+    #TODO move the create methods to the DataSet class
+
     def create_test_price_columns(self, should_train=True, min_distance_between_trades=5, n=10):
         #This creates a table with 2*n columns that contains n columns of the price for the past n units of time and prediction for the next n units. This is meant to train the strategy model
 
@@ -701,14 +705,6 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         return price_columns, prediction_columns, time_columns #TODO add ability to return dates as well remember that each prediction is at ind+n
 
-    def create_trade_strategy_columns(self, price_data_set, min_distance_between_trades=5, n=10):
-        price_data_set.create_buy_sell_prediction_frame(min_distance_between_trades)
-
-        buy_column = self.data_obj.final_table.Buy
-        sell_column = self.data_obj.final_table.Sell
-
-        return buy_column, sell_column #TODO add ability to return dates as well remember that each prediction is at ind+n
-
     def create_strategy_prediction_frame(self, n, min_distance_between_trades=5, show_plots=False):
         measured_price, predicted_price, price_time = self.create_test_price_columns(n=n)
         self.data_obj.create_buy_sell_prediction_frame(min_distance_between_trades)
@@ -728,10 +724,102 @@ class CryptoTradeStrategyModel(CoinPriceModel):
             strategy_input_frame[9][sell_strategy_frame['Sell'].values == 1].plot(style='rx', ax=ax1)
             plt.show()
         else:
-            return buy_frame, sell_frame
+            return buy_strategy_frame, sell_strategy_frame
+
+    #TODO make model methods more modular for simpler integration of new models (like the strategy model)
+    def build_strategy_model(self, inputs, neurons, strategy_activ_func = 'relu', output_size=1, dropout=0.25, layers=3):
+        is_leaky = self.strategy_is_leakyrelu
+        activ_func = strategy_activ_func
+        loss = self.strategy_loss_fun
+        optimizer = self.optimization_scheme
+        strategy_model = Sequential()
+
+        strategy_model.add(LSTM(1, input_shape=(inputs.shape[1], inputs.shape[2])))
+        strategy_model.add(Dropout(dropout))
+
+        if is_leaky:
+            for i in range(0, layers):
+                strategy_model.add(Dense(units=neurons, activation="linear", kernel_initializer='normal'))
+                strategy_model.add(LeakyReLU(alpha=0.1))
+        else:
+            for i in range(0, layers):
+                strategy_model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
+
+        strategy_model.add(Dense(units=output_size, activation="sigmoid"))
+        strategy_model.compile(loss=loss, optimizer=optimizer)
+
+        self.buy_model = strategy_model
+        self.sell_model = strategy_model
+
+    def prep_arrays_for_model(self, arr, training_len, should_reshape):
+
+        if should_reshape:
+            scaler = StandardScaler()
+            temp_input_array = scaler.fit_transform(arr)
+            output_arr = temp_input_array.reshape(temp_input_array.shape[0], temp_input_array.shape[1], 1)
+        else:
+            output_arr = arr
+
+        training_output = output_arr[0:training_len]
+        test_output = output_arr[training_len::]
+
+        return training_output, test_output
+
+    def train_strategy_model(self, neuron_count=200, min_distance_between_trades=5, save_model=False):
+        buy_frame, sell_frame = self.create_strategy_prediction_frame(min_distance_between_trades=min_distance_between_trades, n=10)
+
+        buy_values = buy_frame['Buy'].values
+        sell_values = sell_frame['Sell'].values
+
+        input_values = buy_frame.drop(columns=['Buy'])
+
+        training_length = (int(2 * len(buy_values) / 3))
+
+        training_input, test_input = self.prep_arrays_for_model(input_values, training_length, should_reshape=True)
+        training_buy_output, test_buy_output = self.prep_arrays_for_model(sell_values, training_length, should_reshape=False)
+        training_sell_output, test_sell_output = self.prep_arrays_for_model(buy_values, training_length,should_reshape=False)
 
 
 
+        self.build_strategy_model(training_input, neurons=neuron_count)
+
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
+
+        self.buy_model.fit(training_input, training_buy_output, epochs=self.epochs, batch_size=96, verbose=2,
+                                    shuffle=False, validation_split=0.25, callbacks=[estop])
+
+        self.sell_model.fit(training_input, training_sell_output, epochs=self.epochs, batch_size=96, verbose=2,
+                                    shuffle=False, validation_split=0.25, callbacks=[estop])
+
+        return test_buy_output, test_input, test_sell_output
+
+    def test_strategy_model(self, did_train=True, show_plots=True, min_distance_between_trades=5):
+        # if did_train:
+        #     test_input = self.test_array_input
+        #     test_output = self.test_array_output
+        # else:
+        #     self.create_arrays(min_distance_between_trades, model_type=model_type)
+        #     test_input = self.input
+        #     test_output = self.output
+
+        test_buy_output, test_input, test_sell_output = self.train_strategy_model()
+        buy_prediction = self.buy_model.predict(test_input)
+        sell_prediction = self.sell_model.predict(test_input)
+
+        if show_plots:
+            plt.plot(test_buy_output, 'bo--')
+            plt.plot(buy_prediction, 'rx--')
+            plt.title('Buy Predictions')
+
+            plt.figure()
+
+            plt.plot(test_sell_output, 'bo--')
+            plt.plot(sell_prediction, 'rx--')
+            plt.title('Sell Predictions')
+
+            plt.show()
+        else:
+            return buy_prediction, sell_prediction
 
 
 class BaseTradingBot:
@@ -944,7 +1032,7 @@ if __name__ == '__main__':
         pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_buy&sell_from_2018-05-14_20:00:00_EST_to_2018-05-15_01:00:00_EST.pickle'
 
         strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
-        strategy_model.create_strategy_prediction_frame(10)
+        strategy_model.test_strategy_model()
 
     elif code_block == 2:
 
