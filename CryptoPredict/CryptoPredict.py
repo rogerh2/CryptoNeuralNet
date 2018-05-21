@@ -353,8 +353,7 @@ class DataSet:
 
         return value
 
-
-    def create_single_prediction_column(self, price_data_frame, n, show_plots=True):
+    def create_single_prediction_column(self, price_data_frame, n, show_plots=False):
         #This finds the optimal trading strategy
         all_times = price_data_frame.index
         all_prices = price_data_frame.values
@@ -462,8 +461,7 @@ class DataSet:
 
         prediction_frame = pd.DataFrame(data=np.hstack((buy_column, sell_column)), index=price_data_frame.index, columns=['Buy', 'Sell'])
 
-        data_frame = self.fin_table.set_index('date')
-        self.final_table = pd.concat([data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.index])
+        self.final_table = pd.concat([price_data_frame, prediction_frame], axis=1, join_axes=[prediction_frame.index])
 
     def create_arrays(self, model_type='price', min_distance_between_trades=5):
         if model_type == 'price':
@@ -484,9 +482,11 @@ class DataSet:
         temp_array = fullArr[np.logical_not(np.isnan(np.sum(fullArr, axis=1))), ::]
         self.output_array = np.array(temp_array[self.prediction_length:-1, n:])
         temp_input_array = np.array(temp_array[0:-(self.prediction_length + 1), 0:m])
+        self.input_array_times = temp_input_table.index[0:-(self.prediction_length + 1)]
         scaler = StandardScaler()
         temp_input_array = scaler.fit_transform(temp_input_array)
         self.input_array = temp_input_array.reshape(temp_input_array.shape[0], temp_input_array.shape[1], 1)
+
 
     def create_prediction_arrays(self):
         data_frame = self.fin_table.set_index('date')
@@ -569,12 +569,15 @@ class CoinPriceModel:
 
         self.input = self.data_obj.input_array
         self.output = self.data_obj.output_array
+        self.times = self.data_obj.input_array_times
 
         self.training_array_input = self.data_obj.input_array[0:training_length]
         self.training_array_output = self.data_obj.output_array[0:training_length]
+        self.training_times = self.data_obj.input_array_times[0:training_length]
 
         self.test_array_input = self.data_obj.input_array[training_length::]
         self.test_array_output = self.data_obj.output_array[training_length::]
+        self.test_times = self.data_obj.input_array_times[training_length::]
 
     #TODO create method to save Data Frames without testing the models
 
@@ -682,44 +685,50 @@ class CryptoTradeStrategyModel(CoinPriceModel):
             self.create_arrays(min_distance_between_trades, model_type='price')
             prediction, price = self.test_model(did_train=False, show_plots=False, min_distance_between_trades=min_distance_between_trades, model_type='price')
 
-        column_len = len(prediction) - n
+        all_times = self.test_times
+        column_len = len(prediction) - 2*n
         price_columns = np.zeros((column_len, n)) #douple brackets because np.zeros takes a tuple
         prediction_columns = np.zeros((column_len, n))
+        time_columns = []
 
         prediction_data = prediction.T #This makes it easier to add data to columns
         price_data = price.T
 
-        for ind in range(0, column_len-n):
+        for ind in range(0, column_len):
             price_columns[ind, ::] = price_data[0, ind:(ind+n)]
             prediction_columns[ind, ::] = prediction_data[0, (ind + n):(ind + 2*n)]
+            time_columns.append(all_times[ind+n])
 
-        return price_columns, prediction_columns #TODO add ability to return dates as well remember that each prediction is at ind+n
+        return price_columns, prediction_columns, time_columns #TODO add ability to return dates as well remember that each prediction is at ind+n
 
     def create_trade_strategy_columns(self, price_data_set, min_distance_between_trades=5, n=10):
         price_data_set.create_buy_sell_prediction_frame(min_distance_between_trades)
 
-        training_length = (int(2 * len(self.data_obj.input_array) / 3))
-
-        buy_column = self.data_obj.final_table.Buy[(training_length + n + 1):-1]
-        sell_column = self.data_obj.final_table.Sell[(training_length + n + 1):-1]
+        buy_column = self.data_obj.final_table.Buy
+        sell_column = self.data_obj.final_table.Sell
 
         return buy_column, sell_column #TODO add ability to return dates as well remember that each prediction is at ind+n
 
-    def create_strategy_prediction_frame(self, frame_type, n):
-        #TODO make sure buy and sell dates match the price and prediction ones
-        #TODO work out all the weird errors with this method (most recent was that there was no ETH_time in crypto compare)
-        measured_price, predicted_price = self.create_test_price_columns(n=n)
-        buy_series, sell_series = self.create_trade_strategy_columns(self.data_obj, n=n)
-        strategy_input_frame = pd.DataFrame(data=np.hstack((measured_price, predicted_price)))
-        buy_frame = pd.DataFrame(data=buy_series)
-        sell_frame = pd.DataFrame(data=sell_series)
+    def create_strategy_prediction_frame(self, n, min_distance_between_trades=5, show_plots=False):
+        measured_price, predicted_price, price_time = self.create_test_price_columns(n=n)
+        self.data_obj.create_buy_sell_prediction_frame(min_distance_between_trades)
+        strategy_input_frame = pd.DataFrame(data=np.hstack((measured_price, predicted_price)), index=price_time)
 
-        self.strategy_frame = pd.concat([strategy_input_frame, buy_frame, sell_frame], axis=1, join_axes=[strategy_input_frame.index])
+        sym = self.data_obj.prediction_ticker.upper()
+        buy_frame = self.data_obj.final_table.drop(columns=[sym.upper() + '_open', 'Sell'])
+        sell_frame = self.data_obj.final_table.drop(columns=[sym.upper() + '_open', 'Buy'])
+        buy_strategy_frame = pd.merge(buy_frame, strategy_input_frame, left_index=True, right_index=True)
+        sell_strategy_frame = pd.merge(sell_frame, strategy_input_frame, left_index=True, right_index=True)
 
-        plt.plot(strategy_input_frame[9].values, 'bo--')
-        plt.plot(strategy_input_frame.index[buy_frame['Buy'].values == 1], strategy_input_frame[9].values[buy_frame['Buy'].values == 1], 'gx')
-        plt.plot(strategy_input_frame.index[sell_frame['Sell'].values == 1], strategy_input_frame[9].values[sell_frame['Sell'].values == 1], 'rx')
-        plt.show()
+        #self.strategy_frame = pd.concat([strategy_input_frame, buy_frame, sell_frame], axis=1, join_axes=[strategy_input_frame.index])
+
+        if show_plots:
+            ax1 = strategy_input_frame[9].plot(style='b--')
+            strategy_input_frame[9][buy_strategy_frame['Buy'].values == 1].plot(style='gx', ax=ax1)
+            strategy_input_frame[9][sell_strategy_frame['Sell'].values == 1].plot(style='rx', ax=ax1)
+            plt.show()
+        else:
+            return buy_frame, sell_frame
 
 
 
@@ -922,6 +931,9 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 if __name__ == '__main__':
 
     code_block = 1
+    # 1 for test recent code
+    # 2 run_neural_net
+    # 3 BaseTradingBot
 
     if code_block == 1:
         date_from = "2018-05-14 20:00:00 EST"
@@ -932,25 +944,25 @@ if __name__ == '__main__':
         pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_buy&sell_from_2018-05-14_20:00:00_EST_to_2018-05-15_01:00:00_EST.pickle'
 
         strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
-        strategy_model.create_strategy_prediction_frame('buy', 10)
+        strategy_model.create_strategy_prediction_frame(10)
 
     elif code_block == 2:
 
         date_from = "2018-05-13 00:00:00 EST"
         date_to = "2018-05-17 00:15:00 EST"
-        prediction_length = 15
+        prediction_length = 6
         epochs = 5000
         prediction_ticker = 'ETH'
         bitinfo_list = ['eth']
-        time_unit = 'minutes'
+        time_unit = 'hours'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 30
+        neuron_count = 100
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_13epochs_50neuron1526575949.141267.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_22epochs_100neuron1526576167.525831.h5'
         model_type = 'price' #Don't change this
-        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        use_type = 'predict' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_price_from_2018-05-13_00:00:00_EST_to_2018-05-17_00:15:00_EST.pickle'
         test_model_save_bool = False
 
