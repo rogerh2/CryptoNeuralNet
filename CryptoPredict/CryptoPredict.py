@@ -474,14 +474,14 @@ class DataSet:
 
         sell_column, buy_column = self.create_single_prediction_column(price_data_frame, m)
 
-        for i in range(0, len(sell_column) - 5):
-            if np.sum(sell_column[i:(5+i)]):
-                for ind in range(i, 5+i):
-                    sell_column[ind] = 1
-
-            if np.sum(buy_column[i:(5+i)]):
-                for ind in range(i, 5+i):
-                    buy_column[ind] = 1
+        #This for loop spreads out decisions so that trades that are coming within five minutes are seen
+        # m = 5
+        # for i in range(0, len(sell_column) - m):
+        #     if np.sum(sell_column[i:(m+i)]) == 1:
+        #         sell_column[i] = 1
+        #
+        #     if np.sum(buy_column[i:(m+i)]) == 1:
+        #         buy_column[i] = 1
 
 
         prediction_frame = pd.DataFrame(data=np.hstack((buy_column, sell_column)), index=price_data_frame.index, columns=['Buy', 'Sell'])
@@ -720,7 +720,17 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         #This creates a table with 2*n columns that contains n columns of the price for the past n units of time and prediction for the next n units. This is meant to train the strategy model
 
         if should_train:
-            self.train_model(model_type='price', neuron_count=30)
+            val_loss = 30
+            iter = 0
+            while (val_loss > 10) & (iter < 20):
+                hist = self.train_model(model_type='price', neuron_count=30)
+                val_loss = hist.history['val_loss'][-1]
+                iter += 1
+                if val_loss > 10:
+                    print('val_loss is too great, retraining')
+                else:
+                    print('valid model detected')
+
             prediction, price = self.test_model(show_plots=False)
         else:
             self.create_arrays(min_distance_between_trades, model_type='price')
@@ -739,7 +749,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         return prediction, all_times #TODO add ability to return dates as well remember that each prediction is at ind+n
 
-    def create_strategy_prediction_frame(self, n, min_distance_between_trades=5, show_plots=True):
+    def create_strategy_prediction_frame(self, n, min_distance_between_trades=5, show_plots=False): #Set show_plots to True for debug only
         predicted_price, price_time = self.create_test_price_columns(n=n)
         self.data_obj.create_buy_sell_prediction_frame(min_distance_between_trades)
         strategy_input_frame = pd.DataFrame(data=predicted_price, index=price_time)
@@ -773,7 +783,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         possible_negatives = K.sum(K.clip(1 - y_true, 0, 1))
         loss_val = possible_negatives / (true_negatives + K.epsilon())
 
-        return 0.25*loss_val
+        return loss_val
 
     def custom_loss_func(self, y_true, y_pred):
         loss_val = self.specificity(y_true, y_pred) + self.sensitivity(y_true, y_pred)
@@ -799,7 +809,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
                 strategy_model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         strategy_model.add(Dense(units=output_size, activation="sigmoid"))
-        strategy_model.compile(loss=self.custom_loss_func, optimizer=optimizer)
+        strategy_model.compile(loss=self.custom_loss_func, optimizer=keras.optimizers.adam(lr=0.0001))
 
         return strategy_model
 
@@ -817,7 +827,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         return training_output, test_output
 
-    def train_strategy_model(self, neuron_count=10, min_distance_between_trades=5, save_model=False, t = 0.75, layers=10):
+    def train_strategy_model(self, neuron_count=30, min_distance_between_trades=5, save_model=False, t = 0.9, layers=1):
         buy_frame, sell_frame = self.create_strategy_prediction_frame(min_distance_between_trades=min_distance_between_trades, n=10)
 
         buy_values = buy_frame['Buy'].values
@@ -843,12 +853,12 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         self.buy_model = self.build_strategy_model(training_input, neurons=neuron_count, layers=layers)
         self.sell_model = self.build_strategy_model(training_input, neurons=neuron_count, layers=layers)
 
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=20, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
 
-        self.buy_model.fit(training_input, training_buy_output, epochs=100, batch_size=96, verbose=2,
+        self.buy_model.fit(training_input, training_buy_output, epochs=1000, batch_size=32, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop], class_weight=class_weight)
 
-        self.sell_model.fit(training_input, training_sell_output, epochs=100, batch_size=96, verbose=2,
+        self.sell_model.fit(training_input, training_sell_output, epochs=1000, batch_size=32, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop], class_weight=class_weight)
 
         return test_buy_output, test_input, test_sell_output
@@ -1084,12 +1094,12 @@ if __name__ == '__main__':
     # 3 BaseTradingBot
 
     if code_block == 1:
-        date_from = "2018-05-19 22:00:00 EST"
-        date_to = "2018-05-20 22:00:00 EST"
+        date_from = "2018-05-18 22:00:00 EST"
+        date_to = "2018-05-21 22:00:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-19_22:00:00_EST_to_2018-05-20_22:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-18_22:00:00_EST_to_2018-05-21_22:00:00_EST.pickle'
 
         strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
         strategy_model.test_strategy_model()
