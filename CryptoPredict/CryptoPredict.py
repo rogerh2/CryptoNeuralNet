@@ -900,13 +900,12 @@ class BaseTradingBot:
     image_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Images//'
     last_true_countdown = 2
 
-    def __init__(self, hourly_model, minute_model, hourly_len=6, minute_len=15, prediction_ticker='ETH'):
-
+    def __init__(self, hourly_model, minute_model, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list = ['eth']):
         temp = "2018-05-05 00:00:00 EST"
         self.hourly_cp = CoinPriceModel(temp, temp, days=hourly_len, prediction_ticker=prediction_ticker,
                                         bitinfo_list=bitinfo_list, time_units='hours', model_path=hourly_model, need_data_obj=False)
 
-        self.minute_cp = CoinPriceModel(date_from, date_to, days=minute_len, prediction_ticker=prediction_ticker,
+        self.minute_cp = CoinPriceModel(temp, temp, days=minute_len, prediction_ticker=prediction_ticker,
                                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=minute_model, need_data_obj=False)
 
         self.hour_length = hourly_len
@@ -986,7 +985,7 @@ class BaseTradingBot:
         # Setup the SMTP server
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
-        s.login('rogeh2@gmail.com', 'Neutrino#0')
+        s.login('rogeh2@gmail.com', 'Mechelo#0-9')
         s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg_root.as_string())
 
     def send_err(self):
@@ -1003,7 +1002,6 @@ class BaseTradingBot:
         next_price = self.hourly_prediction.values[-self.hour_length]
         check_price = self.hourly_prediction.values[-(self.hour_length - 1)]
         val_price = self.hourly_prediction.values[-(self.hour_length - 2)]
-
         #This tells the bot to send an email if the next predicted price is an inflection point for the next two hours
         if (next_price > current_price) & (next_price > check_price) & (next_price > (val_price + 0.01)):
             self.last_true_countdown = 6
@@ -1042,31 +1040,28 @@ class BaseTradingBot:
 # TODO try using a classifier Neural Net
 # TODO eliminate unnecessary legacy variables from run_neural_net and CryptoPredict
 
-def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None, save_test_model=True):
+def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None, save_test_model=True, test_saved_model=False):
 
     #This creates a CoinPriceModel and saves the data
-    if (data_set_path is not None) & (use_type != 'predict'):
+    if (data_set_path is not None) & (use_type != 'predict') & (not test_saved_model):
 
         cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs,
                             prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
                         time_units=time_unit, activ_func=activ_func, is_leakyrelu=isleakyrelu, data_set_path=data_set_path)
 
-        #cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
-        #                time_units=time_unit, activ_func=activ_func, is_leakyrelu=isleakyrelu, data_set_path=data_set_path)
-
-    elif use_type != 'predict':
+    elif (use_type != 'predict')  & (not test_saved_model):
         cp = CoinPriceModel(date_from, date_to, days=prediction_length, epochs=epochs, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list,
                             time_units=time_unit, activ_func=activ_func, is_leakyrelu=isleakyrelu)
 
-        # table_file_name = '_' + time_unit + '_' + model_type + '_from_' + date_from + '_to_' + date_to + '.pickle'
-        # table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + table_file_name.replace(' ', '_')
-        # with open(table_file_name, 'wb') as cp_file_handle:
-        #     pickle.dump(cp.data_obj.fin_table, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     # 'test' will train a model with given conditions then test it, 'optimize' optimizes neuron count by evaluation data loss, 'predict' predicts data
     if use_type == 'test':
-        cp.train_model(neuron_count=neuron_count, min_distance_between_trades=min_distance_between_trades, model_type=model_type, save_model=save_test_model)
-        cp.test_model()
+        if test_saved_model:
+            cp = CoinPriceModel(date_from, date_to, days=prediction_length, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list, time_units=time_unit, model_path=model_path, need_data_obj=True, data_set_path=data_set_path)
+            cp.test_model(did_train=False)
+        else:
+            cp.train_model(neuron_count=neuron_count, min_distance_between_trades=min_distance_between_trades, model_type=model_type, save_model=save_test_model)
+            cp.test_model()
 
     elif use_type == 'optimize':
         hist = []
@@ -1090,43 +1085,43 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 
 if __name__ == '__main__':
 
-    code_block = 2
+    code_block = 1
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
 
     if code_block == 1:
-        date_from = "2018-05-18 22:00:00 EST"
-        date_to = "2018-05-21 22:00:00 EST"
+        date_from = "2018-05-20 8:50:00 EST"
+        date_to = "2018-05-23 8:50:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-18_22:00:00_EST_to_2018-05-21_22:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-20_8:50:00_EST_to_2018-05-23_8:50:00_EST.pickle'
 
         strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
         strategy_model.test_strategy_model()
 
     elif code_block == 2:
 
-        date_from = "2018-04-23 9:00:00 EST"
-        date_to = "2018-05-23 9:00:00 EST"
-        prediction_length = 6
+        date_from = "2018-05-23 10:00:00 EST"
+        date_to = "2018-05-23 11:00:00 EST"
+        prediction_length = 15
         epochs = 500
         prediction_ticker = 'ETH'
         bitinfo_list = ['eth']
-        time_unit = 'hours'
+        time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
         neuron_count = 25
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_22epochs_100neuron1526576167.525831.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_200neuron1527096914.695041.h5'
         model_type = 'price' #Don't change this
-        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_from_2018-04-23_9:00:00_EST_to_2018-05-23_9:00:00_EST.pickle'
+        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-23_11:00:00_EST_to_2018-05-23_12:00:00_EST.pickle'
         test_model_save_bool = True
 
-        run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
+        run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=True)
 
     elif code_block == 3:
 
