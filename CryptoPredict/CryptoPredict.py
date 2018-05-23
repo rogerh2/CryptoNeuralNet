@@ -306,13 +306,15 @@ class DataSet:
                 last_news = current_news
 
 
-                current_sentiment = [txb(news['title']).sentiment.polarity for news in current_news]
-
-                sentiment_sum = np.sum(current_sentiment)
-                news_sentiment.insert(0, sentiment_sum)
+                current_full_sentiment = [txb(news['title']).sentiment.polarity for news in current_news]
 
                 current_news_count = np.sum([news['published_on'] > delta_ts for news in current_news])
                 news_count.insert(0, current_news_count)
+
+                current_sentiment = current_full_sentiment[0:current_news_count]
+
+                sentiment_sum = np.mean(current_sentiment)
+                news_sentiment.insert(0, sentiment_sum)
 
                 iterations_complete += 1
                 print('news scraping ' + str(round(100 * iterations_complete / total_len, 2)) + '% complete')
@@ -333,7 +335,7 @@ class DataSet:
         cryp_obj.symbol = self.prediction_ticker
         sym = self.prediction_ticker
         temp_prediction_table = self.price_func(symbol=sym)
-        prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
+        prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_open', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
 
         fin_table = pd.concat([self.fin_table, prediction_table], axis=1, join_axes=[prediction_table.index])
         data_frame = fin_table.set_index('date')
@@ -468,7 +470,7 @@ class DataSet:
         sym = self.prediction_ticker
         price_data_frame = self.price_func(symbol=sym)
         price_data_frame = price_data_frame.drop(
-            columns=[sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_high',
+            columns=[sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_open',
                      sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
         price_data_frame = price_data_frame.set_index('date')
 
@@ -522,7 +524,7 @@ class DataSet:
         temp_array = temp_input_array[np.logical_not(np.isnan(np.sum(temp_input_array, axis=1))), ::]
         temp_array = scaler.fit_transform(temp_array)
         self.input_array = temp_array.reshape(temp_array.shape[0], temp_array.shape[1], 1)
-        self.output_array = data_frame[self.prediction_ticker.upper() + '_open'].values
+        self.output_array = data_frame[self.prediction_ticker.upper() + '_high'].values
         self.final_table=data_frame
 
 class CoinPriceModel:
@@ -765,9 +767,9 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         #self.strategy_frame = pd.concat([strategy_input_frame, buy_frame, sell_frame], axis=1, join_axes=[strategy_input_frame.index])
 
         if show_plots:
-            ax1 = sell_strategy_frame[self.prediction_ticker.upper() + '_open'].plot(style='b--')
-            buy_strategy_frame[self.prediction_ticker.upper() + '_open'][buy_strategy_frame['Buy'].values == 1].plot(style='gx', ax=ax1)
-            sell_strategy_frame[self.prediction_ticker.upper() + '_open'][sell_strategy_frame['Sell'].values == 1].plot(style='rx', ax=ax1)
+            ax1 = sell_strategy_frame[self.prediction_ticker.upper() + '_high'].plot(style='b--')
+            buy_strategy_frame[self.prediction_ticker.upper() + '_high'][buy_strategy_frame['Buy'].values == 1].plot(style='gx', ax=ax1)
+            sell_strategy_frame[self.prediction_ticker.upper() + '_high'][sell_strategy_frame['Sell'].values == 1].plot(style='rx', ax=ax1)
             plt.show()
         else:
             return buy_frame, sell_frame
@@ -1024,7 +1026,7 @@ class BaseTradingBot:
         cutoff_time = current_time + 14*3600
         should_send_email = False
         while current_time < cutoff_time:
-            if current_time > (last_check + 5*60):
+            if current_time > (last_check + 15*60):
                 try:
                     self.find_data()
                     should_send_email = self.trade_logic(should_send_email)
@@ -1088,7 +1090,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 
 if __name__ == '__main__':
 
-    code_block = 1
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1106,13 +1108,13 @@ if __name__ == '__main__':
 
     elif code_block == 2:
 
-        date_from = "2018-05-19 22:00:00 EST"
-        date_to = "2018-05-20 22:00:00 EST"
-        prediction_length = 15
-        epochs = 5000
+        date_from = "2018-04-23 9:00:00 EST"
+        date_to = "2018-05-23 9:00:00 EST"
+        prediction_length = 6
+        epochs = 500
         prediction_ticker = 'ETH'
         bitinfo_list = ['eth']
-        time_unit = 'minutes'
+        time_unit = 'hours'
         activ_func = 'relu'
         isleakyrelu = True
         neuron_count = 25
@@ -1120,16 +1122,16 @@ if __name__ == '__main__':
         min_distance_between_trades = 5
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_22epochs_100neuron1526576167.525831.h5'
         model_type = 'price' #Don't change this
-        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-19_22:00:00_EST_to_2018-05-20_22:00:00_EST.pickle'
-        test_model_save_bool = False
+        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_from_2018-04-23_9:00:00_EST_to_2018-05-23_9:00:00_EST.pickle'
+        test_model_save_bool = True
 
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool)
 
     elif code_block == 3:
 
-        hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_46epochs_30neuron1526576145.902216.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_13epochs_50neuron1526575949.141267.h5'
+        hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_200neuron1527096914.695041.h5'
 
         naive_bot = BaseTradingBot(hourly_model=hour_path, minute_model=minute_path)
         naive_bot.continuous_monitoring()

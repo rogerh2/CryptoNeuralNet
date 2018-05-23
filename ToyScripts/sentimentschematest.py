@@ -6,8 +6,8 @@ from CryptoPredict.CryptoPredict import CryptoCompare
 from textblob import TextBlob as txb
 from datetime import datetime
 
-cp = CryptoCompare(date_from="2018-04-10 08:30:00 EST")
-price_df = cp.hourly_price_historical(symbol='ETH', aggregate=1)
+cp = CryptoCompare(date_from="2018-05-21 07:30:00 EST", date_to="2018-05-23 08:22:00 EST")
+price_df = cp.hourly_price_historical(symbol='ETH')
 sentiment_schema_1 = [] #sentiment sum
 sentiment_schema_2 = [] #number of articles in last 5hrs
 sentiment_schema_3 = [] #number of articles in last 5hrs plus news sum in last 5 hrs
@@ -41,14 +41,21 @@ for current_dt in price_df.index.values:
     news_count = np.sum([news['published_on'] > delta_ts for news in current_news])
     sentiment_schema_2.append(news_count)
 
-    news_count_sentiment_sum = np.sum(current_sentiment[0:news_count])
-    sentiment_schema_3.append(news_count+news_count_sentiment_sum)
+    delta_ts = utc_current_dt.timestamp() - 5 * 3600
+    news_count = np.sum([news['published_on'] > delta_ts for news in current_news])
+    news_count_sentiment_sum = np.mean(current_sentiment[0:(news_count)])
+
+    if np.isnan(news_count_sentiment_sum):
+        news_count_sentiment_sum = 0
+
+
+    sentiment_schema_3.append(news_count_sentiment_sum)
 
     iterations_complete += 1
     print(str(round(100*iterations_complete/total_len, 1)) + '% complete')
 
 
-open_price_df = pd.DataFrame({'Price':roge_normalization(price_df.ETH_open.values)}, index=price_df.index)
+open_price_df = pd.DataFrame({'Price':roge_normalization(price_df.ETH_high.values)}, index=price_df.index)
 df_1 = pd.DataFrame({'Score':roge_normalization(sentiment_schema_1)}, index=price_df.index)
 df_2 = pd.DataFrame({'Score':roge_normalization(sentiment_schema_2)}, index=price_df.index)
 df_3 = pd.DataFrame({'Score':roge_normalization(sentiment_schema_3)}, index=price_df.index)
