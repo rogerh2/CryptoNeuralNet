@@ -1,5 +1,5 @@
 import requests
-from requests.adapters import HTTPAdapter
+from requests.auth import AuthBase
 
 from datetime import datetime
 from datetime import timedelta
@@ -10,6 +10,9 @@ import numpy as np
 import keras
 import pytz
 import pickle
+import base64
+import hashlib
+import hmac
 from textblob import TextBlob as txb
 from keras.models import Sequential
 from keras.layers import Activation, Dense
@@ -893,7 +896,6 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         else:
             return buy_prediction, sell_prediction
 
-
 class BaseTradingBot:
 
     #TODO create method to train and optimize models (including during continuous usage)
@@ -912,15 +914,16 @@ class BaseTradingBot:
         self.minute_length = minute_len
         self.prediction_ticker = prediction_ticker
 
-    def find_data(self):
+    def find_data(self, is_hourly_prediction_needed = True):
 
         full_minute_prediction, full_minute_price = self.minute_cp.predict(time_units='minutes', show_plots=False)
         self.minute_prediction = full_minute_prediction[-(self.minute_length + 10)::]
         self.minute_price = full_minute_price[-10::]
 
-        full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
-        self.hourly_prediction = full_hourly_prediction[-(self.hour_length + 4)::]
-        self.hourly_price = full_hourly_price[-4::]
+        if is_hourly_prediction_needed:
+            full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
+            self.hourly_prediction = full_hourly_prediction[-(self.hour_length + 4)::]
+            self.hourly_price = full_hourly_price[-4::]
 
     def prepare_images(self):
         #This method creates, saves, and closes the figures
@@ -1002,6 +1005,7 @@ class BaseTradingBot:
         next_price = self.hourly_prediction.values[-self.hour_length]
         check_price = self.hourly_prediction.values[-(self.hour_length - 1)]
         val_price = self.hourly_prediction.values[-(self.hour_length - 2)]
+
         #This tells the bot to send an email if the next predicted price is an inflection point for the next two hours
         if (next_price > current_price) & (next_price > check_price) & (next_price > (val_price + 0.01)):
             self.last_true_countdown = 6
@@ -1016,7 +1020,6 @@ class BaseTradingBot:
                 return True
 
             return False
-
 
     def continuous_monitoring(self):
         current_time = datetime.utcnow().timestamp()
@@ -1037,7 +1040,62 @@ class BaseTradingBot:
             else:
                 time.sleep(1)
             current_time = datetime.utcnow().timestamp()
-# TODO try using a classifier Neural Net
+
+class GDAXRequestAuth(AuthBase):
+#This class and all GDAX information in the NaiveTradingBot came
+# from https://cryptostag.com/basic-gdax-api-trading-with-python/
+    def __init__(self, api_key, secret_key, passphrase):
+        self.api_key = api_key
+        self.secret_key = secret_key
+        self.passphrase = passphrase
+
+    def __call__(self, request):
+        timestamp = str(time.time())
+        message = timestamp + request.method + request.path_url + (request.body or '')
+        hmac_key = base64.b64decode(self.secret_key)
+        signature = hmac.new(hmac_key, message.encode('utf-8'), hashlib.sha256)
+        signature_b64 = base64.b64encode(signature.digest())
+        request.headers.update({
+            'CB-ACCESS-SIGN': signature_b64,
+            'CB-ACCESS-TIMESTAMP': timestamp,
+            'CB-ACCESS-KEY': self.api_key,
+            'CB-ACCESS-PASSPHRASE': self.passphrase,
+            'Content-Type': 'application/json'
+        })
+        return request
+
+class NaiveTradingBot(BaseTradingBot):
+    currency_available = {'USD': None, 'ETH': None}
+    current_state = 'hold'
+    buy_history = []
+    sell_history = []
+
+    def is_jump_in_minute_price_prediction(self, jump_sign, confidence_length=4):
+        #confidence_length is how many minutes the jump must hold for -1
+        #jump_sign should be +-1, -1 for negative jumps and +1 for positive
+        full_minute_prediction = self.minute_prediction.values
+        previous_prediction = full_minute_prediction[-(self.minute_length-5):-(self.minute_length+1)]
+        current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
+        minute_difference = np.diff(current_minute_prediction)
+
+        for diff_ind in range(0, len(minute_difference)):
+            pred_ind = diff_ind + 1 #np.diff shortens the array by 1
+            mean_diff_before_jump = jump_sign*np.mean(minute_difference[0:diff_ind])
+            if minute_difference[pred_ind] > 2 * mean_diff_before_jump:
+                if len(current_minute_prediction) > pred_ind + confidence_length: #this ensures the jump is at most 10minutes in the future
+                    min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind+confidence_length)])
+                    is_jump_convincing = [min_during_jump > (mean_diff_before_jump + x) for x in previous_prediction]
+                    if all(is_jump_convincing):
+                        return True
+        return False
+
+    #def get_wallet_contents(self):
+
+    #def trade_logic(self):
+
+
+
+
 # TODO eliminate unnecessary legacy variables from run_neural_net and CryptoPredict
 
 def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None, save_test_model=True, test_saved_model=False):
@@ -1085,7 +1143,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 
 if __name__ == '__main__':
 
-    code_block = 1
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1103,25 +1161,25 @@ if __name__ == '__main__':
 
     elif code_block == 2:
 
-        date_from = "2018-05-23 10:00:00 EST"
-        date_to = "2018-05-23 11:00:00 EST"
+        date_from = "2018-05-20 09:20:00 EST"
+        date_to = "2018-05-23 09:20:00 EST"
         prediction_length = 15
-        epochs = 500
+        epochs = 5000
         prediction_ticker = 'ETH'
         bitinfo_list = ['eth']
         time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 25
+        neuron_count = 200
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_200neuron1527096914.695041.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_21epochs_30neuron1527096885.697811.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-23_11:00:00_EST_to_2018-05-23_12:00:00_EST.pickle'
-        test_model_save_bool = True
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-20_9:20:00_EST_to_2018-05-23_9:20:00_EST.pickle'
+        test_model_save_bool = False
 
-        run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=True)
+        run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=False)
 
     elif code_block == 3:
 
