@@ -917,8 +917,8 @@ class BaseTradingBot:
     def find_data(self, is_hourly_prediction_needed = True):
 
         full_minute_prediction, full_minute_price = self.minute_cp.predict(time_units='minutes', show_plots=False)
-        self.minute_prediction = full_minute_prediction[-(self.minute_length + 10)::]
-        self.minute_price = full_minute_price[-10::]
+        self.minute_prediction = full_minute_prediction
+        self.minute_price = full_minute_price
 
         if is_hourly_prediction_needed:
             full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
@@ -954,8 +954,8 @@ class BaseTradingBot:
 
         # Create the root message and fill in the from, to, and subject headers
         msg_root = MIMEMultipart('related')
-        msg_root['From'] = 'rogeh2@gmail.com'
-        msg_root['To'] = 'rogeh2@gmail.com'
+        msg_root['From'] = 'None'
+        msg_root['To'] = 'None'
         msg_root['Subject'] = 'Ethereum Prediction From Your Digital Broker'
 
         # Encapsulate the plain and HTML versions of the message body in an
@@ -988,16 +988,16 @@ class BaseTradingBot:
         # Setup the SMTP server
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
-        s.login('rogeh2@gmail.com', 'Mechelo#0-9')
-        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg_root.as_string())
+        s.login('None', 'None')
+        s.sendmail('None', ['None'], msg_root.as_string())
 
     def send_err(self):
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
-        s.login('rogeh2@gmail.com', 'Mechelo#0-9')
+        s.login('None', 'None')
         msg = MIMEText('Error detected, will try again in 10min')
         msg['Subject'] = 'Ethereum Prediction Error From Your Digital Broker'
-        msg['From'] = 'rogeh2@gmail.com'
+        msg['From'] = 'None'
         s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg.as_string())
 
     def trade_logic(self, last_bool):
@@ -1067,18 +1067,22 @@ class NaiveTradingBot(BaseTradingBot):
     def is_jump_in_minute_price_prediction(self, jump_sign, confidence_length=4):
         #confidence_length is how many minutes the jump must hold for -1
         #jump_sign should be +-1, -1 for negative jumps and +1 for positive
-        full_minute_prediction = self.minute_prediction.values
-        previous_prediction = full_minute_prediction[-(self.minute_length-5):-(self.minute_length+1)]
+        full_minute_prediction = self.minute_prediction
+        previous_prediction = full_minute_prediction[-(self.minute_length+7):-(self.minute_length+1)]
         current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
-        minute_difference = np.diff(current_minute_prediction)
+        minute_difference = np.diff(current_minute_prediction.T).T
 
         for diff_ind in range(0, len(minute_difference)):
             pred_ind = diff_ind + 1 #np.diff shortens the array by 1
-            mean_diff_before_jump = jump_sign*np.mean(minute_difference[0:diff_ind])
+            mean_diff_before_jump = np.mean(minute_difference[0:(diff_ind+1)])
             if minute_difference[diff_ind] > 2 * mean_diff_before_jump:
                 if len(current_minute_prediction) > (pred_ind + confidence_length): #this ensures the jump is at most 10minutes in the future
-                    min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind+confidence_length)])
-                    is_jump_convincing = [min_during_jump > (mean_diff_before_jump + x) for x in previous_prediction]
+                    if jump_sign == 1:
+                        min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
+                        is_jump_convincing = [min_during_jump > (mean_diff_before_jump + x) for x in previous_prediction]
+                    elif jump_sign == -1:
+                        max_during_jump = np.max(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
+                        is_jump_convincing = [max_during_jump < (mean_diff_before_jump + x) for x in previous_prediction]
                     if all(is_jump_convincing):
                         return True, pred_ind
         return False, None
@@ -1134,8 +1138,6 @@ class NaiveTradingBot(BaseTradingBot):
             return False
 
         usd_wallet, crypto_wallet = self.get_wallet_contents()
-
-
 
         if side == 'buy':
             usd_available = np.round(float(usd_wallet['available']) - self.min_usd_balance, 2)
@@ -1217,26 +1219,26 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 
 if __name__ == '__main__':
 
-    code_block = 3
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
 
     if code_block == 1:
-        date_from = "2018-05-20 8:50:00 EST"
-        date_to = "2018-05-23 8:50:00 EST"
+        date_from = "2018-05-20 14:00:00 EST"
+        date_to = "2018-05-23 15:00:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-20_8:50:00_EST_to_2018-05-23_8:50:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-23_14:00:00_EST_to_2018-05-23_15:00:00_EST.pickle'
 
         strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
         strategy_model.test_strategy_model()
 
     elif code_block == 2:
 
-        date_from = "2018-05-20 09:20:00 EST"
-        date_to = "2018-05-23 09:20:00 EST"
+        date_from = "2018-05-22 09:30:00 EST"
+        date_to = "2018-05-25 09:30:00 EST"
         prediction_length = 15
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1249,8 +1251,8 @@ if __name__ == '__main__':
         min_distance_between_trades = 5
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_21epochs_30neuron1527096885.697811.h5'
         model_type = 'price' #Don't change this
-        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-20_9:20:00_EST_to_2018-05-23_9:20:00_EST.pickle'
+        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-22_09:30:00_EST_to_2018-05-25_09:30:00_EST.pickle'
         test_model_save_bool = False
 
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=False)
@@ -1258,11 +1260,46 @@ if __name__ == '__main__':
     elif code_block == 3:
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_200neuron1527096914.695041.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_5epochs_200neuron1527270912.550913.h5'
 
-        #TODO make a non VC folder to hide keys (also delete keys before commit or just run them from command line)
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path, api_key='Secret', secret_key='Secret', passphrase='Secret')
         naive_bot.continuous_monitoring()
+
+
+        # date_from = "2018-05-23 14:00:00 EST"
+        # date_to = "2018-05-23 14:45:00 EST"
+        # prediction_length = 15
+        # epochs = 5000
+        # prediction_ticker = 'ETH'
+        # bitinfo_list = ['eth']
+        # time_unit = 'minutes'
+        # activ_func = 'relu'
+        # isleakyrelu = True
+        # neuron_count = 200
+        # time_block_length = 60
+        # min_distance_between_trades = 5
+        # model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_200neuron1527096914.695041.h5'
+        # model_type = 'price'  # Don't change this
+        # use_type = 'test'  # valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        # pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-23_14:00:00_EST_to_2018-05-23_15:00:00_EST.pickle'
+        # test_model_save_bool = False
+        #
+        # cp = CoinPriceModel(date_from, date_to, days=prediction_length, prediction_ticker=prediction_ticker,
+        #                     bitinfo_list=bitinfo_list, time_units=time_unit, model_path=model_path, need_data_obj=True,
+        #                     data_set_path=pickle_path)
+        # prediction, test_output = cp.test_model(did_train=False, show_plots=False)
+        #
+        # #TODO make a non VC folder to hide keys (also delete keys before commit or just run them from command line)
+        # naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path, api_key='Secret', secret_key='Secret', passphrase='Secret')
+        # naive_bot.minute_price = test_output
+        # naive_bot.minute_prediction = prediction
+        # buy_bool, sell_bool = naive_bot.trade_logic()
+        # print(str(buy_bool))
+        # print(str(sell_bool))
+        #
+        # plt.plot(prediction[-(15+1)::] , 'r--x')
+        # plt.plot(test_output[-(15+1)::] , 'b--o')
+        # plt.show()
 
     #The below code would make a great unit test
     # fake_prediction = pd.DataFrame({'Test':np.array([0.1, 0.2, 0.1, 0, 0.1, 0.1, 0.1])})
