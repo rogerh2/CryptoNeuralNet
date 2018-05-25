@@ -994,7 +994,7 @@ class BaseTradingBot:
     def send_err(self):
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
-        s.login('rogeh2@gmail.com', 'Neutrino#0')
+        s.login('rogeh2@gmail.com', 'Mechelo#0-9')
         msg = MIMEText('Error detected, will try again in 10min')
         msg['Subject'] = 'Ethereum Prediction Error From Your Digital Broker'
         msg['From'] = 'rogeh2@gmail.com'
@@ -1055,11 +1055,12 @@ class NaiveTradingBot(BaseTradingBot):
             bitinfo_list = ['eth']
 
         super(NaiveTradingBot, self).__init__(hourly_model, minute_model, hourly_len=hourly_len, minute_len=minute_len, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list)
-        self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase)
+
         self.product_id = prediction_ticker.upper() + '-USD'
 
         if is_sandbox_api:
             self.api_base = 'https://api-public.sandbox.gdax.com'
+            self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
         else:
             self.api_base = 'https://api.gdax.com'
 
@@ -1074,8 +1075,8 @@ class NaiveTradingBot(BaseTradingBot):
         for diff_ind in range(0, len(minute_difference)):
             pred_ind = diff_ind + 1 #np.diff shortens the array by 1
             mean_diff_before_jump = jump_sign*np.mean(minute_difference[0:diff_ind])
-            if minute_difference[pred_ind] > 2 * mean_diff_before_jump:
-                if len(current_minute_prediction) > pred_ind + confidence_length: #this ensures the jump is at most 10minutes in the future
+            if minute_difference[diff_ind] > 2 * mean_diff_before_jump:
+                if len(current_minute_prediction) > (pred_ind + confidence_length): #this ensures the jump is at most 10minutes in the future
                     min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind+confidence_length)])
                     is_jump_convincing = [min_during_jump > (mean_diff_before_jump + x) for x in previous_prediction]
                     if all(is_jump_convincing):
@@ -1085,15 +1086,12 @@ class NaiveTradingBot(BaseTradingBot):
     def get_wallet_contents(self):
         #TODO get rid of cringeworthy repitition
 
-        response = self.auth_client.get_accounts()
-        if response.status_code is not 200:
-            raise Exception('Invalid GDAX Status Code: %d' % response.status_code)
-        data = response.json()
+        data = self.auth_client.get_accounts()
         USD_ind = [acc["currency"] == 'USD' for acc in data]
-        usd_wallet = data[USD_ind]
+        usd_wallet = data[USD_ind.index(True)]
 
         crypto_ind = [acc["currency"] == self.prediction_ticker for acc in data]
-        crypto_wallet = data[crypto_ind]
+        crypto_wallet = data[crypto_ind.index(True)]
 
         if (self.usd_id is None) or (self.crypto_id is None):
             self.usd_id = usd_wallet['id']
@@ -1122,8 +1120,8 @@ class NaiveTradingBot(BaseTradingBot):
             order_type = 'asks'
 
         #TODO add stronger protection
-        for i in range(1, len(order_dict[order_type])):
-            if order_dict[order_type][i][2] > 5: #Make sure there is sizeable volume at that price to avoid tricks
+        for i in range(0, len(order_dict[order_type])):
+            if float(order_dict[order_type][i][1]) > 5: #Make sure there is sizeable volume at that price to avoid tricks
                 ind = i
                 trade_price = float(order_dict[order_type][ind][0])
                 return trade_price
@@ -1137,16 +1135,16 @@ class NaiveTradingBot(BaseTradingBot):
 
         usd_wallet, crypto_wallet = self.get_wallet_contents()
 
-        current_time = datetime.utcnow()
-        del_time = timedelta(minutes=5) #TODO make the time offsets coehsive (this and confidence_length)
-        cancel_time = current_time + del_time
-        cancel_after = cancel_time.isoformat() + 'Z'
-        trade_size = trade_price/usd_wallet['available']
+
 
         if side == 'buy':
-            self.auth_client.buy(price=str(trade_price), size=str(trade_price), product_id=self.product_id, time_in_force='GTT', cancel_after=cancel_after, post_only=True, trade_size=trade_size)
+            usd_available = np.round(float(usd_wallet['available']) - self.min_usd_balance, 2)
+            trade_size = np.round(trade_price / usd_available, 8)
+            self.auth_client.buy(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
         elif side == 'sell':
-            self.auth_client.sell(price=str(trade_price), size=str(trade_price), product_id=self.product_id, cancel_after=cancel_after)
+            crypto_available = np.round(float(crypto_wallet['available']), 8)
+            trade_size = crypto_available
+            self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
 
     def continuous_monitoring(self):
         current_time = datetime.utcnow().timestamp()
@@ -1163,8 +1161,10 @@ class NaiveTradingBot(BaseTradingBot):
                 last_check = current_time
                 if should_buy:
                     self.trade_limit('buy')
+                    print('buy')
                 elif should_sell:
                     self.trade_limit('sell')
+                    print('sell')
             else:
                 time.sleep(1)
             current_time = datetime.utcnow().timestamp()
@@ -1260,7 +1260,8 @@ if __name__ == '__main__':
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
         minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_200neuron1527096914.695041.h5'
 
-        naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path)
+        #TODO make a non VC folder to hide keys (also delete keys before commit or just run them from command line)
+        naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path, api_key='Secret', secret_key='Secret', passphrase='Secret')
         naive_bot.continuous_monitoring()
 
     #The below code would make a great unit test
