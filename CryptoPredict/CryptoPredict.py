@@ -340,6 +340,9 @@ class DataSet:
         temp_prediction_table = self.price_func(symbol=sym)
         prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_open', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
 
+        if np.count_nonzero(prediction_table.values) != len(prediction_table.values):
+            raise ValueError('Prediction table should only contain non zero values. This table has ' + str(np.count_nonzero(prediction_table.values)) + ' zeros in it. Check the cryptocompare servers.')
+
         fin_table = pd.concat([self.fin_table, prediction_table], axis=1, join_axes=[prediction_table.index])
         data_frame = fin_table.set_index('date')
         self.final_table = data_frame[(data_frame.index <= self.date_to)]
@@ -650,7 +653,6 @@ class CoinPriceModel:
             self.create_arrays(min_distance_between_trades, model_type=model_type)
             test_input = self.input
             test_output = self.output
-
 
         prediction = self.model.predict(test_input)
 
@@ -1087,9 +1089,10 @@ class NaiveTradingBot(BaseTradingBot):
                     if all(is_jump_convincing):
                         return True, pred_ind
 
+        #This if statement and the one below check for general trends while the one above checks for jumps
         if np.abs(np.sum(minute_difference)) > (np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
             if jump_sign*np.sum(minute_difference) > 0:
-                return True, len(current_minute_prediction)
+                return True, len(current_minute_prediction) #returns the largest number possible because jumps supercede general trends
 
         return False, None
 
@@ -1229,10 +1232,10 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
         cp.predict(time_units=time_unit, show_plots=True)
 
 
-
+#TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 2
+    code_block = 3
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1250,8 +1253,8 @@ if __name__ == '__main__':
 
     elif code_block == 2:
 
-        date_from = "2018-05-22 18:00:00 EST"
-        date_to = "2018-05-25 18:00:00 EST"
+        date_from = "2018-05-23 07:00:00 EST"
+        date_to = "2018-05-26 07:00:00 EST"
         prediction_length = 15
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1265,18 +1268,18 @@ if __name__ == '__main__':
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_21epochs_30neuron1527096885.697811.h5'
         model_type = 'price' #Don't change this
         use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-22_18:00:00_EST_to_2018-05-25_18:00:00_EST.pickle'
-        test_model_save_bool = True #Leave as True
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-23_07:00:00_EST_to_2018-05-26_07:00:00_EST.pickle'
+        test_model_save_bool = False
 
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=False)
 
     elif code_block == 3:
 
-        hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_5epochs_200neuron1527270912.550913.h5'
-        #
+        hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_11epochs_100neuron1527350039.259847.h5'
+        
 
-
+        #Another great unit test
         # minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_200neuron1527096914.695041.h5'
         #
         # date_from = "2018-05-23 14:00:00 EST"
