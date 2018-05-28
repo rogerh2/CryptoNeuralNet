@@ -648,6 +648,14 @@ class CoinPriceModel:
 
         return hist
 
+    def update_model_training(self):
+        #This is for live model weight updates
+        self.create_arrays(5, model_type='price')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
+
+        self.model.fit(self.input, self.output, epochs=self.epochs, batch_size=96, verbose=2,
+                              shuffle=False, validation_split=0.25, callbacks=[estop])
+
     def test_model(self, did_train=True, show_plots=True, min_distance_between_trades=5, model_type='price'):
         if did_train:
             test_input = self.test_array_input
@@ -699,6 +707,7 @@ class CoinPriceModel:
         prediction_input = test_data.input_array #do not use the create array methods here because the output is not needed
         prediction = self.model.predict(prediction_input)
         price_array = test_data.output_array
+        self.data_obj = test_data
 
         zerod_price = price_array - np.min(price_array)
         scaled_price = zerod_price/np.max(zerod_price)
@@ -1175,6 +1184,7 @@ class NaiveTradingBot(BaseTradingBot):
         err_count = 0
         current_time = datetime.utcnow().timestamp()
         last_check = 0
+        last_training_time = 0
         cutoff_time = current_time + 10*3600
         while current_time < cutoff_time:
             if current_time > (last_check + 1.2*60):
@@ -1197,6 +1207,9 @@ class NaiveTradingBot(BaseTradingBot):
                     print('sell')
             else:
                 time.sleep(1)
+                if current_time > (last_training_time + 3600):
+                    #In theory this should retrain the model every hour
+                    self.minute_cp.update_model_training()
             current_time = datetime.utcnow().timestamp()
         self.trade_limit('sell')
         print('fin')
