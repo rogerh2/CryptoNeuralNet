@@ -639,12 +639,12 @@ class CoinPriceModel:
                                   shuffle=False, validation_split=0.25, callbacks=[estop])
 
         if self.is_leakyrelu & save_model: #TODO add more detail to saves
-            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/' + self.prediction_ticker + 'model_' + str(
-                self.prediction_length) + self.data_obj.time_units + '_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_'+ str(np.max(hist.epoch)) +'epochs_' + str(neuron_count) + 'neuron' + str(datetime.utcnow().timestamp()) + '.h5')
+            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/' + self.prediction_ticker + 'model_' + str(
+                self.prediction_length) + self.data_obj.time_units + '_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_'+ str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs' + str(datetime.utcnow().timestamp()) + '.h5')
 
         elif save_model:
-            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/' + self.prediction_ticker + 'model_' + str(
-                self.prediction_length) + self.data_obj.time_units + '_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(np.max(hist.epoch)) +'epochs_'+ str(neuron_count) + 'neurons' + str(datetime.utcnow().timestamp()) + '.h5')
+            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/' + self.prediction_ticker + 'model_' + str(
+                self.prediction_length) + self.data_obj.time_units + '_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs' + str(datetime.utcnow().timestamp()) + '.h5')
 
         return hist
 
@@ -656,7 +656,7 @@ class CoinPriceModel:
         self.model.fit(self.input, self.output, epochs=self.epochs, batch_size=96, verbose=2,
                               shuffle=False, validation_split=0.25, callbacks=[estop])
 
-    def test_model(self, did_train=True, show_plots=True, min_distance_between_trades=5, model_type='price'):
+    def test_model(self, did_train=True, show_plots=True, min_distance_between_trades=0, model_type='price'):
         if did_train:
             test_input = self.test_array_input
             test_output = self.test_array_output
@@ -674,6 +674,10 @@ class CoinPriceModel:
             plt.plot(zerod_output/(np.max(zerod_output)), 'bo--')
             plt.plot(zerod_prediction/(np.max(zerod_prediction)), 'rx--')
             plt.title('Prediction')
+            plt.figure()
+            plt.plot(zerod_output / (np.max(zerod_output)), zerod_prediction/(np.max(zerod_prediction)), 'b.')
+            plt.xlabel('measured price')
+            plt.ylabel('predicted price')
             plt.show()
         else:
             return prediction, test_output
@@ -970,8 +974,8 @@ class BaseTradingBot:
 
         # Create the root message and fill in the from, to, and subject headers
         msg_root = MIMEMultipart('related')
-        msg_root['From'] = 'redacted'
-        msg_root['To'] = 'redacted'
+        msg_root['From'] = 'rogeh2@gmail.com'
+        msg_root['To'] = 'rogeh2@gmail.com'
         msg_root['Subject'] = 'Ethereum Prediction From Your Digital Broker'
 
         # Encapsulate the plain and HTML versions of the message body in an
@@ -1004,17 +1008,17 @@ class BaseTradingBot:
         # Setup the SMTP server
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
-        s.login('redacted', 'redacted')
-        s.sendmail('redacted', ['redacted'], msg_root.as_string())
+        s.login('rogeh2@gmail.com', 'redacted')
+        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg_root.as_string())
 
     def send_err(self):
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
-        s.login('redacted', 'redacted')
+        s.login('rogeh2@gmail.com', 'redacted')
         msg = MIMEText('Error detected, abort')
         msg['Subject'] = 'Ethereum Prediction Error From Your Digital Broker'
-        msg['From'] = 'redacted'
-        s.sendmail('redacted', ['redacted'], msg.as_string())
+        msg['From'] = 'rogeh2@gmail.com'
+        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg.as_string())
 
     def trade_logic(self, last_bool):
         current_price = self.hourly_prediction.values[-(self.hour_length + 1)]
@@ -1063,7 +1067,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 157.37 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 156.80 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     #TODO remove dependence on hourly prediction
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
@@ -1089,6 +1093,13 @@ class NaiveTradingBot(BaseTradingBot):
         current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
         minute_difference = np.diff(current_minute_prediction.T).T
 
+        # This if statement and the one below check for general trends while the one above checks for jumps
+        if np.abs(np.sum(minute_difference)) > (
+                2 * np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
+            if jump_sign * np.sum(minute_difference) > 0:
+                print('meander')
+                return True, 0  # returns the largest number possible for the index because jumps supercede general trends (see trade logic)
+
         for diff_ind in range(0, len(minute_difference)):
             pred_ind = diff_ind + 1 #np.diff shortens the array by 1
             mean_diff_before_jump = np.mean(minute_difference[0:(diff_ind+1)])
@@ -1103,12 +1114,6 @@ class NaiveTradingBot(BaseTradingBot):
                     if all(is_jump_convincing):
                         print('jump')
                         return True, pred_ind
-
-        #This if statement and the one below check for general trends while the one above checks for jumps
-        if np.abs(np.sum(minute_difference)) > (2*np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
-            if jump_sign*np.sum(minute_difference) > 0:
-                print('meander')
-                return True, len(current_minute_prediction) #returns the largest number possible for the index because jumps supercede general trends (see trade logic)
 
         return False, None
 
@@ -1144,18 +1149,17 @@ class NaiveTradingBot(BaseTradingBot):
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
 
         if side == 'buy':
-            order_type = 'asks'
-            del_sign = +1
-        elif side == 'sell':
             order_type = 'bids'
-            del_sign = -1
+        elif side == 'sell':
+            order_type = 'asks'
 
         #TODO add stronger protection
         #This setup will sell at 1 cent more than the best ask and buy at one cent less than the best sell
-        trade_price = float(order_dict[order_type][0][0]) + del_sign*0.01
+        trade_price = round(float(order_dict[order_type][0][0]), 2)
+
         return trade_price
 
-    def trade_limit(self, side):
+    def trade_limit(self, side, final_sell=False):
         # based on function from https://cryptostag.com/basic-gdax-api-trading-with-python/
         trade_price = self.determine_trade_price(side=side)
         if trade_price is None:
@@ -1166,18 +1170,21 @@ class NaiveTradingBot(BaseTradingBot):
         if side == 'buy':
             usd_available = np.round(float(usd_wallet['available']) - self.min_usd_balance, 2)
             trade_size = np.round(usd_available / (trade_price), 8)
+
             if usd_available > 0.0:
                 #for off_set in [0, 1, 3, 5, 7]: #The for loop here and in sell spread out the asking price for a better chance of part of the order being taken
-                self.auth_client.cancel_all(product=self.product_id)
-                self.auth_client.buy(price=str(trade_price-0.01), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
+                self.auth_client.buy(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
 
         elif side == 'sell':
             crypto_available = np.round(float(crypto_wallet['available']), 8)
             trade_size = crypto_available
             if crypto_available > 0.0:
                 #for off_set in [0, 1, 3, 5, 7]:
-                self.auth_client.cancel_all(product=self.product_id)
-                self.auth_client.sell(price=str(trade_price+0.01), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
+                if final_sell:
+                    self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id,
+                                          time_in_force='GTT', cancel_after='day', post_only=True, trade_size=trade_size)
+                else:
+                    self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
 
 
     def continuous_monitoring(self):
@@ -1185,7 +1192,7 @@ class NaiveTradingBot(BaseTradingBot):
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         last_training_time = 0
-        cutoff_time = current_time + 10*3600
+        cutoff_time = current_time + 5*3600
         while current_time < cutoff_time:
             if current_time > (last_check + 1.2*60):
                 try:
@@ -1199,19 +1206,38 @@ class NaiveTradingBot(BaseTradingBot):
                         self.send_err()
                         break
                 last_check = current_time
-                if should_buy:
-                    self.trade_limit('buy')
-                    print('buy')
-                elif should_sell:
-                    self.trade_limit('sell')
-                    print('sell')
+                for i in range (0,6):
+                    self.auth_client.cancel_all(product=self.product_id)
+                    if should_buy:
+                        self.trade_limit('buy')
+                        print('buy')
+                    elif should_sell:
+                        self.trade_limit('sell')
+                        print('sell')
+                    time.sleep(12)
             else:
-                time.sleep(1)
-                if current_time > (last_training_time + 3600):
+                if current_time > (last_training_time + 0.25*3600):
                     #In theory this should retrain the model every hour
-                    self.minute_cp.update_model_training()
+                    try:
+                        self.find_data(is_hourly_prediction_needed=False)
+                        self.minute_cp.update_model_training()
+
+                        last_training_time = current_time
+                    except Exception as e:
+                        print(str(e))
+                        should_buy, should_sell = (False, False)
+                        err_count += 1
+                        if err_count > 5:
+                            self.send_err()
+                            break
+
             current_time = datetime.utcnow().timestamp()
-        self.trade_limit('sell')
+        for i in range(0, 6):
+            self.auth_client.cancel_all(product=self.product_id)
+            self.trade_limit('sell')
+            print('sell')
+            time.sleep(12)
+        self.trade_limit('sell', final_sell=True)
         print('fin')
 
 
@@ -1264,7 +1290,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 3
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1281,10 +1307,11 @@ if __name__ == '__main__':
         strategy_model.test_strategy_model()
 
     elif code_block == 2:
+        day = '30'
 
-        date_from = "2018-05-28 8:00:00 EST"
-        date_to = "2018-05-28 10:50:00 EST"
-        prediction_length = 15
+        date_from = "2018-05-" + day + " 8:00:00 EST"
+        date_to = "2018-05-" + day + " 18:00:00 EST"
+        prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
         bitinfo_list = ['eth']
@@ -1294,11 +1321,11 @@ if __name__ == '__main__':
         neuron_count = 40
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_5epochs_40neuron1527533202.233983.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_36epochs1527737102.824667.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-26_08:00:00_EST_to_2018-05-26_18:00:00_EST.pickle'
-        test_model_save_bool = True
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/DataFrom800-1800/CryptoPredictDataSet_minutes_from_2018-05-' + day + '_8:00:00_EST_to_2018-05-' + day + '_18:00:00_EST.pickle'
+        test_model_save_bool = False
         test_model_from_model_path = True
 
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path)
@@ -1307,7 +1334,7 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_40neuron1527533460.435592.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_20neurons_2epochs1527698966.37493.h5'
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                                     api_key='redacted',
                                     secret_key='redacted',
