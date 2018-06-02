@@ -337,7 +337,9 @@ class DataSet:
         cryp_obj = self.cryp_obj
         cryp_obj.symbol = self.prediction_ticker
         sym = self.prediction_ticker
-        prediction_table = pd.DataFrame(data=self.fin_table[sym.upper()+'_high'])
+
+        prediction_table = pd.DataFrame(data=self.fin_table[sym.upper()+'_high'].values, columns=[sym.upper()+'_high Prediction'])
+
         #prediction_table = temp_prediction_table.drop(columns=['date', sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_open', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
 
         if np.count_nonzero(prediction_table.values) != len(prediction_table.values):
@@ -488,7 +490,7 @@ class DataSet:
         #         buy_column[i] = 1
 
 
-        prediction_frame = pd.DataFrame(data=np.hstack((buy_column, sell_column)), index=price_data_frame.index, columns=['Buy', 'Sell'])
+        prediction_frame = pd.DataFrame(data=np.hstack((buy_column, sell_column)), index=self.final_table.index, columns=['Buy', 'Sell'])
 
         #TODO check on this
         self.create_price_prediction_columns()
@@ -1309,18 +1311,18 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 3
+    code_block = 1
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
 
     if code_block == 1:
-        date_from = "2018-05-20 14:00:00 EST"
-        date_to = "2018-05-23 15:00:00 EST"
+        date_from = "2018-05-24 8:00:00 EST"
+        date_to = "2018-05-24 18:00:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-22_18:00:00_EST_to_2018-05-25_18:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/DataFrom800-1800/CryptoPredictDataSet_minutes_from_2018-05-24_8:00:00_EST_to_2018-05-24_18:00:00_EST.pickle'
 
         strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
         strategy_model.test_strategy_model()
