@@ -683,7 +683,9 @@ class CoinPriceModel:
             plt.ylabel('predicted price')
             plt.show()
         else:
-            return prediction, test_output
+            N = 3
+            x = np.convolve(zerod_prediction, np.ones((N,)) / N)[N - 1::]
+            return x, test_output
 
     def create_standard_dates(self):
         utc_to_date = datetime.utcnow()
@@ -748,7 +750,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
             val_loss = 30
             iter = 0
             while (val_loss > 10) & (iter < 20):
-                hist = self.train_model(model_type='price', neuron_count=30)
+                hist = self.train_model(model_type='price', neuron_count=100, batch_size=32)
                 val_loss = hist.history['val_loss'][-1]
                 iter += 1
                 if val_loss > 10:
@@ -766,7 +768,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         prediction_columns = np.zeros((column_len, n))
         time_columns = []
 
-        prediction_data = prediction.T #This makes it easier to add data to columns
+        prediction_data = prediction.reshape(1, len(prediction)).T #This makes it easier to add data to columns
 
         for ind in range(0, column_len):
             prediction_columns[ind, ::] = prediction_data[0, (ind + n):(ind + 2*n)]
@@ -800,18 +802,18 @@ class CryptoTradeStrategyModel(CoinPriceModel):
     def sensitivity(self, y_true, y_pred):
         true_positives = K.sum(K.clip(y_true * y_pred, 0, 1))
         possible_positives = K.sum(K.clip(y_true, 0, 1))
-        loss_val = possible_positives/(true_positives + K.epsilon())
+        loss_val = true_positives/(possible_positives + K.epsilon())
         return loss_val
 
     def specificity(self, y_true, y_pred):
         true_negatives = K.sum(K.clip((1 - y_true) * (1 - y_pred), 0, 1))
         possible_negatives = K.sum(K.clip(1 - y_true, 0, 1))
-        loss_val = possible_negatives / (true_negatives + K.epsilon())
+        loss_val = true_negatives / (possible_negatives + K.epsilon())
 
         return loss_val
 
     def custom_loss_func(self, y_true, y_pred):
-        loss_val = self.specificity(y_true, y_pred) + self.sensitivity(y_true, y_pred)
+        loss_val = 1-(self.specificity(y_true, y_pred)*self.sensitivity(y_true, y_pred))
         return loss_val
 
     #TODO make model methods more modular for simpler integration of new models (like the strategy model)
@@ -834,7 +836,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
                 strategy_model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         strategy_model.add(Dense(units=output_size, activation="sigmoid"))
-        strategy_model.compile(loss=self.custom_loss_func, optimizer=keras.optimizers.adam(lr=0.0001))
+        strategy_model.compile(loss=self.custom_loss_func, optimizer=keras.optimizers.adam(lr=0.001))
 
         return strategy_model
 
@@ -880,10 +882,10 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
 
-        self.buy_model.fit(training_input, training_buy_output, epochs=1000, batch_size=32, verbose=2,
+        self.buy_model.fit(training_input, training_buy_output, epochs=200, batch_size=32, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop], class_weight=class_weight)
 
-        self.sell_model.fit(training_input, training_sell_output, epochs=1000, batch_size=32, verbose=2,
+        self.sell_model.fit(training_input, training_sell_output, epochs=200, batch_size=32, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop], class_weight=class_weight)
 
         return test_buy_output, test_input, test_sell_output
