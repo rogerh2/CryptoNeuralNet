@@ -742,7 +742,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
     #TODO move the create methods to the DataSet class
 
-    def create_test_price_columns(self, should_train=True, min_distance_between_trades=5, n=10):
+    def create_test_price_columns(self, should_train=True, min_distance_between_trades=5, n=5):
         #TODO delete extraneous code
         #This creates a table with 2*n columns that contains n columns of the price for the past n units of time and prediction for the next n units. This is meant to train the strategy model
 
@@ -768,10 +768,10 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         prediction_columns = np.zeros((column_len, n))
         time_columns = []
 
-        prediction_data = prediction.reshape(1, len(prediction)).T #This makes it easier to add data to columns
+        prediction_data = prediction#.reshape(1, len(prediction)).T #This makes it easier to add data to columns
 
         for ind in range(0, column_len):
-            prediction_columns[ind, ::] = prediction_data[0, (ind + n):(ind + 2*n)]
+            prediction_columns[ind, ::] = prediction_data[(ind + n):(ind + 2*n)]
             time_columns.insert(0, all_times[ind+n])
 
         return prediction, all_times
@@ -797,7 +797,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
             sell_strategy_frame[self.prediction_ticker.upper() + '_high'][sell_strategy_frame['Sell'].values == 1].plot(style='rx', ax=ax1)
             plt.show()
         else:
-            return buy_frame, sell_frame
+            return buy_strategy_frame, sell_strategy_frame
 
     def sensitivity(self, y_true, y_pred):
         true_positives = K.sum(K.clip(y_true * y_pred, 0, 1))
@@ -855,7 +855,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         return training_output, test_output
 
     def train_strategy_model(self, neuron_count=30, min_distance_between_trades=5, save_model=False, t = 0.9, layers=1):
-        buy_frame, sell_frame = self.create_strategy_prediction_frame(min_distance_between_trades=min_distance_between_trades, n=10)
+        buy_frame, sell_frame = self.create_strategy_prediction_frame(min_distance_between_trades=min_distance_between_trades, n=5)
 
         buy_values = buy_frame['Buy'].values
         sell_values = sell_frame['Sell'].values
