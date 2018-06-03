@@ -380,6 +380,8 @@ class DataSet:
         #This finds the optimal trading strategy
         all_times = price_data_frame.index
         all_prices = price_data_frame.values
+        off_set_price = 0#np.min(all_prices)/2
+        norm_price = np.max(all_prices) - off_set_price
         eps = 1000.0 #Needs to be float
         iter = 0 #Counts number of iterations in loop
         sell_arr = np.zeros((len(price_data_frame), 1))
@@ -397,19 +399,19 @@ class DataSet:
         while (eps > target_eps) & (iter < 1000):
             if iter > 0:
                 #calculate new final sell
-                ind = np.argwhere(1==buy_arr)[-1][0]
-                s_ind = np.argwhere(1==sell_arr)[-2][0]
+                ind = np.argwhere(0!=buy_arr)[-1][0]
+                s_ind = np.argwhere(0!=sell_arr)[-2][0]
                 current_price_block = all_prices[ind::]
                 last_sell = np.max(current_price_block)
                 sell_arr = np.zeros((len(price_data_frame), 1))
                 from_n = np.argmax(current_price_block) + ind
-                sell_arr[from_n] = 1
+                sell_arr[from_n] = (np.argmax(current_price_block) - off_set_price)/norm_price
 
                 #calculate new final sell
                 buy_arr = np.zeros((len(price_data_frame), 1))
                 current_price_block = all_prices[s_ind:from_n]
                 from_n = np.argmin(current_price_block) + s_ind
-                buy_arr[from_n] = 1
+                buy_arr[from_n] = (np.argmin(current_price_block) - off_set_price)/norm_price
                 should_sell = True
 
 
@@ -432,7 +434,7 @@ class DataSet:
                     next_sell = np.max(next_price_block)
 
                     if (current_sell - next_sell) > 2*target_eps:
-                        sell_arr[np.argmax(current_price_block) + (ind-n)] = 1
+                        sell_arr[np.argmax(current_price_block) + (ind-n)] = (current_sell - off_set_price)/norm_price
                         last_sell = np.max(current_price_block)
                         should_sell = False
                         has_checked_block_counter = n
@@ -441,13 +443,13 @@ class DataSet:
                     next_buy = np.min(next_price_block)
                     if ((last_sell - buy_price) > 2*target_eps) & ((next_buy - buy_price) > 2*target_eps):
                         should_sell = True
-                        buy_arr[np.argmin(current_price_block) + (ind-n)] = 1 #These statements do not have off by one errors because python indexes from 0
+                        buy_arr[np.argmin(current_price_block) + (ind-n)] = (buy_price - off_set_price)/norm_price #These statements do not have off by one errors because python indexes from 0
                         has_checked_block_counter = n
 
-            sell_arr[0:np.argmax(buy_arr)] = 0 #This always starts with a buy and ends with a sell
+            sell_arr[(buy_arr!=0).argmax()] = 0 #This always starts with a buy and ends with a sell
 
-            sell_bool = [x[0] == 1 for x in sell_arr] #must add [0] or else each x will be a seperate array and unindexable
-            buy_bool = [x[0] == 1 for x in buy_arr]
+            sell_bool = [x[0] != 0 for x in sell_arr] #must add [0] or else each x will be a seperate array and unindexable
+            buy_bool = [x[0] != 0 for x in buy_arr]
             val_new = self.find_trade_strategy_value(buy_bool, sell_bool, all_prices) #This calculates the money earned
             val_arr = np.hstack((val_arr, val_new))
             strategy_dict[iter] = {'buy':buy_arr, 'sell':sell_arr}
@@ -758,12 +760,12 @@ class CryptoTradeStrategyModel(CoinPriceModel):
                 else:
                     print('valid model detected')
 
-            prediction, price = self.test_model(show_plots=False)
+            prediction, price = self.test_model(show_plots=False, did_train=False)
         else:
             self.create_arrays(min_distance_between_trades, model_type='price')
             prediction, price = self.test_model(did_train=False, show_plots=False, min_distance_between_trades=min_distance_between_trades, model_type='price')
 
-        all_times = self.test_times
+        all_times = self.times
         column_len = len(prediction) - 2*n
         prediction_columns = np.zeros((column_len, n))
         time_columns = []
@@ -778,6 +780,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
     def create_strategy_prediction_frame(self, n, min_distance_between_trades=5, show_plots=False): #Set show_plots to True for debug only
         predicted_price, price_time = self.create_test_price_columns(n=n)
+        self.data_obj.create_price_prediction_columns()
         self.data_obj.create_buy_sell_prediction_frame(min_distance_between_trades)
         strategy_input_frame = pd.DataFrame(data=predicted_price, index=price_time)
 
@@ -789,15 +792,14 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         buy_strategy_frame = pd.merge(strategy_input_frame, buy_frame, left_index=True, right_index=True)
         sell_strategy_frame = pd.merge( strategy_input_frame, sell_frame, left_index=True, right_index=True)
 
-        #self.strategy_frame = pd.concat([strategy_input_frame, buy_frame, sell_frame], axis=1, join_axes=[strategy_input_frame.index])
+        self.strategy_frame = pd.concat([strategy_input_frame, buy_frame, sell_frame], axis=1, join_axes=[strategy_input_frame.index])
 
         if show_plots:
             ax1 = sell_strategy_frame[self.prediction_ticker.upper() + '_high'].plot(style='b--')
             buy_strategy_frame[self.prediction_ticker.upper() + '_high'][buy_strategy_frame['Buy'].values == 1].plot(style='gx', ax=ax1)
             sell_strategy_frame[self.prediction_ticker.upper() + '_high'][sell_strategy_frame['Sell'].values == 1].plot(style='rx', ax=ax1)
             plt.show()
-        else:
-            return buy_strategy_frame, sell_strategy_frame
+        return buy_strategy_frame, sell_strategy_frame
 
     def sensitivity(self, y_true, y_pred):
         true_positives = K.sum(K.clip(y_true * y_pred, 0, 1))
@@ -836,7 +838,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
                 strategy_model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         strategy_model.add(Dense(units=output_size, activation="sigmoid"))
-        strategy_model.compile(loss=self.custom_loss_func, optimizer=keras.optimizers.adam(lr=0.001))
+        strategy_model.compile(loss=self.strategy_loss_fun, optimizer=keras.optimizers.adam(lr=0.001))
 
         return strategy_model
 
@@ -854,7 +856,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         return training_output, test_output
 
-    def train_strategy_model(self, neuron_count=30, min_distance_between_trades=5, save_model=False, t = 0.9, layers=1):
+    def train_strategy_model(self, neuron_count=20, min_distance_between_trades=5, save_model=False, t = 0.5, layers=1):
         buy_frame, sell_frame = self.create_strategy_prediction_frame(min_distance_between_trades=min_distance_between_trades, n=5)
 
         buy_values = buy_frame['Buy'].values
@@ -883,10 +885,10 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
 
         self.buy_model.fit(training_input, training_buy_output, epochs=200, batch_size=32, verbose=2,
-                                    shuffle=False, validation_split=0.25, callbacks=[estop], class_weight=class_weight)
+                                    shuffle=False, validation_split=0.25, callbacks=[estop])#, class_weight=class_weight)
 
         self.sell_model.fit(training_input, training_sell_output, epochs=200, batch_size=32, verbose=2,
-                                    shuffle=False, validation_split=0.25, callbacks=[estop], class_weight=class_weight)
+                                    shuffle=False, validation_split=0.25, callbacks=[estop])#, class_weight=class_weight)
 
         return test_buy_output, test_input, test_sell_output
 
@@ -1326,7 +1328,7 @@ if __name__ == '__main__':
         time_units = 'minutes'
         pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/DataFrom800-1800/CryptoPredictDataSet_minutes_from_2018-05-24_8:00:00_EST_to_2018-05-24_18:00:00_EST.pickle'
 
-        strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path)
+        strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path, days=30)
         strategy_model.test_strategy_model()
 
     elif code_block == 2:
