@@ -481,15 +481,34 @@ class DataSet:
         #price_data_frame = price_data_frame.set_index('date')
 
         sell_column, buy_column = self.create_single_prediction_column(price_data_frame, m)
+        price = self.fin_table[sym.upper()+'_high'].values
 
-        #This for loop spreads out decisions so that trades that are coming within five minutes are seen
-        # m = 5
-        # for i in range(0, len(sell_column) - m):
-        #     if np.sum(sell_column[i:(m+i)]) == 1:
-        #         sell_column[i] = 1
-        #
-        #     if np.sum(buy_column[i:(m+i)]) == 1:
-        #         buy_column[i] = 1
+        # This for loop spreads out decisions so that trades that are coming within five minutes are seen
+        m = 5
+        sell_inds = np.nonzero(sell_column)[0]
+        buy_inds = np.nonzero(buy_column)[0]
+        j = 0
+        k = 0
+
+        for i in range(0, len(sell_column)):
+            if (i == sell_inds[j]) & (k < (len(buy_inds)-1)):
+                k += 1
+                continue
+
+            if (i == buy_inds[k]) & (j < (len(sell_inds)-1)) & (k > 0):
+                j += 1
+                continue
+
+            nearest_sell_price = price[sell_inds[j]]
+            nearest_buy_price = price[buy_inds[k]]
+            current_price = price[i]
+
+            if current_price >= (nearest_sell_price*0.9995):
+                sell_column[i] = 1
+
+            elif current_price <= (nearest_buy_price*1.0005):
+                buy_column[i] = 1
+
 
 
         prediction_frame = pd.DataFrame(data=np.hstack((buy_column, sell_column)), index=self.final_table.index, columns=['Buy', 'Sell'])
