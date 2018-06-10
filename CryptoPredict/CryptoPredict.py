@@ -227,7 +227,7 @@ class CryptoCompare:
         est_date_before = est.localize(naive_date_before)
         utc = pytz.UTC
         date_before = est_date_before.astimezone(utc)
-        url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={},Blockchain,Mining,Trading,Market&lTs={}" \
+        url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={},BTC,Regulation,Altcoin,Blockchain,Mining,Trading,Market&lTs={}" \
         .format(symbol.upper(), int(date_before.timestamp()))
         page = requests.get(url)
         data = page.json()['Data']
@@ -775,7 +775,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
     #TODO move the create methods to the DataSet class
 
-    def create_test_price_columns(self, should_train=False, min_distance_between_trades=5, n=5):
+    def create_test_price_columns(self, should_train=True, min_distance_between_trades=5, n=5):
         #TODO delete extraneous code
         #This creates a table with 2*n columns that contains n columns of the price for the past n units of time and prediction for the next n units. This is meant to train the strategy model
 
@@ -1357,27 +1357,27 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 2
+    code_block = 1
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
 
     if code_block == 1:
-        date_from = "2018-06-08 8:00:00 EST"
-        date_to = "2018-06-08 18:00:00 EST"
+        date_from = "2018-06-07 09:00:00 EST"
+        date_to = "2018-06-10 09:00:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/DataFrom800-1800/CryptoPredictDataSet_minutes_from_2018-06-08_8:00:00_EST_to_2018-06-08_18:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-07_09:00:00_EST_to_2018-06-10_09:00:00_EST.pickle'
         neuron_grid = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_8epochs1528577797.86787.h5'
+        model_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_8epochs1528577797.86787.h5'
 
-        strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path, days=15, model_path=model_path)
+        strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path, days=30, model_path=model_path)
         strategy_model.is_leakyrelu = False
 
         buy_loss_grid = []
         sell_loss_grid = []
-        should_optimize = True
+        should_optimize = False
 
         if should_optimize:
             for i in neuron_grid:
@@ -1403,8 +1403,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-06 12:00:00 EST"
-        date_to = "2018-06-09 12:00:00 EST"
+        date_from = "2018-06-07 09:00:00 EST"
+        date_to = "2018-06-10 09:00:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1412,7 +1412,7 @@ if __name__ == '__main__':
         time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 200
+        neuron_count = 100
         layer_count = 3
         batch_size = 32
         neuron_grid = None#[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
@@ -1420,10 +1420,10 @@ if __name__ == '__main__':
         min_distance_between_trades = 5
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_16epochs1528568291.129375.h5'
         model_type = 'price' #Don't change this
-        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-06_12:00:00_EST_to_2018-06-09_12:00:00_EST.pickle'
+        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-07_09:00:00_EST_to_2018-06-10_09:00:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
-        test_model_save_bool = False
+        test_model_save_bool = True
         test_model_from_model_path = False
 
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)

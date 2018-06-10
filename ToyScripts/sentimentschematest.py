@@ -6,8 +6,8 @@ from CryptoPredict.CryptoPredict import CryptoCompare
 from textblob import TextBlob as txb
 from datetime import datetime
 
-cp = CryptoCompare(date_from="2018-05-21 07:30:00 EST", date_to="2018-05-23 08:22:00 EST")
-price_df = cp.hourly_price_historical(symbol='ETH')
+cp = CryptoCompare(date_from="2018-06-08 00:00:00 EST", date_to="2018-06-09 00:00:00 EST")
+price_df = cp.minute_price_historical(symbol='ETH')
 sentiment_schema_1 = [] #sentiment sum
 sentiment_schema_2 = [] #number of articles in last 5hrs
 sentiment_schema_3 = [] #number of articles in last 5hrs plus news sum in last 5 hrs
