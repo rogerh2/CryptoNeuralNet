@@ -484,30 +484,30 @@ class DataSet:
         price = self.fin_table[sym.upper()+'_high'].values
 
         # This for loop spreads out decisions so that trades that are coming within five minutes are seen
-        m = 5
-        sell_inds = np.nonzero(sell_column)[0]
-        buy_inds = np.nonzero(buy_column)[0]
-        j = 0
-        k = 0
-
-        for i in range(0, len(sell_column)):
-            if (i == sell_inds[j]) & (k < (len(buy_inds)-1)):
-                k += 1
-                continue
-
-            if (i == buy_inds[k]) & (j < (len(sell_inds)-1)) & (k > 0):
-                j += 1
-                continue
-
-            nearest_sell_price = price[sell_inds[j]]
-            nearest_buy_price = price[buy_inds[k]]
-            current_price = price[i]
-
-            if current_price >= (nearest_sell_price*0.9995):
-                sell_column[i] = 1
-
-            elif current_price <= (nearest_buy_price*1.0005):
-                buy_column[i] = 1
+        # m = 5
+        # sell_inds = np.nonzero(sell_column)[0]
+        # buy_inds = np.nonzero(buy_column)[0]
+        # j = 0
+        # k = 0
+        #
+        # for i in range(0, len(sell_column)):
+        #     if (i == sell_inds[j]) & (k < (len(buy_inds)-1)):
+        #         k += 1
+        #         continue
+        #
+        #     if (i == buy_inds[k]) & (j < (len(sell_inds)-1)) & (k > 0):
+        #         j += 1
+        #         continue
+        #
+        #     nearest_sell_price = price[sell_inds[j]]
+        #     nearest_buy_price = price[buy_inds[k]]
+        #     current_price = price[i]
+        #
+        #     if current_price >= (nearest_sell_price*0.9999):
+        #         sell_column[i] = 1
+        #
+        #     elif current_price <= (nearest_buy_price*1.0001):
+        #         buy_column[i] = 1
 
 
 
@@ -516,7 +516,7 @@ class DataSet:
         #TODO check on this
         self.create_price_prediction_columns()
 
-        self.final_table = pd.concat([self.final_table, prediction_frame], axis=1, join_axes=[prediction_frame.index])
+        self.final_table = pd.concat([self.fin_table.set_index('date'), prediction_frame], axis=1, join_axes=[prediction_frame.index])
 
     def create_arrays(self, model_type='price', min_distance_between_trades=5):
         if model_type == 'price':
@@ -851,7 +851,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         return loss_val
 
     #TODO make model methods more modular for simpler integration of new models (like the strategy model)
-    def build_strategy_model(self, inputs, neurons, strategy_activ_func = 'tanh', output_size=1, dropout=0, layers=3, final_activation = 'sigmoid'):
+    def build_strategy_model(self, inputs, neurons, strategy_activ_func = 'tanh', output_size=1, dropout=0.1, layers=1, final_activation = 'sigmoid'):
         is_leaky = self.strategy_is_leakyrelu
         activ_func = strategy_activ_func
         strategy_model = Sequential()
@@ -868,7 +868,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
                 strategy_model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         strategy_model.add(Dense(units=output_size, activation=final_activation))
-        strategy_model.compile(loss=self.strategy_loss_fun, optimizer=keras.optimizers.adam(lr=0.001))
+        strategy_model.compile(loss=self.strategy_loss_fun, optimizer=keras.optimizers.adam(lr=0.0001))
 
         return strategy_model
 
@@ -886,7 +886,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         return training_output, test_output
 
-    def train_strategy_model(self, sell_neuron_count=60, buy_neuron_count=10, min_distance_between_trades=5, save_model=False, t = 0.5):
+    def train_strategy_model(self, sell_neuron_count=20, buy_neuron_count=20, min_distance_between_trades=5, save_model=False, t = 0.5):
         buy_frame, sell_frame = self.create_strategy_prediction_frame(min_distance_between_trades=min_distance_between_trades, n=5)
 
         buy_values = buy_frame['Buy'].values
@@ -910,8 +910,8 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
 
 
-        self.buy_model = self.build_strategy_model(training_input, neurons=buy_neuron_count, layers=1, strategy_activ_func='tanh', final_activation='sigmoid')
-        self.sell_model = self.build_strategy_model(training_input, neurons=sell_neuron_count, layers=1, strategy_activ_func='soft_plus', final_activation='hard_sigmoid')
+        self.buy_model = self.build_strategy_model(training_input, neurons=buy_neuron_count, layers=20, strategy_activ_func='soft_plus', final_activation='sigmoid')
+        self.sell_model = self.build_strategy_model(training_input, neurons=sell_neuron_count, layers=20, strategy_activ_func='soft_plus', final_activation='sigmoid')
 
         estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=0, verbose=0, mode='auto')
 
@@ -923,7 +923,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         return test_buy_output, test_input, test_sell_output
 
-    def test_strategy_model(self, did_train=True, show_plots=True, min_distance_between_trades=5):
+    def test_strategy_model(self, did_train=True, show_plots=True, min_distance_between_trades=5, sell_neurons=10, buy_neurons=10):
         # if did_train:
         #     test_input = self.test_array_input
         #     test_output = self.test_array_output
@@ -932,28 +932,35 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         #     test_input = self.input
         #     test_output = self.output
 
-        test_buy_output, test_input, test_sell_output = self.train_strategy_model()
-        buy_prediction = self.buy_model.predict(test_input)
-        sell_prediction = self.sell_model.predict(test_input)
+        test_buy_output, test_input, test_sell_output = self.train_strategy_model(sell_neuron_count=sell_neurons, buy_neuron_count=buy_neurons)
 
-        buy_frame = pd.DataFrame(self.strategy_frame['Buy'][(-len(buy_prediction))::])
-        sell_frame = pd.DataFrame(self.strategy_frame['Sell'][(-len(buy_prediction))::])
-        price = self.strategy_frame[self.prediction_ticker.upper() + '_high'].values
-        zerod_price = price - np.min(price)
-        scaled_price = zerod_price/np.max(zerod_price)
-        buy_frame['Price'] = pd.Series(scaled_price[(-len(buy_prediction))::, 0], index=buy_frame.index[(-len(buy_prediction))::])
-        buy_frame['Prediction'] = pd.Series(buy_prediction[::, 0], index=buy_frame.index[(-len(buy_prediction))::])
-        sell_frame['Price'] = buy_frame['Price']
-        sell_frame['Prediction'] = pd.Series(sell_prediction[::, 0], index=buy_frame.index[(-len(sell_prediction))::])
 
         if show_plots:
+
+            buy_prediction = self.buy_model.predict(test_input)
+            sell_prediction = self.sell_model.predict(test_input)
+
+            buy_frame = pd.DataFrame(self.strategy_frame['Buy'][(-len(buy_prediction))::])
+            sell_frame = pd.DataFrame(self.strategy_frame['Sell'][(-len(buy_prediction))::])
+            price = self.strategy_frame[self.prediction_ticker.upper() + '_high'].values
+            zerod_price = price - np.min(price)
+            scaled_price = zerod_price / np.max(zerod_price)
+            buy_frame['Price'] = pd.Series(scaled_price[(-len(buy_prediction))::, 0],
+                                           index=buy_frame.index[(-len(buy_prediction))::])
+            buy_frame['Prediction'] = pd.Series(buy_prediction[::, 0], index=buy_frame.index[(-len(buy_prediction))::])
+            sell_frame['Price'] = buy_frame['Price']
+            sell_frame['Prediction'] = pd.Series(sell_prediction[::, 0],
+                                                 index=buy_frame.index[(-len(sell_prediction))::])
 
             sell_frame.plot()
             buy_frame.plot()
 
             plt.show()
         else:
-            return buy_prediction, sell_prediction
+            buy_loss = self.buy_model.evaluate(test_input, test_buy_output)
+            sell_loss = self.sell_model.evaluate(test_input, test_sell_output)
+
+            return buy_loss, sell_loss
 
 class BaseTradingBot:
 
@@ -1350,30 +1357,55 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 1
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
 
     if code_block == 1:
-        date_from = "2018-05-31 8:00:00 EST"
-        date_to = "2018-05-31 18:00:00 EST"
+        date_from = "2018-06-08 8:00:00 EST"
+        date_to = "2018-06-08 18:00:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/DataFrom800-1800/CryptoPredictDataSet_minutes_from_2018-05-31_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_5minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_200neurons_3epochs1528387678.655187.h5'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/DataFrom800-1800/CryptoPredictDataSet_minutes_from_2018-06-08_8:00:00_EST_to_2018-06-08_18:00:00_EST.pickle'
+        neuron_grid = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_8epochs1528577797.86787.h5'
 
-        strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path, days=5, model_path=model_path)
+        strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path, days=15, model_path=model_path)
         strategy_model.is_leakyrelu = False
-        strategy_model.test_strategy_model()
+
+        buy_loss_grid = []
+        sell_loss_grid = []
+        should_optimize = True
+
+        if should_optimize:
+            for i in neuron_grid:
+                buy_loss, sell_loss = strategy_model.test_strategy_model(buy_neurons=i, sell_neurons=i, show_plots=False)
+                buy_loss_grid.append(buy_loss)
+                sell_loss_grid.append(sell_loss)
+
+            plt.plot(neuron_grid, buy_loss_grid)
+            plt.title('Buy Loss')
+            plt.xlabel('Neurons')
+            plt.ylabel('Loss')
+
+            plt.figure()
+            plt.plot(neuron_grid, sell_loss_grid)
+            plt.title('Sell Loss')
+            plt.xlabel('Neurons')
+            plt.ylabel('Loss')
+
+            plt.show()
+        else:
+            strategy_model.test_strategy_model(buy_neurons=20, sell_neurons=30, show_plots=True)
 
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-05-29 8:00:00 EST"
-        date_to = "2018-05-29 18:00:00 EST"
-        prediction_length = 5
+        date_from = "2018-06-06 12:00:00 EST"
+        date_to = "2018-06-09 12:00:00 EST"
+        prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
         bitinfo_list = ['eth']
@@ -1386,13 +1418,13 @@ if __name__ == '__main__':
         neuron_grid = None#[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_5minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_200neurons_9epochs1528354822.159606.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_16epochs1528568291.129375.h5'
         model_type = 'price' #Don't change this
-        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/DataFrom800-1800/CryptoPredictDataSet_minutes_from_2018-05-29_8:00:00_EST_to_2018-05-29_18:00:00_EST.pickle'
+        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-06_12:00:00_EST_to_2018-06-09_12:00:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
-        test_model_save_bool = True
-        test_model_from_model_path = True
+        test_model_save_bool = False
+        test_model_from_model_path = False
 
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
 
