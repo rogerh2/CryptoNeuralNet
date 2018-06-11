@@ -1200,12 +1200,12 @@ class NaiveTradingBot(BaseTradingBot):
             sell_bool = not buy_bool
 
         if buy_bool:
-            current_price_delta = self.minute_price[-1] - np.mean(self.minute_price[-3:-1])
+            current_price_delta = self.minute_price.values[-1][0] - np.mean(self.minute_price.values[-3:-1])
             if current_price_delta < 0:
                 buy_bool = False
 
         elif sell_bool:
-            current_price_delta = self.minute_price[-1] - np.mean(self.minute_price[-3:-1])
+            current_price_delta = self.minute_price.values[-1][0] - np.mean(self.minute_price.values[-3:-1])
             if current_price_delta > 0:
                 sell_bool = False
 
@@ -1279,16 +1279,16 @@ class NaiveTradingBot(BaseTradingBot):
         cutoff_time = current_time + 9.5*3600
         while current_time < cutoff_time:
             if current_time > (last_check + 1.2*60):
-                try:
-                    self.find_data(is_hourly_prediction_needed=False)
-                    should_buy, should_sell = self.trade_logic()
-                except Exception as e:
-                    print(str(e))
-                    should_buy, should_sell = (False, False)
-                    err_count += 1
-                    if err_count > 5:
-                        self.send_err()
-                        break
+                #try:
+                self.find_data(is_hourly_prediction_needed=False)
+                should_buy, should_sell = self.trade_logic()
+                # except Exception as e:
+                #     print(str(e))
+                #     should_buy, should_sell = (False, False)
+                #     err_count += 1
+                #     if err_count > 5:
+                #         self.send_err()
+                #         break
                 last_check = current_time
                 for i in range (0,6):
                     if should_buy:
@@ -1373,7 +1373,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 2
+    code_block = 3
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1449,9 +1449,9 @@ if __name__ == '__main__':
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
         minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_7epochs1528705581.775778.h5'
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
-                                    api_key='redacted',
-                                    secret_key='redacted',
-                                    passphrase='redacted', is_sandbox_api=False, minute_len=30)
+                            api_key='redacted',
+                            secret_key='redacted',
+                            passphrase='redacted', is_sandbox_api=False, minute_len=30)
 
         naive_bot.continuous_monitoring()
         #Another great unit test
