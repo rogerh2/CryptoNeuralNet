@@ -1032,8 +1032,8 @@ class BaseTradingBot:
 
         # Create the root message and fill in the from, to, and subject headers
         msg_root = MIMEMultipart('related')
-        msg_root['From'] = 'rogeh2@gmail.com'
-        msg_root['To'] = 'rogeh2@gmail.com'
+        msg_root['From'] = 'redacted'
+        msg_root['To'] = 'redacted'
         msg_root['Subject'] = 'Ethereum Prediction From Your Digital Broker'
 
         # Encapsulate the plain and HTML versions of the message body in an
@@ -1066,17 +1066,17 @@ class BaseTradingBot:
         # Setup the SMTP server
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
-        s.login('rogeh2@gmail.com', 'redacted')
-        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg_root.as_string())
+        s.login('redacted', 'redacted')
+        s.sendmail('redacted', ['redacted'], msg_root.as_string())
 
     def send_err(self):
         s = smtplib.SMTP('smtp.gmail.com', 587)
         s.starttls()
-        s.login('rogeh2@gmail.com', 'redacted')
+        s.login('reacted', 'reacted')
         msg = MIMEText('Error detected, abort')
         msg['Subject'] = 'Ethereum Prediction Error From Your Digital Broker'
-        msg['From'] = 'rogeh2@gmail.com'
-        s.sendmail('rogeh2@gmail.com', ['rogeh2@gmail.com'], msg.as_string())
+        msg['From'] = 'reacted'
+        s.sendmail('reacted', ['reacted'], msg.as_string())
 
     def trade_logic(self, last_bool):
         current_price = self.hourly_prediction.values[-(self.hour_length + 1)]
@@ -1125,7 +1125,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 155.25 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 154.74 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     #TODO remove dependence on hourly prediction
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
@@ -1148,15 +1148,8 @@ class NaiveTradingBot(BaseTradingBot):
         #jump_sign should be +-1, -1 for negative jumps and +1 for positive
         full_minute_prediction = self.minute_prediction.values
         previous_prediction = full_minute_prediction[-(self.minute_length+7):-(self.minute_length+1)]
-        current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
+        current_minute_prediction = full_minute_prediction[-(self.minute_length+1):-(self.minute_length-5)] #This is the prediction for the future
         minute_difference = np.diff(current_minute_prediction.T).T
-
-        # This if statement and the one below check for general trends while the one above checks for jumps
-        if np.abs(np.sum(minute_difference)) > (
-                2 * np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
-            if jump_sign * np.sum(minute_difference) > 0:
-                print('meander')
-                return True, 0  # returns the largest number possible for the index because jumps supercede general trends (see trade logic)
 
         for diff_ind in range(0, len(minute_difference)):
             pred_ind = diff_ind + 1 #np.diff shortens the array by 1
@@ -1172,6 +1165,12 @@ class NaiveTradingBot(BaseTradingBot):
                     if all(is_jump_convincing):
                         print('jump')
                         return True, pred_ind
+
+                        # This if statement and the one below check for general trends while the one above checks for jumps
+        if np.abs(np.sum(minute_difference)) > (2 * np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
+            if jump_sign * np.sum(minute_difference) > 0:
+                print('meander')
+                return True, len(full_minute_prediction)  # returns the largest number possible for the index because jumps supercede general trends (see trade logic)
 
         return False, None
 
@@ -1199,6 +1198,16 @@ class NaiveTradingBot(BaseTradingBot):
         if buy_bool & sell_bool: #If an up and down jump is approaching this lets you know which to perform first
             buy_bool = buy_ind < sell_ind
             sell_bool = not buy_bool
+
+        if buy_bool:
+            current_price_delta = self.minute_price[-1] - np.mean(self.minute_price[-3:-1])
+            if current_price_delta < 0:
+                buy_bool = False
+
+        elif sell_bool:
+            current_price_delta = self.minute_price[-1] - np.mean(self.minute_price[-3:-1])
+            if current_price_delta > 0:
+                sell_bool = False
 
         return  buy_bool, sell_bool
 
@@ -1409,8 +1418,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-10 23:00:00 EST"
-        date_to = "2018-06-11 01:33:00 EST"
+        date_from = "2018-06-11 02:00:00 EST"
+        date_to = "2018-06-11 07:32:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1427,7 +1436,7 @@ if __name__ == '__main__':
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_7epochs1528705581.775778.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-10_00:00:00_EST_to_2018-06-11_00:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-11_02:00:00_EST_to_2018-06-11_07:32:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
