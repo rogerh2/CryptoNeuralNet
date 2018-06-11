@@ -281,12 +281,15 @@ class DataSet:
             date_len = len(fin_table.date.values)
             last_news = None
 
+            n = 4500
+
             for i in range(1, date_len + 1):
                 ind = date_len - i
                 current_dt = fin_table.date.values[ind]
                 current_dt = pd.to_datetime(current_dt)
                 utc_current_dt = convert_time_to_uct(current_dt)
                 delta_ts = utc_current_dt.timestamp() - news_hourly_offset * 3600
+                current_ts = utc_current_dt.timestamp()
 
                 current_minute_limit = page.json()['Minute']['CallsLeft']['News']
                 current_hour_limit = page.json()['Hour']['CallsLeft']['News']
@@ -298,7 +301,7 @@ class DataSet:
                         current_hour_limit = page.json()['Hour']['CallsLeft']['News']
 
                 if last_news is not None:
-                    last_news_publication_times = [news['published_on'] < utc_current_dt.timestamp() for news in last_news]
+                    last_news_publication_times = [news['published_on'] < current_ts for news in last_news]
                     if all(last_news_publication_times):
                         current_news = last_news
                     else:
@@ -309,11 +312,12 @@ class DataSet:
                 last_news = current_news
 
 
-                current_full_sentiment = [txb(news['title']).sentiment.polarity for news in current_news]
+                current_full_sentiment = [n*(txb(news['title']).sentiment.polarity)/(n + current_ts - news['published_on']) for news in current_news]
 
-                current_news_count = np.sum([news['published_on'] > delta_ts for news in current_news])
-                news_count.insert(0, current_news_count)
+                weighted_news_count = np.sum([n*(news['published_on'] > delta_ts)/(n + current_ts - news['published_on']) for news in current_news])
+                news_count.insert(0, weighted_news_count)
 
+                current_news_count = np.sum([(news['published_on'] > delta_ts) for news in current_news])
                 current_sentiment = current_full_sentiment[0:current_news_count]
 
                 sentiment_sum = np.mean(current_sentiment)
@@ -484,30 +488,30 @@ class DataSet:
         price = self.fin_table[sym.upper()+'_high'].values
 
         # This for loop spreads out decisions so that trades that are coming within five minutes are seen
-        # m = 5
-        # sell_inds = np.nonzero(sell_column)[0]
-        # buy_inds = np.nonzero(buy_column)[0]
-        # j = 0
-        # k = 0
-        #
-        # for i in range(0, len(sell_column)):
-        #     if (i == sell_inds[j]) & (k < (len(buy_inds)-1)):
-        #         k += 1
-        #         continue
-        #
-        #     if (i == buy_inds[k]) & (j < (len(sell_inds)-1)) & (k > 0):
-        #         j += 1
-        #         continue
-        #
-        #     nearest_sell_price = price[sell_inds[j]]
-        #     nearest_buy_price = price[buy_inds[k]]
-        #     current_price = price[i]
-        #
-        #     if current_price >= (nearest_sell_price*0.9999):
-        #         sell_column[i] = 1
-        #
-        #     elif current_price <= (nearest_buy_price*1.0001):
-        #         buy_column[i] = 1
+        m = 5
+        sell_inds = np.nonzero(sell_column)[0]
+        buy_inds = np.nonzero(buy_column)[0]
+        j = 1
+        k = 0
+
+        for i in range(0, len(sell_column)):
+            if (i == sell_inds[j]) & (k < (len(buy_inds)-1)):
+                k += 1
+                continue
+
+            if (i == buy_inds[k]) & (j < (len(sell_inds)-1)) & (k > 0):
+                j += 1
+                continue
+
+            nearest_sell_price = price[sell_inds[j]]
+            nearest_buy_price = price[buy_inds[k]]
+            current_price = price[i]
+
+            if current_price >= (nearest_sell_price*0.999):
+                sell_column[i] = 1
+
+            elif current_price <= (nearest_buy_price*1.001):
+                buy_column[i] = 1
 
 
 
@@ -847,11 +851,11 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         return loss_val
 
     def custom_loss_func(self, y_true, y_pred):
-        loss_val = 1/(self.specificity(y_true, y_pred)+K.epsilon()) + 1/(self.sensitivity(y_true, y_pred)+K.epsilon())
+        loss_val = (self.specificity(y_true, y_pred)+K.epsilon())*(self.sensitivity(y_true, y_pred)+K.epsilon())
         return loss_val
 
     #TODO make model methods more modular for simpler integration of new models (like the strategy model)
-    def build_strategy_model(self, inputs, neurons, strategy_activ_func = 'tanh', output_size=1, dropout=0.1, layers=1, final_activation = 'sigmoid'):
+    def build_strategy_model(self, inputs, neurons, strategy_activ_func = 'tanh', output_size=1, dropout=0, layers=1, final_activation = 'sigmoid'):
         is_leaky = self.strategy_is_leakyrelu
         activ_func = strategy_activ_func
         strategy_model = Sequential()
@@ -868,7 +872,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
                 strategy_model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         strategy_model.add(Dense(units=output_size, activation=final_activation))
-        strategy_model.compile(loss=self.strategy_loss_fun, optimizer=keras.optimizers.adam(lr=0.0001))
+        strategy_model.compile(loss=self.custom_loss_func, optimizer=keras.optimizers.adam(lr=0.001))
 
         return strategy_model
 
@@ -910,8 +914,8 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
 
 
-        self.buy_model = self.build_strategy_model(training_input, neurons=buy_neuron_count, layers=20, strategy_activ_func='soft_plus', final_activation='sigmoid')
-        self.sell_model = self.build_strategy_model(training_input, neurons=sell_neuron_count, layers=20, strategy_activ_func='soft_plus', final_activation='sigmoid')
+        self.buy_model = self.build_strategy_model(training_input, neurons=buy_neuron_count, layers=1, strategy_activ_func='soft_plus', final_activation='sigmoid')
+        self.sell_model = self.build_strategy_model(training_input, neurons=sell_neuron_count, layers=1, strategy_activ_func='soft_plus', final_activation='sigmoid')
 
         estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=0, verbose=0, mode='auto')
 
@@ -920,6 +924,9 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         self.sell_model.fit(training_input, training_sell_output, epochs=500, batch_size=32, verbose=2,
                                     shuffle=False, validation_split=0.25, callbacks=[estop])#, class_weight=class_weight)
+
+        self.buy_model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/buy_sell/buy_model_' + str(buy_neuron_count) + '_neurons')
+        self.sell_model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/buy_sell/sell_model_' + str(buy_neuron_count) + '_neurons')
 
         return test_buy_output, test_input, test_sell_output
 
@@ -1357,24 +1364,23 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 1
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
 
     if code_block == 1:
-        date_from = "2018-06-07 09:00:00 EST"
-        date_to = "2018-06-10 09:00:00 EST"
+        date_from = "2018-06-10 08:00:00 EST"
+        date_to = "2018-06-10 18:00:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-07_09:00:00_EST_to_2018-06-10_09:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-10_08:00:00_EST_to_2018-06-10_18:00:00_EST.pickle'
         neuron_grid = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-        model_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_8epochs1528577797.86787.h5'
+        model_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_50neurons_10epochs1528705556.807701.h5'
 
         strategy_model = CryptoTradeStrategyModel(date_from, date_to, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, data_set_path=pickle_path, days=30, model_path=model_path)
         strategy_model.is_leakyrelu = False
-
         buy_loss_grid = []
         sell_loss_grid = []
         should_optimize = False
@@ -1398,13 +1404,13 @@ if __name__ == '__main__':
 
             plt.show()
         else:
-            strategy_model.test_strategy_model(buy_neurons=20, sell_neurons=30, show_plots=True)
+            strategy_model.test_strategy_model(buy_neurons=50, sell_neurons=50, show_plots=True)
 
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-07 09:00:00 EST"
-        date_to = "2018-06-10 09:00:00 EST"
+        date_from = "2018-06-10 23:00:00 EST"
+        date_to = "2018-06-11 01:33:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1418,13 +1424,13 @@ if __name__ == '__main__':
         neuron_grid = None#[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_16epochs1528568291.129375.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_7epochs1528705581.775778.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-07_09:00:00_EST_to_2018-06-10_09:00:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-10_00:00:00_EST_to_2018-06-11_00:00:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
-        test_model_save_bool = True
-        test_model_from_model_path = False
+        test_model_save_bool = False
+        test_model_from_model_path = True
 
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
 
@@ -1432,7 +1438,7 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_29neurons_4epochs1527866990.971981.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_7epochs1528705581.775778.h5'
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                                     api_key='redacted',
                                     secret_key='redacted',
