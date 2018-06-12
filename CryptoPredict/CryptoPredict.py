@@ -1125,7 +1125,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 154.74 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 154.68 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     #TODO remove dependence on hourly prediction
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
@@ -1154,7 +1154,7 @@ class NaiveTradingBot(BaseTradingBot):
         for diff_ind in range(0, len(minute_difference)):
             pred_ind = diff_ind + 1 #np.diff shortens the array by 1
             mean_diff_before_jump = np.mean(minute_difference[0:(diff_ind+1)])
-            if minute_difference[diff_ind] > 2 * mean_diff_before_jump:
+            if minute_difference[diff_ind] > 4 * mean_diff_before_jump:
                 if len(current_minute_prediction) > (pred_ind + confidence_length): #this ensures the jump is at most 10minutes in the future
                     if jump_sign == 1:
                         min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
@@ -1373,7 +1373,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 3
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1418,8 +1418,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-11 02:00:00 EST"
-        date_to = "2018-06-11 07:32:00 EST"
+        date_from = "2018-06-11 07:54:00 EST"
+        date_to = "2018-06-11 15:52:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1436,9 +1436,9 @@ if __name__ == '__main__':
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_7epochs1528705581.775778.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-11_02:00:00_EST_to_2018-06-11_07:32:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-11_02:00:00_EST_to_2018-06-11_07:32:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
-        test_model_save_bool = False
+        test_model_save_bool = True
         test_model_from_model_path = True
 
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
