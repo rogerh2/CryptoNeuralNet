@@ -232,7 +232,6 @@ class CryptoCompare:
         page = requests.get(url)
         data = page.json()['Data']
         return data
-
 class DataSet:
     prediction_length=1
 
@@ -1125,7 +1124,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 154.63 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 150.12 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     #TODO remove dependence on hourly prediction
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
@@ -1143,19 +1142,24 @@ class NaiveTradingBot(BaseTradingBot):
             self.api_base = 'https://api.gdax.com'
             self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
-    def is_jump_in_minute_price_prediction(self, jump_sign, confidence_length=4):
+    def is_jump_in_minute_price_prediction(self, jump_sign, confidence_length=1):
         #confidence_length is how many minutes the jump must hold for -1
         #jump_sign should be +-1, -1 for negative jumps and +1 for positive
         full_minute_prediction = self.minute_prediction.values
-        previous_prediction = full_minute_prediction[-(self.minute_length+7):-(self.minute_length+1)]
-        current_minute_prediction = full_minute_prediction[-(self.minute_length+1):-(self.minute_length-5)] #This is the prediction for the future
+        previous_prediction = full_minute_prediction[-(self.minute_length+2):-(self.minute_length+1)]
+        current_minute_prediction = full_minute_prediction[-(self.minute_length+1):-(self.minute_length-3)] #This is the prediction for the future
         minute_difference = np.diff(current_minute_prediction.T).T
+
+        if jump_sign == 1:
+            move_type = ' rise'
+        elif jump_sign == -1:
+            move_type = ' fall'
 
         for diff_ind in range(0, len(minute_difference)):
             pred_ind = diff_ind + 1 #np.diff shortens the array by 1
             mean_diff_before_jump = np.mean(minute_difference[0:(diff_ind+1)])
             if minute_difference[diff_ind] > 4 * mean_diff_before_jump:
-                if len(current_minute_prediction) > (pred_ind + confidence_length): #this ensures the jump is at most 10minutes in the future
+                if len(current_minute_prediction) > (pred_ind + confidence_length):
                     if jump_sign == 1:
                         min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
                         is_jump_convincing = [min_during_jump > (mean_diff_before_jump + x) for x in previous_prediction]
@@ -1163,16 +1167,24 @@ class NaiveTradingBot(BaseTradingBot):
                         max_during_jump = np.max(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
                         is_jump_convincing = [max_during_jump < (mean_diff_before_jump + x) for x in previous_prediction]
                     if all(is_jump_convincing):
-                        print('jump')
+                        print('jump ' + move_type)
                         return True, pred_ind
 
                         # This if statement and the one below check for general trends while the one above checks for jumps
         if np.abs(np.sum(minute_difference)) > (2 * np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
             if jump_sign * np.sum(minute_difference) > 0:
-                print('meander')
+                print('meander ' + move_type)
                 return True, len(full_minute_prediction)  # returns the largest number possible for the index because jumps supercede general trends (see trade logic)
 
         return False, None
+
+    def time_out_check(self, order_dict):
+        first_order_dict_entry = list(order_dict.keys())[0]
+        if first_order_dict_entry != 'sequence':
+            print('time out')
+            time.sleep(6)
+            order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+        return order_dict
 
     def get_wallet_contents(self):
         #TODO get rid of cringeworthy repitition
@@ -1190,7 +1202,7 @@ class NaiveTradingBot(BaseTradingBot):
 
         return  usd_wallet, crypto_wallet
 
-    def trade_logic(self):
+    def trade_logic(self, order_dict, last_order_dict):
         buy_bool, buy_ind = self.is_jump_in_minute_price_prediction(1)
 
         sell_bool, sell_ind = self.is_jump_in_minute_price_prediction(-1)
@@ -1200,13 +1212,17 @@ class NaiveTradingBot(BaseTradingBot):
             sell_bool = not buy_bool
 
         if buy_bool:
-            current_price_delta = self.minute_price.values[-1][0] - np.mean(self.minute_price.values[-3:-1])
-            if current_price_delta < 0.000015:
+            current_price = round(float(order_dict['bids'][0][0]), 2)
+            last_price = round(float(last_order_dict['bids'][0][0]), 2)
+            current_price_delta = current_price - last_price
+            if current_price_delta < 0:
                 buy_bool = False
 
         elif sell_bool:
-            current_price_delta = self.minute_price.values[-1][0] - np.mean(self.minute_price.values[-3:-1])
-            if current_price_delta > 0.000015:
+            current_price = round(float(order_dict['asks'][0][0]), 2)
+            last_price = round(float(last_order_dict['bids'][0][0]), 2)
+            current_price_delta = current_price - last_price
+            if current_price_delta > 0:
                 sell_bool = False
 
         return  buy_bool, sell_bool
@@ -1230,6 +1246,7 @@ class NaiveTradingBot(BaseTradingBot):
     def determine_trade_price(self, side):
         #side must be 'asks' or 'bids'
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+        order_dict = self.time_out_check(order_dict)
 
         if side == 'buy':
             order_type = 'bids'
@@ -1269,6 +1286,7 @@ class NaiveTradingBot(BaseTradingBot):
             if (usd_available > 0.0) & (trade_price > (current_price)):
                 #for off_set in [0, 1, 3, 5, 7]: #The for loop here and in sell spread out the asking price for a better chance of part of the order being taken
                 self.auth_client.buy(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
+                print('buy')
 
 
         elif side == 'sell':
@@ -1289,6 +1307,7 @@ class NaiveTradingBot(BaseTradingBot):
                                           time_in_force='GTT', cancel_after='day', post_only=True, trade_size=trade_size)
                 elif (trade_price < (current_price)):
                     self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
+                    print('sell')
 
         return trade_price
 
@@ -1296,13 +1315,18 @@ class NaiveTradingBot(BaseTradingBot):
         err_count = 0
         current_time = datetime.utcnow().timestamp()
         last_check = 0
-        last_training_time = current_time
-        cutoff_time = current_time + 8*3600
+        last_training_time = 0
+        cutoff_time = current_time + 12*3600
+        last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         while current_time < cutoff_time:
-            if (current_time > (last_check + 1.2*60)) & (current_time < (last_training_time + 6*3600)):
+            if (current_time > (last_check + 1.2*60)) & (current_time < (last_training_time + 1*3600)):
                 #try:
+                order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+                order_dict = self.time_out_check(order_dict)
+                time.sleep(1) #ratelimit
                 self.find_data(is_hourly_prediction_needed=False)
-                should_buy, should_sell = self.trade_logic()
+                should_buy, should_sell = self.trade_logic(order_dict, last_order_dict)
+                last_order_dict = order_dict
                 # except Exception as e:
                 #     print(str(e))
                 #     should_buy, should_sell = (False, False)
@@ -1311,19 +1335,22 @@ class NaiveTradingBot(BaseTradingBot):
                 #         self.send_err()
                 #         break
                 last_check = current_time
-                for i in range (0,6):
-                    if should_buy:
-                        self.trade_limit('buy')
-                        print('buy')
-                    elif should_sell:
-                        self.trade_limit('sell')
-                        print('sell')
-                    time.sleep(12)
+                try:
+                    while current_time < (last_check + 1.2*60):
+                        if should_buy:
+                            self.trade_limit('buy')
+                        elif should_sell:
+                            self.trade_limit('sell')
+                        current_time = datetime.utcnow().timestamp()
+                        time.sleep(0.5)
+                except Exception as e:
+                    print(str(e))
+
             else:
                 #In theory this should retrain the model every hour
                 try:
                     to_date = self.minute_cp.create_standard_dates()
-                    from_delta = timedelta(hours=6)
+                    from_delta = timedelta(hours=2)
                     from_date = to_date - from_delta
                     fmt = '%Y-%m-%d %H:%M:%S %Z'
                     training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
@@ -1446,8 +1473,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-12 00:00:00 EST"
-        date_to = "2018-06-12 08:00:00 EST"
+        date_from = "2018-06-13 22:00:00 EST"
+        date_to = "2018-06-14 01:01:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1455,16 +1482,16 @@ if __name__ == '__main__':
         time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 70
+        neuron_count = 20
         layer_count = 3
         batch_size = 32
         neuron_grid = None#[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_5epochs1528792950.546695.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_2epochs1528966093.331874.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-11_02:00:00_EST_to_2018-06-11_07:32:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-13_22:00:00_EST_to_2018-06-14_01:01:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
@@ -1475,11 +1502,11 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_7epochs1528705581.775778.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_7epochs1528821329.031049.h5'
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                             api_key='redacted',
                             secret_key='redacted',
-                            passphrase='redacted', is_sandbox_api=False, minute_len=30)
+                            passphrase='redacted', is_sandbox_api=True, minute_len=30)
 
         naive_bot.continuous_monitoring()
         #Another great unit test
