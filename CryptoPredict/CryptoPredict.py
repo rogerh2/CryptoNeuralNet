@@ -1124,7 +1124,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 150.12 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 149.65 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     #TODO remove dependence on hourly prediction
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
@@ -1142,41 +1142,79 @@ class NaiveTradingBot(BaseTradingBot):
             self.api_base = 'https://api.gdax.com'
             self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
-    def is_jump_in_minute_price_prediction(self, jump_sign, confidence_length=1):
+    def is_jump_in_minute_price_prediction(self, jump_sign): #, confidence_length=1):
+
         #confidence_length is how many minutes the jump must hold for -1
         #jump_sign should be +-1, -1 for negative jumps and +1 for positive
-        full_minute_prediction = self.minute_prediction.values
-        previous_prediction = full_minute_prediction[-(self.minute_length+2):-(self.minute_length+1)]
-        current_minute_prediction = full_minute_prediction[-(self.minute_length+1):-(self.minute_length-3)] #This is the prediction for the future
-        minute_difference = np.diff(current_minute_prediction.T).T
 
         if jump_sign == 1:
-            move_type = ' rise'
+            move_type = 'low peak'
         elif jump_sign == -1:
-            move_type = ' fall'
+            move_type = 'high peak'
 
-        for diff_ind in range(0, len(minute_difference)):
-            pred_ind = diff_ind + 1 #np.diff shortens the array by 1
-            mean_diff_before_jump = np.mean(minute_difference[0:(diff_ind+1)])
-            if minute_difference[diff_ind] > 4 * mean_diff_before_jump:
-                if len(current_minute_prediction) > (pred_ind + confidence_length):
-                    if jump_sign == 1:
-                        min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
-                        is_jump_convincing = [min_during_jump > (mean_diff_before_jump + x) for x in previous_prediction]
-                    elif jump_sign == -1:
-                        max_during_jump = np.max(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
-                        is_jump_convincing = [max_during_jump < (mean_diff_before_jump + x) for x in previous_prediction]
-                    if all(is_jump_convincing):
-                        print('jump ' + move_type)
-                        return True, pred_ind
+        full_minute_prediction = self.minute_prediction.values[::, 0]
+        full_minute_prices = self.minute_price.values[::, 0]
+        window_size = 10
+        current_minute_prediction = full_minute_prediction[-(self.minute_length+1):-(self.minute_length-3)] #This is the prediction for the future
 
-                        # This if statement and the one below check for general trends while the one above checks for jumps
-        if np.abs(np.sum(minute_difference)) > (2 * np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
-            if jump_sign * np.sum(minute_difference) > 0:
-                print('meander ' + move_type)
-                return True, len(full_minute_prediction)  # returns the largest number possible for the index because jumps supercede general trends (see trade logic)
+        neighborhood_prices = full_minute_prices[-window_size::]
+        all_test_predictions = full_minute_prediction[-(self.minute_length+2*window_size):-(self.minute_length-window_size)]
 
+        conf = np.array([]) #average of residuals
+        offsets = conf #the offset
+
+        for ind in range(0, 2*window_size): #This and the following if statement find the offset that best fits the data
+            test_predictions = all_test_predictions[(ind):(window_size+ind)]
+            current_fit = np.polyfit(neighborhood_prices, test_predictions, 1, full=True)
+            current_err = current_fit[1]/len(test_predictions)
+
+            if (current_fit[0][0] > current_err):
+                conf = np.append(conf, [current_err])
+                offsets = np.append(offsets, [ind-window_size])
+
+        if len(offsets) > 0:
+          off_ind = offsets[np.argmin(conf)]
+        else:
+            print('low confidence')
+            return False, None
+
+        neighborhood_predictions = all_test_predictions[(window_size-1)::]
+        if jump_sign == -1:
+            pred_ind = np.argmax([neighborhood_predictions]) + off_ind
+        elif jump_sign == 1:
+            pred_ind = np.argmin([neighborhood_predictions]) + off_ind
+
+        if np.abs(pred_ind) < 3:
+            print(move_type)
+            return True, pred_ind
+
+        print('no peak')
         return False, None
+
+        #
+        #
+        # for diff_ind in range(0, len(minute_difference)):
+        #     pred_ind = diff_ind + 1 #np.diff shortens the array by 1
+        #     mean_diff_before_jump = np.mean(minute_difference[0:(diff_ind+1)])
+        #     if minute_difference[diff_ind] > 4 * mean_diff_before_jump:
+        #         if len(current_minute_prediction) > (pred_ind + confidence_length):
+        #             if jump_sign == 1:
+        #                 min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
+        #                 is_jump_convincing = [min_during_jump > (mean_diff_before_jump + x) for x in previous_prediction]
+        #             elif jump_sign == -1:
+        #                 max_during_jump = np.max(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
+        #                 is_jump_convincing = [max_during_jump < (mean_diff_before_jump + x) for x in previous_prediction]
+        #             if all(is_jump_convincing):
+        #                 print('jump ' + move_type)
+        #                 return True, pred_ind
+        #
+        #                 # This if statement and the one below check for general trends while the one above checks for jumps
+        # if np.abs(np.sum(minute_difference)) > (2 * np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
+        #     if jump_sign * np.sum(minute_difference) > 0:
+        #         print('meander ' + move_type)
+        #         return True, len(full_minute_prediction)  # returns the largest number possible for the index because jumps supercede general trends (see trade logic)
+        #
+        # return False, None
 
     def time_out_check(self, order_dict):
         first_order_dict_entry = list(order_dict.keys())[0]
@@ -1287,6 +1325,8 @@ class NaiveTradingBot(BaseTradingBot):
                 #for off_set in [0, 1, 3, 5, 7]: #The for loop here and in sell spread out the asking price for a better chance of part of the order being taken
                 self.auth_client.buy(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
                 print('buy')
+            elif len(current_orders) == 0:
+                return True
 
 
         elif side == 'sell':
@@ -1308,8 +1348,10 @@ class NaiveTradingBot(BaseTradingBot):
                 elif (trade_price < (current_price)):
                     self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
                     print('sell')
+            elif len(current_orders) == 0:
+                return True
 
-        return trade_price
+        return False
 
     def continuous_monitoring(self):
         err_count = 0
@@ -1321,6 +1363,7 @@ class NaiveTradingBot(BaseTradingBot):
         while current_time < cutoff_time:
             if (current_time > (last_check + 1.2*60)) & (current_time < (last_training_time + 1*3600)):
                 #try:
+                last_check = current_time
                 order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
                 order_dict = self.time_out_check(order_dict)
                 time.sleep(1) #ratelimit
@@ -1334,36 +1377,33 @@ class NaiveTradingBot(BaseTradingBot):
                 #     if err_count > 5:
                 #         self.send_err()
                 #         break
-                last_check = current_time
-                try:
-                    while current_time < (last_check + 1.2*60):
+                last_trade_check = current_time
+                current_trade_time = current_time
+                should_stop_loop = False
+                if should_buy or should_sell:
+                    while (current_trade_time < (last_trade_check + 2*60)) & (not should_stop_loop):
                         if should_buy:
-                            self.trade_limit('buy')
+                            should_stop_loop = self.trade_limit('buy')
                         elif should_sell:
-                            self.trade_limit('sell')
-                        current_time = datetime.utcnow().timestamp()
+                            should_stop_loop = self.trade_limit('sell')
                         time.sleep(0.5)
-                except Exception as e:
-                    print(str(e))
+                        current_trade_time = datetime.utcnow().timestamp()
 
-            else:
+            elif current_time > (last_training_time + 1*3600):
                 #In theory this should retrain the model every hour
-                try:
-                    to_date = self.minute_cp.create_standard_dates()
-                    from_delta = timedelta(hours=2)
-                    from_date = to_date - from_delta
-                    fmt = '%Y-%m-%d %H:%M:%S %Z'
-                    training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
-                                        days=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
-                                        prediction_ticker=self.prediction_ticker, time_units='minutes')
-                    self.minute_cp.data_obj = training_data
+                last_training_time = current_time
+                to_date = self.minute_cp.create_standard_dates()
+                from_delta = timedelta(hours=2)
+                from_date = to_date - from_delta
+                fmt = '%Y-%m-%d %H:%M:%S %Z'
+                training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
+                                    days=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
+                                    prediction_ticker=self.prediction_ticker, time_units='minutes')
+                self.minute_cp.data_obj = training_data
 
-                    self.minute_cp.update_model_training()
-
-                    last_training_time = current_time
-
-                except Exception as e:
-                    print(str(e))
+                self.minute_cp.update_model_training()
+            else:
+                time.sleep(72)
 
             current_time = datetime.utcnow().timestamp()
 
@@ -1473,8 +1513,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-13 22:00:00 EST"
-        date_to = "2018-06-14 01:01:00 EST"
+        date_from = "2018-06-14 18:20:00 EST"
+        date_to = "2018-06-14 21:20:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1482,16 +1522,16 @@ if __name__ == '__main__':
         time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 20
+        neuron_count = 100
         layer_count = 3
         batch_size = 32
         neuron_grid = None#[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_2epochs1528966093.331874.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1529038751.895506.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-13_22:00:00_EST_to_2018-06-14_01:01:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-14_18:20:00_EST_to_2018-06-14_21:20:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
@@ -1502,11 +1542,11 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_7epochs1528821329.031049.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1529038751.895506.h5'
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
-                            api_key='redacted',
-                            secret_key='redacted',
-                            passphrase='redacted', is_sandbox_api=True, minute_len=30)
+                                    api_key='redacted',
+                                    secret_key='redacted',
+                                    passphrase='redacted', is_sandbox_api=True, minute_len=30)
 
         naive_bot.continuous_monitoring()
         #Another great unit test
@@ -1547,12 +1587,12 @@ if __name__ == '__main__':
         # plt.plot(test_output[-(15+1)::] , 'b--o')
         # plt.show()
 
-    #The below code would make a great unit test
-    # fake_prediction = pd.DataFrame({'Test':np.array([0.1, 0.2, 0.1, 0, 0.1, 0.1, 0.1])})
-    # naive_bot.hourly_prediction = fake_prediction
-    # ans = naive_bot.trade_logic(True)
-    # print(str(ans))
-    # fake_prediction = pd.DataFrame({'Test': np.array([0.1, 0.0, 0.1, 0.2, 0.1, 0.1, 0.1])})
-    # naive_bot.hourly_prediction = fake_prediction
-    # ans = naive_bot.trade_logic(True)
-    # print(str(ans))
+        #The below code would make a great unit test
+        # fake_prediction = pd.DataFrame({'Test':np.array([0.1, 0.2, 0.1, 0, 0.1, 0.1, 0.1])})
+        # naive_bot.minute_prediction = fake_prediction
+        # ans = naive_bot.is_jump_in_minute_price_prediction(-1)
+        # print(str(ans))
+        # fake_prediction = pd.DataFrame({'Test': np.array([0.1, 0.0, 0.1, 0.2, 0.1, 0.1, 0.1])})
+        # naive_bot.minute_prediction = fake_prediction
+        # ans = naive_bot.is_jump_in_minute_price_prediction(1)
+        # print(str(ans))
