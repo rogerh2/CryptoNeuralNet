@@ -1154,7 +1154,7 @@ class NaiveTradingBot(BaseTradingBot):
 
         full_minute_prediction = self.minute_prediction.values[::, 0]
         full_minute_prices = self.minute_price.values[::, 0]
-        window_size = 10
+        window_size = 13
         current_minute_prediction = full_minute_prediction[-(self.minute_length+1):-(self.minute_length-3)] #This is the prediction for the future
 
         neighborhood_prices = full_minute_prices[-window_size::]
@@ -1168,7 +1168,7 @@ class NaiveTradingBot(BaseTradingBot):
             current_fit = np.polyfit(neighborhood_prices, test_predictions, 1, full=True)
             current_err = current_fit[1]/len(test_predictions)
 
-            if (current_fit[0][0] > current_err):
+            if (current_fit[0][0] > 2*current_err):
                 conf = np.append(conf, [current_err])
                 offsets = np.append(offsets, [ind-window_size])
 
@@ -1184,7 +1184,7 @@ class NaiveTradingBot(BaseTradingBot):
         elif jump_sign == 1:
             pred_ind = np.argmin([neighborhood_predictions]) + off_ind
 
-        if np.abs(pred_ind) < 3:
+        if pred_ind < 2:
             print(move_type)
             return True, pred_ind
 
@@ -1252,15 +1252,15 @@ class NaiveTradingBot(BaseTradingBot):
         if buy_bool:
             current_price = round(float(order_dict['bids'][0][0]), 2)
             last_price = round(float(last_order_dict['bids'][0][0]), 2)
-            current_price_delta = current_price - last_price
-            if current_price_delta < 0:
+            current_price_delta = (current_price - last_price)/last_price
+            if current_price_delta < -0.003:
                 buy_bool = False
 
         elif sell_bool:
             current_price = round(float(order_dict['asks'][0][0]), 2)
             last_price = round(float(last_order_dict['bids'][0][0]), 2)
-            current_price_delta = current_price - last_price
-            if current_price_delta > 0:
+            current_price_delta = (current_price - last_price)/last_price
+            if current_price_delta > 0.003:
                 sell_bool = False
 
         return  buy_bool, sell_bool
@@ -1358,7 +1358,7 @@ class NaiveTradingBot(BaseTradingBot):
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         last_training_time = 0
-        cutoff_time = current_time + 12*3600
+        cutoff_time = current_time + 22*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         while current_time < cutoff_time:
             if (current_time > (last_check + 1.2*60)) & (current_time < (last_training_time + 1*3600)):
@@ -1403,7 +1403,7 @@ class NaiveTradingBot(BaseTradingBot):
 
                 self.minute_cp.update_model_training()
             else:
-                time.sleep(72)
+                time.sleep(6)
 
             current_time = datetime.utcnow().timestamp()
 
@@ -1513,8 +1513,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-14 18:20:00 EST"
-        date_to = "2018-06-14 21:20:00 EST"
+        date_from = "2018-06-15 19:45:00 EST"
+        date_to = "2018-06-15 22:56:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1528,10 +1528,10 @@ if __name__ == '__main__':
         neuron_grid = None#[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1529038751.895506.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_6epochs1529132632.645572.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-14_18:20:00_EST_to_2018-06-14_21:20:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_19:45:00_EST_to_2018-06-15_22:56:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
