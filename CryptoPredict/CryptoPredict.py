@@ -1265,18 +1265,18 @@ class NaiveTradingBot(BaseTradingBot):
 
         return  buy_bool, sell_bool
 
-    def detect_concurrent_whale(self, order_book):
+    def detect_whale_position(self, order_book):
         #This looks for whales making the same trade as myself. If they are doing so, it trades behind them (in case they leave)
-        first_five_sizes = [round(float(price[1]), 2) for price in order_book[0:6]]
-        if np.max(first_five_sizes) > 50:
-            return np.argmax(first_five_sizes) + 1
+        first_ten_sizes = [round(float(price[1]), 2) for price in order_book[0:11]]
+        if np.max(first_ten_sizes) > 50:
+            return np.argmax(first_ten_sizes) + 1
         else:
             return 0
 
     def detect_opposing_whale(self, order_book):
         # This looks for whales making the trade opposite mine. It is binary because the algorithm is to take be inactive until the whale is gone or farther up the book
-        first_five_sizes = [round(float(price[1]), 2) for price in order_book[0:6]]
-        if np.max(first_five_sizes) > 50:
+        first_ten_sizes = [round(float(price[1]), 2) for price in order_book[0:5]]
+        if np.max(first_ten_sizes) > 50:
             return True
         else:
             return False
@@ -1360,23 +1360,24 @@ class NaiveTradingBot(BaseTradingBot):
         last_training_time = 0
         cutoff_time = current_time + 22*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+        hold_eth = False
+        buy_whale = False
+        sell_whale = False
         while current_time < cutoff_time:
             if (current_time > (last_check + 1.2*60)) & (current_time < (last_training_time + 1*3600)):
-                #try:
                 last_check = current_time
                 order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
                 order_dict = self.time_out_check(order_dict)
                 time.sleep(1) #ratelimit
                 self.find_data(is_hourly_prediction_needed=False)
                 should_buy, should_sell = self.trade_logic(order_dict, last_order_dict)
+
+                if should_buy:
+                    hold_eth = True
+                elif should_sell:
+                    hold_eth = False
+
                 last_order_dict = order_dict
-                # except Exception as e:
-                #     print(str(e))
-                #     should_buy, should_sell = (False, False)
-                #     err_count += 1
-                #     if err_count > 5:
-                #         self.send_err()
-                #         break
                 last_trade_check = current_time
                 current_trade_time = current_time
                 should_stop_loop = False
@@ -1403,7 +1404,15 @@ class NaiveTradingBot(BaseTradingBot):
 
                 self.minute_cp.update_model_training()
             else:
-                time.sleep(6)
+                #TODO finish this statement, should detect whales and trade accordingly
+                time.sleep(1)
+                order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+                usd_wallet, crypto_wallet = self.get_wallet_contents()
+                if hold_eth:
+                    crypto_balance = np.round(float(crypto_wallet['balance']), 8)
+                else:
+                    usd_balance = np.round(float(usd_wallet['balance']), 2)
+
 
             current_time = datetime.utcnow().timestamp()
 
