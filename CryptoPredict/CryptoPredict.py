@@ -1178,7 +1178,8 @@ class NaiveTradingBot(BaseTradingBot):
             print('low confidence')
             return False, None
 
-        neighborhood_predictions = all_test_predictions[(window_size-1)::]
+        #neighborhood_predictions = all_test_predictions[(window_size-1)::]
+        neighborhood_predictions = current_minute_prediction[0:window_size]
         if jump_sign == -1:
             pred_ind = np.argmax([neighborhood_predictions]) + off_ind
         elif jump_sign == 1:
@@ -1267,11 +1268,11 @@ class NaiveTradingBot(BaseTradingBot):
 
     def detect_whale_position(self, order_book):
         #This looks for whales making the same trade as myself. If they are doing so, it trades behind them (in case they leave)
-        first_ten_sizes = [round(float(price[1]), 2) for price in order_book[0:11]]
-        if np.max(first_ten_sizes) > 50:
-            return np.argmax(first_ten_sizes) + 1
+        prices = [round(float(price[1]), 2) > 50 for price in order_book]
+        if np.sum(prices) > 0:
+            return np.argmax(prices)
         else:
-            return 0
+            return None
 
     def detect_opposing_whale(self, order_book):
         # This looks for whales making the trade opposite mine. It is binary because the algorithm is to take be inactive until the whale is gone or farther up the book
@@ -1302,9 +1303,14 @@ class NaiveTradingBot(BaseTradingBot):
 
         return trade_price
 
-    def trade_limit(self, side, final_sell=False):
+    def trade_limit(self, side, final_sell=False, trade_price=None, cancel_time='min'):
         # based on function from https://cryptostag.com/basic-gdax-api-trading-with-python/
-        trade_price = self.determine_trade_price(side=side)
+        if trade_price is None:
+            trade_price = self.determine_trade_price(side=side)
+            ignore_best_trade = False
+        else:
+            ignore_best_trade = True
+
         if (trade_price is None) & (not final_sell):
             return False
 
@@ -1321,9 +1327,9 @@ class NaiveTradingBot(BaseTradingBot):
                 if (trade_price > (current_price)):
                     self.auth_client.cancel_all(product=self.product_id)
 
-            if (usd_available > 0.0) & (trade_price > (current_price)):
+            if (usd_available > 0.0) & ((trade_price > (current_price)) or ignore_best_trade):
                 #for off_set in [0, 1, 3, 5, 7]: #The for loop here and in sell spread out the asking price for a better chance of part of the order being taken
-                self.auth_client.buy(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
+                self.auth_client.buy(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after=cancel_time, post_only=True, trade_size=trade_size)
                 print('buy')
             elif len(current_orders) == 0:
                 return True
@@ -1345,8 +1351,8 @@ class NaiveTradingBot(BaseTradingBot):
                 if final_sell:
                     self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id,
                                           time_in_force='GTT', cancel_after='day', post_only=True, trade_size=trade_size)
-                elif (trade_price < (current_price)):
-                    self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after='min', post_only=True, trade_size=trade_size)
+                elif (trade_price < (current_price)) or ignore_best_trade:
+                    self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after=cancel_time, post_only=True, trade_size=trade_size)
                     print('sell')
             elif len(current_orders) == 0:
                 return True
@@ -1361,13 +1367,15 @@ class NaiveTradingBot(BaseTradingBot):
         cutoff_time = current_time + 22*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         hold_eth = False
-        buy_whale = False
-        sell_whale = False
+        whale_watch = False
+        last_price = 0
         while current_time < cutoff_time:
             if (current_time > (last_check + 1.2*60)) & (current_time < (last_training_time + 1*3600)):
                 last_check = current_time
                 order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
                 order_dict = self.time_out_check(order_dict)
+                order_book = order_dict['bids']
+                last_price = round(float(order_book[0][0]), 2)
                 time.sleep(1) #ratelimit
                 self.find_data(is_hourly_prediction_needed=False)
                 should_buy, should_sell = self.trade_logic(order_dict, last_order_dict)
@@ -1405,13 +1413,71 @@ class NaiveTradingBot(BaseTradingBot):
                 self.minute_cp.update_model_training()
             else:
                 #TODO finish this statement, should detect whales and trade accordingly
-                time.sleep(1)
+                time.sleep(1) #avoid timeouts
                 order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
                 usd_wallet, crypto_wallet = self.get_wallet_contents()
                 if hold_eth:
-                    crypto_balance = np.round(float(crypto_wallet['balance']), 8)
+                    balance = np.round(float(crypto_wallet['balance']), 8)
+                    opposite_balance = np.round(float(usd_wallet['balance']), 2) - self.min_usd_balance
+                    trigger = 'buy'
+                    opposite_trigger = 'sell'
+                    opposing_order_type = 'asks'
+                    order_type = 'bids'
+                    opposite_sign = -1
                 else:
-                    usd_balance = np.round(float(usd_wallet['balance']), 2)
+                    balance = np.round(float(usd_wallet['balance']), 2) - self.min_usd_balance
+                    opposite_balance = np.round(float(crypto_wallet['balance']), 8)
+                    trigger = 'sell'
+                    opposite_trigger = 'buy'
+                    opposing_order_type = 'bids'
+                    order_type = 'asks'
+                    opposite_sign = 1
+
+                order_book = order_dict[opposing_order_type]
+                price = round(float(order_book[0][0]), 2)
+                whale_position = self.detect_whale_position(order_book)
+                if whale_position is not None:
+                    whale_price = round(float(order_book[whale_position][0]), 2)
+                else:
+                    whale_position = 20
+
+                opposing_whale = self.detect_opposing_whale(order_dict[order_type])
+
+                if (balance > 0) & (whale_position is not None) & (not opposing_whale):
+                    if whale_position < 9:
+                        trade_price = round(whale_price + opposite_sign*(0.01 + 0.04*(whale_position/9)), 2)
+                        time.sleep(1)
+                        current_orders = self.auth_client.get_orders()[0]
+                        if len(current_orders) > 0:
+                            current_price = current_orders[0]['price']
+                            current_price = float(current_price)
+                        else:
+                            current_price = 0
+
+                        whale_watch = True
+
+                        if (current_price != trade_price) & (opposite_sign*(price-trade_price)>0):
+                            print('opposing whale')
+                            self.auth_client.cancel_all(product=self.product_id)
+                            self.trade_limit(opposite_trigger, trade_price=trade_price)
+
+                if whale_watch:
+                    if trigger == 'sell':
+                        if (price < last_price) & (whale_position > 9):
+                            whale_watch = False
+                    else:
+                        if (price > last_price) & (whale_position > 9):
+                            whale_watch = False
+
+
+                elif (opposite_balance > 0) & (not whale_watch):
+                    print('missed inflection point')
+                    self.trade_limit(trigger)
+
+
+
+
+
 
 
             current_time = datetime.utcnow().timestamp()
@@ -1522,8 +1588,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-15 19:45:00 EST"
-        date_to = "2018-06-15 22:56:00 EST"
+        date_from = "2018-06-15 10:20:00 EST"
+        date_to = "2018-06-21 09:20:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1534,28 +1600,27 @@ if __name__ == '__main__':
         neuron_count = 100
         layer_count = 3
         batch_size = 32
-        neuron_grid = None#[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+        neuron_grid = None#[100, 100, 100, 100, 100]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_6epochs1529132632.645572.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1529515157.386151.h5'
         model_type = 'price' #Don't change this
-        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_19:45:00_EST_to_2018-06-15_22:56:00_EST.pickle'
+        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-20_20:38:00_EST_to_2018-06-20_23:57:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
-        test_model_from_model_path = True
-
+        test_model_from_model_path = False
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
 
     elif code_block == 3:
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1529038751.895506.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_101neurons_1epochs1529548741.491931.h5'
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
-                                    api_key='redacted',
-                                    secret_key='redacted',
-                                    passphrase='redacted', is_sandbox_api=True, minute_len=30)
+                                    api_key='98039321937511de5c66b7f7f8a05170',
+                                    secret_key='QFpXowwWNFjRKCr+K9FSJlaBW/qn8AEuAUydPWuwtIoMvLV0Tr9eEszTuTjTTk+0DDxCoo5oP5ogdoIdKUa2RA==',
+                                    passphrase='hg03xvhw0av', is_sandbox_api=True, minute_len=30)
 
         naive_bot.continuous_monitoring()
         #Another great unit test
