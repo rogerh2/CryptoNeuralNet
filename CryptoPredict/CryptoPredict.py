@@ -558,8 +558,6 @@ class DataSet:
         self.final_table=data_frame
 
     def add_data(self, date_to, retain_length=False):
-        #TODO fix duplicate date at append time
-        #TODO fix column numbering restart from 0 after append
         time_del = timedelta(minutes=1)
         fmt = '%Y-%m-%d %H:%M:%S %Z'
         from_datetime = datetime.strptime(self.date_to, fmt) + time_del
@@ -589,7 +587,8 @@ class CoinPriceModel:
     loss_func="mean_absolute_percentage_error"
     epochs = None
     bitinfo_list = None
-    google_list=None
+    google_list = None
+    pred_data_obj = None
 
     def __init__(self, date_from, date_to, model_path=None, days=None, bitinfo_list=None, google_list=None,
                  prediction_ticker='ltc', epochs=500, activ_func='relu', time_units='hours', is_leakyrelu=True, need_data_obj=True, data_set_path=None, aggregate_val=1):
@@ -754,7 +753,6 @@ class CoinPriceModel:
     def predict(self, time_units='hours', show_plots=True):
         fmt = '%Y-%m-%d %H:%M:%S %Z'
         to_date = self.create_standard_dates()
-
         if time_units == 'minutes':
             delta = timedelta(minutes=self.prediction_length)
             from_delta = timedelta(hours=1)
@@ -765,9 +763,17 @@ class CoinPriceModel:
             delta = timedelta(days=self.prediction_length)
             from_delta = timedelta(days=30)
 
-        from_date = to_date - from_delta
-        test_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt), prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list,
-                            prediction_ticker=self.prediction_ticker, time_units=time_units)
+
+        if self.pred_data_obj is None:
+            from_date = to_date - from_delta
+            test_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt), prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list,
+                                prediction_ticker=self.prediction_ticker, time_units=time_units)
+        else:
+            test_data = self.pred_data_obj
+            test_data.add_data(to_date.strftime(fmt), retain_length=True)
+
+        self.pred_data_obj = test_data
+
         test_data.create_prediction_arrays()
         prediction_input = test_data.input_array #do not use the create array methods here because the output is not needed
         prediction = self.model.predict(prediction_input)
@@ -1146,7 +1152,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 149.65 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 148.47 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     #TODO remove dependence on hourly prediction
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
@@ -1290,7 +1296,7 @@ class NaiveTradingBot(BaseTradingBot):
 
     def detect_whale_position(self, order_book):
         #This looks for whales making the same trade as myself. If they are doing so, it trades behind them (in case they leave)
-        prices = [round(float(price[1]), 2) > 50 for price in order_book]
+        prices = [round(float(price[1]), 2) > 100 for price in order_book]
         if np.sum(prices) > 0:
             return np.argmax(prices)
         else:
@@ -1312,16 +1318,18 @@ class NaiveTradingBot(BaseTradingBot):
         if side == 'buy':
             order_type = 'bids'
             opposing_order_type = 'asks'
+            sign = -1
         elif side == 'sell':
             order_type = 'asks'
             opposing_order_type = 'bids'
+            sign = 1
 
         is_opposing_whale = self.detect_opposing_whale(order_dict[opposing_order_type])
         if is_opposing_whale:
             return None
 
         #ind = self.detect_concurrent_whale(order_dict[order_type]) in hindsight, jumping behind the whale is not the best idea
-        trade_price = round(float(order_dict[order_type][0][0]), 2)
+        trade_price = round(float(order_dict[opposing_order_type][0][0]), 2) + 0.01*sign
 
         return trade_price
 
@@ -1386,7 +1394,7 @@ class NaiveTradingBot(BaseTradingBot):
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         last_training_time = 0
-        cutoff_time = current_time + 22*3600
+        cutoff_time = current_time + 1*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         hold_eth = False
         whale_watch = False
@@ -1467,7 +1475,7 @@ class NaiveTradingBot(BaseTradingBot):
 
                 if (balance > 0) & (whale_position is not None) & (not opposing_whale):
                     if whale_position < 9:
-                        trade_price = round(whale_price + opposite_sign*(0.01 + 0.04*(whale_position/9)), 2)
+                        trade_price = round(whale_price + opposite_sign*(0.05 - 0.04*(whale_position < 5)), 2)
                         time.sleep(1)
                         current_orders = self.auth_client.get_orders()[0]
                         if len(current_orders) > 0:
@@ -1481,7 +1489,7 @@ class NaiveTradingBot(BaseTradingBot):
                         if (current_price != trade_price) & (opposite_sign*(price-trade_price)>0):
                             print('opposing whale')
                             self.auth_client.cancel_all(product=self.product_id)
-                            self.trade_limit(opposite_trigger, trade_price=trade_price)
+                            self.trade_limit(opposite_trigger)#, trade_price=trade_price)
 
                 if whale_watch:
                     if trigger == 'sell':
@@ -1545,7 +1553,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
     elif use_type == 'optimize':
         hist = []
         if neuron_grid is None:
-            neuron_grid = [20, 30, 40, 50, 60, 70, 80, 90, 100, 200]
+            neuron_grid = [65, 70, 75, 80, 85, 90, 95, 100]
         for neuron_count in neuron_grid:
             current_hist = cp.train_model(neuron_count=neuron_count, min_distance_between_trades=min_distance_between_trades, model_type='price', save_model=True, layers=layer_count, batch_size=batch_size)
 
@@ -1572,7 +1580,7 @@ if __name__ == '__main__':
 
     if code_block == 1:
         date_from = "2018-06-10 08:00:00 EST"
-        date_to = "2018-06-10 18:00:00 EST"
+        date_to = "2018-06-10 18:50:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
@@ -1610,8 +1618,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-15 10:20:00 EST"
-        date_to = "2018-06-22 16:26:00 EST"
+        date_from = "2018-06-22 16:26:00 EST"
+        date_to = "2018-06-22 18:57:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1625,13 +1633,13 @@ if __name__ == '__main__':
         neuron_grid = None#[100, 100, 100, 100, 100]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1529515157.386151.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_4epochs1529714785.400433.h5'
         model_type = 'price' #Don't change this
-        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-06-22_16:26:00_EST.pickle'
+        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-06-22_16:26:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
-        test_model_from_model_path = False
+        test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
 
     elif code_block == 3:
