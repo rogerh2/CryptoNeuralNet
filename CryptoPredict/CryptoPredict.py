@@ -232,13 +232,15 @@ class CryptoCompare:
         page = requests.get(url)
         data = page.json()['Data']
         return data
+
 class DataSet:
     prediction_length=1
 
 
-    def __init__(self, date_from, date_to, days=None, bitinfo_list = None, prediction_ticker = 'ltc', time_units='hours', fin_table=None, aggregate=1, news_hourly_offset=5):
+    def __init__(self, date_from, date_to, prediction_length=None, bitinfo_list = None, prediction_ticker ='ltc', time_units='hours', fin_table=None, aggregate=1, news_hourly_offset=5):
         if bitinfo_list is None:
             bitinfo_list = ['btc', 'eth']
+        self.bitinfo_list = bitinfo_list
         cryp_obj = CryptoCompare(date_from=date_from, date_to=date_to)
         cryp_obj.aggregate = aggregate
         self.cryp_obj = cryp_obj
@@ -332,8 +334,8 @@ class DataSet:
             self.fin_table = fin_table
         self.prediction_ticker = prediction_ticker
         self.date_to = date_to
-        if days is not None:
-            self.prediction_length = days
+        if prediction_length is not None:
+            self.prediction_length = prediction_length
         self.time_units = time_units
 
     def create_price_prediction_columns(self):
@@ -555,6 +557,21 @@ class DataSet:
         self.output_array = data_frame[self.prediction_ticker.upper() + '_high'].values
         self.final_table=data_frame
 
+    def add_data(self, date_to, retain_length=False):
+        #TODO fix duplicate date at append time
+        #TODO fix column numbering restart from 0 after append
+        old_fin_table = self.fin_table
+        temp_data_obj = DataSet(self.date_to, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
+        fin_table_addition = temp_data_obj.fin_table
+        new_fin_table = old_fin_table.append(fin_table_addition)
+
+        if retain_length:
+            self.fin_table = new_fin_table.iloc[len(fin_table_addition)::]
+        else:
+            self.fin_table = new_fin_table
+
+        self.date_to = date_to
+
 class CoinPriceModel:
 
     model = None
@@ -589,7 +606,7 @@ class CoinPriceModel:
             else:
                 saved_table=None
 
-            self.data_obj = DataSet(date_from=date_from, date_to=date_to, days=self.prediction_length,
+            self.data_obj = DataSet(date_from=date_from, date_to=date_to, prediction_length=self.prediction_length,
                                     bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, fin_table=saved_table, aggregate=aggregate_val)
             if saved_table is None:
                 table_file_name = '_' + time_units + '_from_' + date_from + '_to_' + date_to + '.pickle'
@@ -744,7 +761,7 @@ class CoinPriceModel:
             from_delta = timedelta(days=30)
 
         from_date = to_date - from_delta
-        test_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt), days=self.prediction_length, bitinfo_list=self.bitinfo_list,
+        test_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt), prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list,
                             prediction_ticker=self.prediction_ticker, time_units=time_units)
         test_data.create_prediction_arrays()
         prediction_input = test_data.input_array #do not use the create array methods here because the output is not needed
@@ -1406,8 +1423,8 @@ class NaiveTradingBot(BaseTradingBot):
                 from_date = to_date - from_delta
                 fmt = '%Y-%m-%d %H:%M:%S %Z'
                 training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
-                                    days=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
-                                    prediction_ticker=self.prediction_ticker, time_units='minutes')
+                                        prediction_length=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
+                                        prediction_ticker=self.prediction_ticker, time_units='minutes')
                 self.minute_cp.data_obj = training_data
 
                 self.minute_cp.update_model_training()
@@ -1618,9 +1635,9 @@ if __name__ == '__main__':
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
         minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_101neurons_1epochs1529548741.491931.h5'
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
-                                    api_key='98039321937511de5c66b7f7f8a05170',
-                                    secret_key='QFpXowwWNFjRKCr+K9FSJlaBW/qn8AEuAUydPWuwtIoMvLV0Tr9eEszTuTjTTk+0DDxCoo5oP5ogdoIdKUa2RA==',
-                                    passphrase='hg03xvhw0av', is_sandbox_api=True, minute_len=30)
+                                    api_key='redacted',
+                                    secret_key='redacted',
+                                    passphrase='redacted', is_sandbox_api=True, minute_len=30)
 
         naive_bot.continuous_monitoring()
         #Another great unit test

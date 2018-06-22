@@ -12,7 +12,7 @@ class TestDataSet(unittest.TestCase):
         prediction_ticker = 'ETH'
         time_units = 'hours'
 
-        self.data_obj = DataSet(date_from=date_from, date_to=date_to, days=6, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units)
+        self.data_obj = DataSet(date_from=date_from, date_to=date_to, prediction_length=6, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units)
         self.data_obj.create_arrays()
 
     def test_create_price_prediction_columns_creates_correct_number_of_columns_and(self):
@@ -35,7 +35,7 @@ class TestDataSet(unittest.TestCase):
         with open(pickle_path, 'rb') as ds_file:
             saved_table = pickle.load(ds_file)
 
-        data_obj = DataSet(date_from=date_from, date_to=date_to, days=5, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, fin_table=saved_table)
+        data_obj = DataSet(date_from=date_from, date_to=date_to, prediction_length=5, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, fin_table=saved_table)
         data_obj.create_arrays(model_type='buy&sell')
         num_buy_ones = np.sum([x == 1 for x in data_obj.final_table['Buy'].values])
         num_buy_zeros = np.sum([x == 0 for x in data_obj.final_table['Buy'].values])
