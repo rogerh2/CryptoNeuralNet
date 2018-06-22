@@ -560,9 +560,14 @@ class DataSet:
     def add_data(self, date_to, retain_length=False):
         #TODO fix duplicate date at append time
         #TODO fix column numbering restart from 0 after append
+        time_del = timedelta(minutes=1)
+        fmt = '%Y-%m-%d %H:%M:%S %Z'
+        from_datetime = datetime.strptime(self.date_to, fmt) + time_del
+        date_from = datetime.strftime(from_datetime, fmt) + 'EST'
         old_fin_table = self.fin_table
-        temp_data_obj = DataSet(self.date_to, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
+        temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
         fin_table_addition = temp_data_obj.fin_table
+        fin_table_addition.index = fin_table_addition.index + np.max(old_fin_table.index.values) + 1
         new_fin_table = old_fin_table.append(fin_table_addition)
 
         if retain_length:
@@ -1606,7 +1611,7 @@ if __name__ == '__main__':
         day = '24'
 
         date_from = "2018-06-15 10:20:00 EST"
-        date_to = "2018-06-21 09:20:00 EST"
+        date_to = "2018-06-22 16:26:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1623,7 +1628,7 @@ if __name__ == '__main__':
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1529515157.386151.h5'
         model_type = 'price' #Don't change this
         use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-20_20:38:00_EST_to_2018-06-20_23:57:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-06-22_16:26:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = False
