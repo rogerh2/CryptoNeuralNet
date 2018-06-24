@@ -30,6 +30,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 
 
+
+
 def convert_time_to_uct(naive_date_from):
     est = pytz.timezone('America/New_York')
     est_date_from = est.localize(naive_date_from)
@@ -1153,9 +1155,14 @@ class NaiveTradingBot(BaseTradingBot):
     buy_history = []
     sell_history = []
     min_usd_balance = 148.47 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    price_ax = None
+    pred_ax = None
     #TODO remove dependence on hourly prediction
+
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
+        plt.ion()
+        self.fig = plt.figure("buy")
         if bitinfo_list is None:
             bitinfo_list = ['eth']
 
@@ -1169,6 +1176,31 @@ class NaiveTradingBot(BaseTradingBot):
         else:
             self.api_base = 'https://api.gdax.com'
             self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
+
+    def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices):
+        full_prediction_times = [dt.strftime('%H:%M') for dt in self.minute_prediction.index]
+        full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
+
+        x_pred = range(off_ind + self.minute_length, len(full_minute_prediction) + off_ind + self.minute_length)
+        x_price = range(off_ind, len(full_minute_prices) + off_ind)
+        n = int((len(full_minute_prediction) + off_ind + self.minute_length)/10)
+        x = range(off_ind, len(full_minute_prediction) + off_ind + self.minute_length, n)
+        all_ticks = full_price_times + full_prediction_times[-(self.minute_length+1)::]
+
+        if self.price_ax is None:
+            self.price_ax = plt.plot(x_price, full_minute_prices, 'b-')
+            self.pred_ax = plt.plot(x_pred, full_minute_prediction, 'r--')
+        else:
+            self.price_ax[0].set_ydata(full_minute_prices)
+            self.pred_ax[0].set_ydata(full_minute_prediction)
+
+        plt.xticks(x, all_ticks[::n])
+
+        plt.legend(('Current', 'Predicted'))
+        plt.title('Normalized Price and Prediction')
+
+        plt.draw()
+        plt.pause(0.1)
 
     def is_jump_in_minute_price_prediction(self, jump_sign): #, confidence_length=1):
 
@@ -1196,14 +1228,17 @@ class NaiveTradingBot(BaseTradingBot):
             current_fit = np.polyfit(neighborhood_prices, test_predictions, 1, full=True)
             current_err = current_fit[1]/len(test_predictions)
 
-            if (current_fit[0][0] > 2*current_err):
+            if ((np.max(neighborhood_prices) - np.min(neighborhood_prices)) > 2*current_err):
                 conf = np.append(conf, [current_err])
                 offsets = np.append(offsets, [ind-window_size])
 
         if len(offsets) > 0:
-          off_ind = offsets[np.argmin(conf)]
+          off_ind = int(offsets[np.argmin(conf)])
+          self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices)
+
         else:
             print('low confidence')
+            self.plot_prediction(0, full_minute_prediction, full_minute_prices)
             return False, None
 
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
@@ -1213,7 +1248,11 @@ class NaiveTradingBot(BaseTradingBot):
         elif jump_sign == 1:
             pred_ind = np.argmin([neighborhood_predictions]) + off_ind
 
-        if pred_ind < 2:
+        mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
+        biggest_diff  = np.max(neighborhood_predictions) - np.min(neighborhood_predictions)
+
+
+        if (pred_ind < 2) & (biggest_diff > 2*mean_diff):
             print(move_type)
             return True, pred_ind
 
@@ -1304,8 +1343,9 @@ class NaiveTradingBot(BaseTradingBot):
 
     def detect_opposing_whale(self, order_book):
         # This looks for whales making the trade opposite mine. It is binary because the algorithm is to take be inactive until the whale is gone or farther up the book
-        first_ten_sizes = [round(float(price[1]), 2) for price in order_book[0:5]]
-        if np.max(first_ten_sizes) > 50:
+        n = 12
+        first_n_sizes = [round(float(price[1]), 2) for price in order_book[0:n]]
+        if np.max(first_n_sizes) > 50:
             return True
         else:
             return False
@@ -1394,7 +1434,7 @@ class NaiveTradingBot(BaseTradingBot):
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         last_training_time = 0
-        cutoff_time = current_time + 1*3600
+        cutoff_time = current_time + 9*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         hold_eth = False
         whale_watch = False
@@ -1489,7 +1529,7 @@ class NaiveTradingBot(BaseTradingBot):
                         if (current_price != trade_price) & (opposite_sign*(price-trade_price)>0):
                             print('opposing whale')
                             self.auth_client.cancel_all(product=self.product_id)
-                            self.trade_limit(opposite_trigger)#, trade_price=trade_price)
+                            self.trade_limit(opposite_trigger, trade_price=trade_price)
 
                 if whale_watch:
                     if trigger == 'sell':
@@ -1523,8 +1563,21 @@ class NaiveTradingBot(BaseTradingBot):
         print('fin')
 
 
-# TODO eliminate unnecessary legacy variables from run_neural_net and CryptoPredict
+def increase_saved_dataset_length(date_from, og_to_date, original_ds_path, date_to, time_units='minutes'):
+    with open(original_ds_path, 'rb') as ds_file:
+        saved_table = pickle.load(ds_file)
 
+    data_obj = DataSet(date_from=date_from, date_to=og_to_date, prediction_length=30, bitinfo_list=['eth'], prediction_ticker='ETH', time_units='min', fin_table=saved_table, aggregate=1)
+    data_obj.add_data(date_to)
+
+    table_file_name = '_' + time_units + '_from_' + date_from + '_to_' + date_to + '.pickle'
+    table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + table_file_name.replace(' ', '_')
+
+    with open(table_file_name, 'wb') as cp_file_handle:
+        pickle.dump(data_obj.fin_table, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+# TODO eliminate unnecessary legacy variables from run_neural_net and CryptoPredict
 def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None, save_test_model=True, test_saved_model=False, layer_count=3, batch_size=96, neuron_grid=None):
 
     #This creates a CoinPriceModel and saves the data
@@ -1573,7 +1626,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 2
+    code_block = 3
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1618,8 +1671,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-22 16:26:00 EST"
-        date_to = "2018-06-22 18:57:00 EST"
+        date_from = "2018-06-23 09:26:00 EST"
+        date_to = "2018-06-23 10:38:00 EST"
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1633,10 +1686,10 @@ if __name__ == '__main__':
         neuron_grid = None#[100, 100, 100, 100, 100]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_4epochs1529714785.400433.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1529714748.717544.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-06-22_16:26:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-06-23_09:26:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
@@ -1646,11 +1699,9 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_101neurons_1epochs1529548741.491931.h5'
-        naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
-                                    api_key='redacted',
-                                    secret_key='redacted',
-                                    passphrase='redacted', is_sandbox_api=True, minute_len=30)
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1529714748.717544.h5'
+
+
 
         naive_bot.continuous_monitoring()
         #Another great unit test
