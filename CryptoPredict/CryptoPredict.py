@@ -1181,6 +1181,14 @@ class NaiveTradingBot(BaseTradingBot):
         full_prediction_times = [dt.strftime('%H:%M') for dt in self.minute_prediction.index]
         full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
 
+        min_price = np.min(full_minute_prices)
+        min_pred = np.min(full_minute_prediction)
+        max_price = np.max(full_minute_prices)
+        max_pred = np.max(full_minute_prediction)
+
+        ymin = np.min(np.array([min_price, min_pred]))
+        ymax = np.max(np.array([max_price, max_pred]))
+
         x_pred = range(off_ind + self.minute_length, len(full_minute_prediction) + off_ind + self.minute_length)
         x_price = range(off_ind, len(full_minute_prices) + off_ind)
         n = int((len(full_minute_prediction) + off_ind + self.minute_length)/10)
@@ -1194,6 +1202,7 @@ class NaiveTradingBot(BaseTradingBot):
             self.price_ax[0].set_ydata(full_minute_prices)
             self.pred_ax[0].set_ydata(full_minute_prediction)
 
+        plt.ylim((ymin, ymax))
         plt.xticks(x, all_ticks[::n])
 
         plt.legend(('Current', 'Predicted'))
@@ -1701,7 +1710,10 @@ if __name__ == '__main__':
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
         minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1529714748.717544.h5'
 
-
+        naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
+                                    api_key='redacted',
+                                    secret_key='redacted',
+                                    passphrase='redacted', is_sandbox_api=True, minute_len=30)
 
         naive_bot.continuous_monitoring()
         #Another great unit test
