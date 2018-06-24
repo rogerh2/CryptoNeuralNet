@@ -1190,9 +1190,9 @@ class NaiveTradingBot(BaseTradingBot):
         ymax = np.max(np.array([max_price, max_pred]))
 
         x_pred = range(off_ind + self.minute_length, len(full_minute_prediction) + off_ind + self.minute_length)
-        x_price = range(off_ind, len(full_minute_prices) + off_ind)
-        n = int((len(full_minute_prediction) + off_ind + self.minute_length)/10)
-        x = range(off_ind, len(full_minute_prediction) + off_ind + self.minute_length, n)
+        x_price = range(0, len(full_minute_prices))
+        n = int((len(full_minute_prediction) + off_ind + self.minute_length)/5)
+        x = range(0, len(full_minute_prediction) + off_ind + self.minute_length, n)
         all_ticks = full_price_times + full_prediction_times[-(self.minute_length+1)::]
 
         if self.price_ax is None:
@@ -1224,7 +1224,7 @@ class NaiveTradingBot(BaseTradingBot):
         full_minute_prediction = self.minute_prediction.values[::, 0]
         full_minute_prices = self.minute_price.values[::, 0]
         window_size = 13
-        current_minute_prediction = full_minute_prediction[-(self.minute_length+1):-(self.minute_length-3)] #This is the prediction for the future
+        current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
 
         neighborhood_prices = full_minute_prices[-window_size::]
         all_test_predictions = full_minute_prediction[-(self.minute_length+2*window_size):-(self.minute_length-window_size)]
@@ -1251,11 +1251,11 @@ class NaiveTradingBot(BaseTradingBot):
             return False, None
 
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
-        neighborhood_predictions = current_minute_prediction[0:window_size]
+        neighborhood_predictions = current_minute_prediction
         if jump_sign == -1:
-            pred_ind = np.argmax([neighborhood_predictions]) + off_ind
+            pred_ind = np.argmax([neighborhood_predictions]) - off_ind
         elif jump_sign == 1:
-            pred_ind = np.argmin([neighborhood_predictions]) + off_ind
+            pred_ind = np.argmin([neighborhood_predictions]) - off_ind
 
         mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
         biggest_diff  = np.max(neighborhood_predictions) - np.min(neighborhood_predictions)
@@ -1635,7 +1635,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 3
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1680,8 +1680,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = "2018-06-23 09:26:00 EST"
-        date_to = "2018-06-23 10:38:00 EST"
+        date_from = '2018-06-24 11:09:00 EST'
+        date_to = '2018-06-24 12:39:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1695,10 +1695,10 @@ if __name__ == '__main__':
         neuron_grid = None#[100, 100, 100, 100, 100]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1529714748.717544.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_5epochs1529872379.379621.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-06-23_09:26:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-24_06:39:00_EST_to_2018-06-24_12:39:00_EST.pickle'
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
