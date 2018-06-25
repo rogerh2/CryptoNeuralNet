@@ -698,10 +698,9 @@ class CoinPriceModel:
         #This is for live model weight updates
         self.create_arrays(5, model_type='price')
         estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
-
+        self.model.reset_states()
         self.model.fit(self.input, self.output, epochs=self.epochs, batch_size=96, verbose=2,
                               shuffle=False, validation_split=0.25, callbacks=[estop])
-        self.model.reset_states()
 
     def test_model(self, did_train=True, show_plots=True, min_distance_between_trades=0, model_type='price'):
         if did_train:
@@ -1212,7 +1211,6 @@ class NaiveTradingBot(BaseTradingBot):
         plt.pause(0.1)
 
     def is_jump_in_minute_price_prediction(self, jump_sign): #, confidence_length=1):
-
         #confidence_length is how many minutes the jump must hold for -1
         #jump_sign should be +-1, -1 for negative jumps and +1 for positive
 
@@ -1242,8 +1240,8 @@ class NaiveTradingBot(BaseTradingBot):
                 offsets = np.append(offsets, [ind-window_size])
 
         if len(offsets) > 0:
-          off_ind = int(offsets[np.argmin(conf)])
-          self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices)
+            off_ind = -int(offsets[np.argmin(conf)])
+            self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices)
 
         else:
             print('low confidence')
@@ -1253,45 +1251,20 @@ class NaiveTradingBot(BaseTradingBot):
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
         neighborhood_predictions = current_minute_prediction
         if jump_sign == -1:
-            pred_ind = np.argmax([neighborhood_predictions]) - off_ind
+            pred_ind = np.argmax([neighborhood_predictions]) + off_ind
         elif jump_sign == 1:
-            pred_ind = np.argmin([neighborhood_predictions]) - off_ind
+            pred_ind = np.argmin([neighborhood_predictions]) + off_ind
 
         mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
         biggest_diff  = np.max(neighborhood_predictions) - np.min(neighborhood_predictions)
 
 
-        if (pred_ind < 2) & (biggest_diff > 2*mean_diff):
+        if (pred_ind > 1) & (pred_ind < 3) & (biggest_diff > 2*mean_diff):
             print(move_type)
             return True, pred_ind
 
         print('no peak')
         return False, None
-
-        #
-        #
-        # for diff_ind in range(0, len(minute_difference)):
-        #     pred_ind = diff_ind + 1 #np.diff shortens the array by 1
-        #     mean_diff_before_jump = np.mean(minute_difference[0:(diff_ind+1)])
-        #     if minute_difference[diff_ind] > 4 * mean_diff_before_jump:
-        #         if len(current_minute_prediction) > (pred_ind + confidence_length):
-        #             if jump_sign == 1:
-        #                 min_during_jump = np.min(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
-        #                 is_jump_convincing = [min_during_jump > (mean_diff_before_jump + x) for x in previous_prediction]
-        #             elif jump_sign == -1:
-        #                 max_during_jump = np.max(current_minute_prediction[pred_ind:(pred_ind + confidence_length)])
-        #                 is_jump_convincing = [max_during_jump < (mean_diff_before_jump + x) for x in previous_prediction]
-        #             if all(is_jump_convincing):
-        #                 print('jump ' + move_type)
-        #                 return True, pred_ind
-        #
-        #                 # This if statement and the one below check for general trends while the one above checks for jumps
-        # if np.abs(np.sum(minute_difference)) > (2 * np.std(np.abs(minute_difference)) + np.mean(np.abs(minute_difference))):
-        #     if jump_sign * np.sum(minute_difference) > 0:
-        #         print('meander ' + move_type)
-        #         return True, len(full_minute_prediction)  # returns the largest number possible for the index because jumps supercede general trends (see trade logic)
-        #
-        # return False, None
 
     def time_out_check(self, order_dict):
         first_order_dict_entry = list(order_dict.keys())[0]
@@ -1344,7 +1317,7 @@ class NaiveTradingBot(BaseTradingBot):
 
     def detect_whale_position(self, order_book):
         #This looks for whales making the same trade as myself. If they are doing so, it trades behind them (in case they leave)
-        prices = [round(float(price[1]), 2) > 100 for price in order_book]
+        prices = [round(float(price[1]), 2) > 75 for price in order_book]
         if np.sum(prices) > 0:
             return np.argmax(prices)
         else:
@@ -1352,9 +1325,9 @@ class NaiveTradingBot(BaseTradingBot):
 
     def detect_opposing_whale(self, order_book):
         # This looks for whales making the trade opposite mine. It is binary because the algorithm is to take be inactive until the whale is gone or farther up the book
-        n = 12
+        n = 10
         first_n_sizes = [round(float(price[1]), 2) for price in order_book[0:n]]
-        if np.max(first_n_sizes) > 50:
+        if np.max(first_n_sizes) > 75:
             return True
         else:
             return False
@@ -1449,6 +1422,7 @@ class NaiveTradingBot(BaseTradingBot):
         whale_watch = False
         last_price = 0
         while current_time < cutoff_time:
+            #TODO break up tasks in this loop into different methods
             if (current_time > (last_check + 1.2*60)) & (current_time < (last_training_time + 1*3600)):
                 last_check = current_time
                 order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
@@ -1476,6 +1450,7 @@ class NaiveTradingBot(BaseTradingBot):
                             should_stop_loop = self.trade_limit('sell')
                         time.sleep(0.5)
                         current_trade_time = datetime.utcnow().timestamp()
+                        whale_watch = False
 
             elif current_time > (last_training_time + 1*3600):
                 #In theory this should retrain the model every hour
@@ -1491,8 +1466,9 @@ class NaiveTradingBot(BaseTradingBot):
 
                 self.minute_cp.update_model_training()
             else:
-                #TODO finish this statement, should detect whales and trade accordingly
+                #TODO ensure bot updates trades after missing inflection
                 time.sleep(1) #avoid timeouts
+                #TODO inspect this error json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
                 order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
                 usd_wallet, crypto_wallet = self.get_wallet_contents()
                 if hold_eth:
@@ -1523,6 +1499,7 @@ class NaiveTradingBot(BaseTradingBot):
                 opposing_whale = self.detect_opposing_whale(order_dict[order_type])
 
                 if (balance > 0) & (whale_position is not None) & (not opposing_whale):
+                    #TODO have whale trades move with whale
                     if whale_position < 9:
                         trade_price = round(whale_price + opposite_sign*(0.05 - 0.04*(whale_position < 5)), 2)
                         time.sleep(1)
@@ -1542,11 +1519,15 @@ class NaiveTradingBot(BaseTradingBot):
 
                 if whale_watch:
                     if trigger == 'sell':
-                        if (price < last_price) & (whale_position > 9):
+                        if (whale_position > 9):
                             whale_watch = False
                     else:
-                        if (price > last_price) & (whale_position > 9):
+                        if (whale_position > 9):
                             whale_watch = False
+
+                    current_orders = self.auth_client.get_orders()[0]
+                    if (len(current_orders) > 0) & (whale_position > 9):
+                        self.auth_client.cancel_all(product=self.product_id)
 
 
                 elif (opposite_balance > 0) & (not whale_watch):
@@ -1680,8 +1661,9 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = '2018-06-24 11:09:00 EST'
-        date_to = '2018-06-24 12:39:00 EST'
+        date_from = '2018-06-25 08:14:00 EST'
+
+        date_to = '2018-06-25 08:57:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1695,11 +1677,10 @@ if __name__ == '__main__':
         neuron_grid = None#[100, 100, 100, 100, 100]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_5epochs1529872379.379621.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_5epochs1529945394.305619.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-24_06:39:00_EST_to_2018-06-24_12:39:00_EST.pickle'
-        #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-05-25_8:00:00_EST_to_2018-05-31_18:00:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-06-25_08:42:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
