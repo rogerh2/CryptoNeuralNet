@@ -1181,7 +1181,7 @@ class NaiveTradingBot(BaseTradingBot):
         full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
 
         off_set = off_ind + self.minute_length
-        new_prediction_mean = np.mean(full_minute_prices[-off_set::]) - np.mean(full_minute_prediction[-off_set::])
+        new_prediction_mean = np.mean(full_minute_prices[-off_set::]) - np.mean(full_minute_prediction[0:off_set])
 
         min_price = np.min(full_minute_prices)
         min_pred = np.min(full_minute_prediction + new_prediction_mean)
@@ -1219,7 +1219,7 @@ class NaiveTradingBot(BaseTradingBot):
     def is_jump_in_minute_price_prediction(self, jump_sign): #, confidence_length=1):
         #confidence_length is how many minutes the jump must hold for -1
         #jump_sign should be +-1, -1 for negative jumps and +1 for positive
-
+        #TODO increase strategy complexity
         if jump_sign == 1:
             move_type = 'low peak'
         elif jump_sign == -1:
@@ -1227,8 +1227,8 @@ class NaiveTradingBot(BaseTradingBot):
 
         full_minute_prediction = self.minute_prediction.values[::, 0]
         full_minute_prices = self.minute_price.values[::, 0]
-        window_size = 15
-        shift_size = 10
+        window_size = 25
+        shift_size = 15
         current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
 
         neighborhood_prices = full_minute_prices[-window_size::]
@@ -1261,16 +1261,22 @@ class NaiveTradingBot(BaseTradingBot):
 
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
         neighborhood_predictions = full_minute_prediction[-(self.minute_length+1+off_ind)::]
+        max_prediction = np.max(neighborhood_predictions)
+        min_prediction = np.min(neighborhood_predictions)
+        full_width = max_prediction-min_prediction
+        current_prediction = neighborhood_predictions[0]
         if jump_sign == -1:
+            target_prediction = max_prediction
             pred_ind = np.argmax([neighborhood_predictions])
         elif jump_sign == 1:
+            target_prediction = min_prediction
             pred_ind = np.argmin([neighborhood_predictions])
 
         mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
-        biggest_diff  = np.max(neighborhood_predictions) - np.min(neighborhood_predictions)
 
+        prediction_check = np.abs(current_prediction - target_prediction)
 
-        if (pred_ind < 2) & (biggest_diff > 2*mean_diff):
+        if (prediction_check < 0.1*full_width) & (full_width > 2*mean_diff):
             print(move_type)
             return True, pred_ind
 
@@ -1429,7 +1435,7 @@ class NaiveTradingBot(BaseTradingBot):
         last_training_time = 0
         cutoff_time = current_time + 9*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
-        hold_eth = False
+        hold_eth = True #TODO change this back to False initially
         whale_watch = False
         last_price = 0
         while current_time < cutoff_time:
@@ -1666,8 +1672,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = '2018-06-25 20:39:00 EST'
-        date_to = '2018-06-25 21:44:00 EST'
+        date_from = '2018-06-26 11:14:00 EST'
+        date_to = '2018-06-26 13:10:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1678,13 +1684,13 @@ if __name__ == '__main__':
         neuron_count = 100
         layer_count = 3
         batch_size = 32
-        neuron_grid = None#[100, 100, 100, 100, 100]
+        neuron_grid = [30]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_65neurons_6epochs1529991755.420841.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Live_Tested_Models/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_5epochs1528792950.546695.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-06-25_21:18:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-26_11:14:00_EST_to_2018-06-26_13:10:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
@@ -1693,7 +1699,7 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_65neurons_6epochs1529991755.420841.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Live_Tested_Models/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_5epochs1528792950.546695.h5'
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                                     api_key='redacted',
