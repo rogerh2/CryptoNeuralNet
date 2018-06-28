@@ -39,6 +39,117 @@ def convert_time_to_uct(naive_date_from):
     utc_date = est_date_from.astimezone(utc)
     return utc_date
 
+def find_trade_strategy_value(buy_bool, sell_bool, all_prices):
+    #This finds how much money was gained from a starting value of $100 given a particular strategy
+    usd_available = 100
+    all_buys = all_prices[buy_bool]
+    all_sells = all_prices[sell_bool]
+    for i in range(0,len(all_buys)):
+        eth_available = usd_available/all_buys[i]
+        usd_available = all_sells[i]*eth_available
+
+    value = usd_available - 100
+
+    return value
+
+def create_single_prediction_column(price_data_frame, n, show_plots=False):
+    #This finds the optimal trading strategy
+    all_times = price_data_frame.index
+    all_prices = price_data_frame.values
+    off_set_price = 0#np.min(all_prices)/2
+    norm_price = np.max(all_prices) - off_set_price
+    eps = 1000.0 #Needs to be float
+    iter = 0 #Counts number of iterations in loop
+    sell_arr = np.zeros((len(price_data_frame), 1))
+    buy_arr = np.zeros((len(price_data_frame), 1))
+    val = 0 #This is the money gained by the chosen strategy
+    should_sell = True #If true the script should look for max, if False it looks for min
+    has_checked_block_counter = n
+    last_sell = 0
+    target_eps = 0.03 #0.03 chosen as the cutoff for eps because that is the highest GDAX fee and because it seems like a reasonable number to get from one buy-sell cycle due to past experience
+    from_n = len(all_times) - n
+    val_arr = np.array([])
+    strategy_dict = {}
+
+    #This loop keeps making new trade strategies until the change in money earned is under eps
+    while (eps > target_eps) & (iter < 1000):
+        if iter > 0:
+            #calculate new final sell
+            ind = np.argwhere(0!=buy_arr)[0][-1]
+            s_ind = np.argwhere(0!=sell_arr)[0][-2]
+            current_price_block = all_prices[ind::]
+            last_sell = np.max(current_price_block)
+            sell_arr = np.zeros((len(price_data_frame), 1))
+            from_n = np.argmax(current_price_block) + ind
+            sell_arr[from_n] = 1#(np.argmax(current_price_block) - off_set_price)/norm_price
+
+            #calculate new final sell
+            buy_arr = np.zeros((len(price_data_frame), 1))
+            current_price_block = all_prices[s_ind:from_n]
+            if len(current_price_block) == 0:
+                return len(current_price_block), len(current_price_block)
+            from_n = np.argmin(current_price_block) + s_ind
+            buy_arr[from_n] = 1#(np.argmin(current_price_block) - off_set_price)/norm_price
+            should_sell = True
+
+
+        for i in range(len(all_times) - from_n, len(all_times) - 2*n):
+            if has_checked_block_counter > 0:
+                has_checked_block_counter -= 1
+                continue
+
+            ind = len(all_times) - i #To optimize we need to start at the end and go back
+            current_price_block = all_prices[(ind-n):ind]
+            next_price_block = all_prices[(ind-2*n):(ind-n)]
+
+            # del_percent_check = (np.max(current_price_block) - np.min(current_price_block))/np.max(current_price_block) #This number needs to be less than 0.03 for this to be considered low volatility enough to trade
+            #
+            # if del_percent_check > 2*target_eps: #From past trades it has been determined that 0.03 is a reasonable number from one trade
+            #     continue
+
+            if should_sell: #This says that the bot should sell at the max and buy at the min
+                current_sell = np.max(current_price_block)
+                next_sell = np.max(next_price_block)
+
+                if (current_sell - next_sell) > 2*target_eps:
+                    sell_arr[np.argmax(current_price_block) + (ind-n)] = 1#(current_sell - off_set_price)/norm_price
+                    last_sell = np.max(current_price_block)
+                    should_sell = False
+                    has_checked_block_counter = n
+            else:
+                buy_price = np.min(current_price_block)
+                next_buy = np.min(next_price_block)
+                if ((last_sell - buy_price) > 2*target_eps) & ((next_buy - buy_price) > 2*target_eps):
+                    should_sell = True
+                    buy_arr[np.argmin(current_price_block) + (ind-n)] = 1#(buy_price - off_set_price)/norm_price #These statements do not have off by one errors because python indexes from 0
+                    has_checked_block_counter = n
+
+        sell_arr[(buy_arr!=0).argmax()] = 0 #This always starts with a buy and ends with a sell
+
+        sell_bool = [x[0] != 0 for x in sell_arr] #must add [0] or else each x will be a seperate array and unindexable
+        buy_bool = [x[0] != 0 for x in buy_arr]
+        val_new = find_trade_strategy_value(buy_bool, sell_bool, all_prices) #This calculates the money earned
+        val_arr = np.hstack((val_arr, val_new))
+        strategy_dict[iter] = {'buy':buy_arr, 'sell':sell_arr}
+        eps = np.abs(val_new - val)
+        print('on iteration ' + str(iter) + ' with trade value of ' + str(val_new))
+        val = val_new
+        iter += 1
+
+    best_strategy_ind = val_arr.argmax()
+    fin_buy_arr = strategy_dict[best_strategy_ind]['buy']
+    fin_sell_arr = strategy_dict[best_strategy_ind]['sell']
+
+    if show_plots:
+        #set show_plots to true for debug only
+        #TODO make plot for all the data show minutes
+        plt.plot(all_times[sell_bool], all_prices[sell_bool], 'rx')
+        plt.plot(all_times[buy_bool], all_prices[buy_bool], 'gx')
+        plt.plot(all_times, all_prices, 'b--')
+        plt.show()
+    else:
+        return fin_sell_arr, fin_buy_arr
+
 class CryptoCompare:
 
     comparison_symbols = ['USD']
@@ -238,7 +349,6 @@ class CryptoCompare:
 class DataSet:
     prediction_length=1
 
-
     def __init__(self, date_from, date_to, prediction_length=None, bitinfo_list = None, prediction_ticker ='ltc', time_units='hours', fin_table=None, aggregate=1, news_hourly_offset=5):
         if bitinfo_list is None:
             bitinfo_list = ['btc', 'eth']
@@ -370,115 +480,6 @@ class DataSet:
         data_frame = fin_table.set_index('date')
         self.final_table = data_frame[(data_frame.index <= self.date_to)]
 
-    def find_trade_strategy_value(self, buy_bool, sell_bool, all_prices):
-        #This finds how much money was gained from a starting value of $100 given a particular strategy
-        usd_available = 100
-        all_buys = all_prices[buy_bool]
-        all_sells = all_prices[sell_bool]
-        for i in range(0,len(all_buys)):
-            eth_available = usd_available/all_buys[i]
-            usd_available = all_sells[i]*eth_available
-
-        value = usd_available - 100
-
-        return value
-
-    def create_single_prediction_column(self, price_data_frame, n, show_plots=False):
-        #This finds the optimal trading strategy
-        all_times = price_data_frame.index
-        all_prices = price_data_frame.values
-        off_set_price = 0#np.min(all_prices)/2
-        norm_price = np.max(all_prices) - off_set_price
-        eps = 1000.0 #Needs to be float
-        iter = 0 #Counts number of iterations in loop
-        sell_arr = np.zeros((len(price_data_frame), 1))
-        buy_arr = np.zeros((len(price_data_frame), 1))
-        val = 0 #This is the money gained by the chosen strategy
-        should_sell = True #If true the script should look for max, if False it looks for min
-        has_checked_block_counter = n
-        last_sell = 0
-        target_eps = 0.03 #0.03 chosen as the cutoff for eps because that is the highest GDAX fee and because it seems like a reasonable number to get from one buy-sell cycle due to past experience
-        from_n = len(all_times) - n
-        val_arr = np.array([])
-        strategy_dict = {}
-
-        #This loop keeps making new trade strategies until the change in money earned is under eps
-        while (eps > target_eps) & (iter < 1000):
-            if iter > 0:
-                #calculate new final sell
-                ind = np.argwhere(0!=buy_arr)[-1][0]
-                s_ind = np.argwhere(0!=sell_arr)[-2][0]
-                current_price_block = all_prices[ind::]
-                last_sell = np.max(current_price_block)
-                sell_arr = np.zeros((len(price_data_frame), 1))
-                from_n = np.argmax(current_price_block) + ind
-                sell_arr[from_n] = 1#(np.argmax(current_price_block) - off_set_price)/norm_price
-
-                #calculate new final sell
-                buy_arr = np.zeros((len(price_data_frame), 1))
-                current_price_block = all_prices[s_ind:from_n]
-                from_n = np.argmin(current_price_block) + s_ind
-                buy_arr[from_n] = 1#(np.argmin(current_price_block) - off_set_price)/norm_price
-                should_sell = True
-
-
-            for i in range(len(all_times) - from_n, len(all_times) - 2*n):
-                if has_checked_block_counter > 0:
-                    has_checked_block_counter -= 1
-                    continue
-
-                ind = len(all_times) - i #To optimize we need to start at the end and go back
-                current_price_block = all_prices[(ind-n):ind]
-                next_price_block = all_prices[(ind-2*n):(ind-n)]
-
-                # del_percent_check = (np.max(current_price_block) - np.min(current_price_block))/np.max(current_price_block) #This number needs to be less than 0.03 for this to be considered low volatility enough to trade
-                #
-                # if del_percent_check > 2*target_eps: #From past trades it has been determined that 0.03 is a reasonable number from one trade
-                #     continue
-
-                if should_sell: #This says that the bot should sell at the max and buy at the min
-                    current_sell = np.max(current_price_block)
-                    next_sell = np.max(next_price_block)
-
-                    if (current_sell - next_sell) > 2*target_eps:
-                        sell_arr[np.argmax(current_price_block) + (ind-n)] = 1#(current_sell - off_set_price)/norm_price
-                        last_sell = np.max(current_price_block)
-                        should_sell = False
-                        has_checked_block_counter = n
-                else:
-                    buy_price = np.min(current_price_block)
-                    next_buy = np.min(next_price_block)
-                    if ((last_sell - buy_price) > 2*target_eps) & ((next_buy - buy_price) > 2*target_eps):
-                        should_sell = True
-                        buy_arr[np.argmin(current_price_block) + (ind-n)] = 1#(buy_price - off_set_price)/norm_price #These statements do not have off by one errors because python indexes from 0
-                        has_checked_block_counter = n
-
-            sell_arr[(buy_arr!=0).argmax()] = 0 #This always starts with a buy and ends with a sell
-
-            sell_bool = [x[0] != 0 for x in sell_arr] #must add [0] or else each x will be a seperate array and unindexable
-            buy_bool = [x[0] != 0 for x in buy_arr]
-            val_new = self.find_trade_strategy_value(buy_bool, sell_bool, all_prices) #This calculates the money earned
-            val_arr = np.hstack((val_arr, val_new))
-            strategy_dict[iter] = {'buy':buy_arr, 'sell':sell_arr}
-            eps = np.abs(val_new - val)
-            print('on iteration ' + str(iter) + ' with trade value of ' + str(val_new))
-            val = val_new
-            iter += 1
-
-        best_strategy_ind = val_arr.argmax()
-        fin_buy_arr = strategy_dict[best_strategy_ind]['buy']
-        fin_sell_arr = strategy_dict[best_strategy_ind]['sell']
-
-        if show_plots:
-            #set show_plots to true for debug only
-            #TODO make plot for all the data show minutes
-            plt.plot(all_times[sell_bool], all_prices[sell_bool], 'rx')
-            plt.plot(all_times[buy_bool], all_prices[buy_bool], 'gx')
-            plt.plot(all_times, all_prices, 'b--')
-            plt.show()
-        else:
-            return fin_sell_arr, fin_buy_arr
-
     def create_buy_sell_prediction_frame(self, m):
         cryp_obj = self.cryp_obj
         cryp_obj.symbol = self.prediction_ticker
@@ -487,7 +488,7 @@ class DataSet:
         #price_data_frame = price_data_frame.drop(columns=[sym.upper() + '_close', sym.upper() + '_low', sym.upper() + '_open', sym.upper() + '_volumefrom', sym.upper() + '_volumeto'])
         #price_data_frame = price_data_frame.set_index('date')
 
-        sell_column, buy_column = self.create_single_prediction_column(price_data_frame, m)
+        sell_column, buy_column = create_single_prediction_column(price_data_frame, m)
         price = self.fin_table[sym.upper()+'_high'].values
 
         # This for loop spreads out decisions so that trades that are coming within five minutes are seen
@@ -1156,6 +1157,8 @@ class NaiveTradingBot(BaseTradingBot):
     min_usd_balance = 148.47 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     price_ax = None
     pred_ax = None
+    buy_ax = None
+    sell_ax = None
     #TODO remove dependence on hourly prediction
 
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -1176,7 +1179,7 @@ class NaiveTradingBot(BaseTradingBot):
             self.api_base = 'https://api.gdax.com'
             self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
-    def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices):
+    def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices, buy_inds, sell_inds):
         full_prediction_times = [dt.strftime('%H:%M') for dt in self.minute_prediction.index]
         full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
 
@@ -1200,11 +1203,17 @@ class NaiveTradingBot(BaseTradingBot):
 
         if self.price_ax is None:
             self.price_ax = plt.plot(x_price, full_minute_prices, 'b-')
-            self.pred_ax = plt.plot(x_pred, full_minute_prediction + new_prediction_mean, 'r--')
+            self.pred_ax = plt.plot(x_pred, full_minute_prediction + new_prediction_mean, 'b--')
+            self.sell_ax = plt.plot(sell_inds + 2*self.minute_length, full_minute_prediction[sell_inds + off_set] + new_prediction_mean, 'rx')
+            self.buy_ax = plt.plot(buy_inds + 2*self.minute_length, full_minute_prediction[buy_inds + off_set] + new_prediction_mean, 'gx')
         else:
             self.price_ax[0].set_ydata(full_minute_prices)
             self.pred_ax[0].set_ydata(full_minute_prediction + new_prediction_mean)
             self.pred_ax[0].set_xdata(x_pred)
+            self.buy_ax[0].set_ydata(full_minute_prediction[buy_inds + off_set] + new_prediction_mean)
+            self.buy_ax[0].set_xdata(buy_inds + 2*self.minute_length)
+            self.sell_ax[0].set_ydata(full_minute_prediction[sell_inds + off_set] + new_prediction_mean)
+            self.sell_ax[0].set_xdata(sell_inds + 2*self.minute_length)
 
         plt.ylim((ymin, ymax))
         plt.xlim((x[0], x[-1]))
@@ -1228,7 +1237,7 @@ class NaiveTradingBot(BaseTradingBot):
         full_minute_prediction = self.minute_prediction.values[::, 0]
         full_minute_prices = self.minute_price.values[::, 0]
         window_size = 25
-        shift_size = 15
+        shift_size = 5
         current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
 
         neighborhood_prices = full_minute_prices[-window_size::]
@@ -1252,25 +1261,33 @@ class NaiveTradingBot(BaseTradingBot):
 
         if len(offsets) > 0:
             off_ind = -int(offsets[np.argmin(conf)])
-            self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices)
 
         else:
             print('low confidence')
-            self.plot_prediction(0, full_minute_prediction, full_minute_prices)
+            self.plot_prediction(0, full_minute_prediction, full_minute_prices, np.array([0]), np.array([0]))
             return False, None
+
 
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
         neighborhood_predictions = full_minute_prediction[-(self.minute_length+1+off_ind)::]
+        neighborhood_prediction_frame = pd.DataFrame(data=neighborhood_predictions)
+        sell_column, buy_column = create_single_prediction_column(neighborhood_prediction_frame, 5) #The second input is how many minutes to space between trades
+        sell_inds = np.nonzero(sell_column)[0]
+        buy_inds = np.nonzero(buy_column)[0]
+        if len(buy_inds) == 0:
+            buy_inds = 0
+        self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, buy_inds+1+off_ind, sell_inds+1+off_ind)
+
         max_prediction = np.max(neighborhood_predictions)
         min_prediction = np.min(neighborhood_predictions)
         full_width = max_prediction-min_prediction
         current_prediction = neighborhood_predictions[0]
         if jump_sign == -1:
-            target_prediction = max_prediction
-            pred_ind = np.argmax([neighborhood_predictions])
+            pred_ind = sell_inds[0]
+            target_prediction = neighborhood_predictions[pred_ind]
         elif jump_sign == 1:
-            target_prediction = min_prediction
-            pred_ind = np.argmin([neighborhood_predictions])
+            pred_ind = buy_inds[0]
+            target_prediction = neighborhood_predictions[pred_ind]
 
         mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
 
@@ -1435,7 +1452,7 @@ class NaiveTradingBot(BaseTradingBot):
         last_training_time = 0
         cutoff_time = current_time + 9*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
-        hold_eth = True #TODO change this back to False initially
+        hold_eth = False
         whale_watch = False
         last_price = 0
         while current_time < cutoff_time:
