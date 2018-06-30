@@ -1182,8 +1182,7 @@ class NaiveTradingBot(BaseTradingBot):
             self.api_base = 'https://api.gdax.com'
             self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
-    def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices, buy_inds, sell_inds):
-        #TODO plot value of past buys and sells on actual price data
+    def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices, buy_inds, sell_inds, pred_buy_inds, pred_sell_inds):
         full_prediction_times = [dt.strftime('%H:%M') for dt in self.minute_prediction.index]
         full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
 
@@ -1207,18 +1206,26 @@ class NaiveTradingBot(BaseTradingBot):
         x = range(0, len(full_minute_prediction) + off_ind + self.minute_length + n, n)
         all_ticks = full_price_times + full_prediction_times[-(self.minute_length+1)::]
 
+        sell_pred_values = full_minute_prediction[pred_sell_inds + reverse_offset] + new_prediction_mean
+        sell_price_values = full_minute_prices[sell_inds[0:-len(pred_sell_inds)]+off_set]
+        sell_values = np.hstack((sell_price_values, sell_pred_values))
+
+        buy_pred_values = full_minute_prediction[pred_buy_inds + reverse_offset] + new_prediction_mean
+        buy_price_values = full_minute_prices[buy_inds[0:-len(pred_buy_inds)]+off_set]
+        buy_values = np.hstack((buy_price_values, buy_pred_values))
+
         if self.price_ax is None:
             self.price_ax = plt.plot(x_price, full_minute_prices, 'b-')
             self.pred_ax = plt.plot(x_pred, full_minute_prediction + new_prediction_mean, 'b--')
-            self.sell_ax = plt.plot(sell_inds + off_set, full_minute_prediction[sell_inds] + new_prediction_mean, 'rx')
-            self.buy_ax = plt.plot(buy_inds + off_set, full_minute_prediction[buy_inds] + new_prediction_mean, 'gx')
+            self.sell_ax = plt.plot(sell_inds + off_set, sell_values, 'rx')
+            self.buy_ax = plt.plot(buy_inds + off_set, buy_values, 'gx')
         else:
             self.price_ax[0].set_ydata(full_minute_prices)
             self.pred_ax[0].set_ydata(full_minute_prediction + new_prediction_mean)
             self.pred_ax[0].set_xdata(x_pred)
-            self.buy_ax[0].set_ydata(full_minute_prediction[buy_inds] + new_prediction_mean)
+            self.buy_ax[0].set_ydata(sell_values)
             self.buy_ax[0].set_xdata(buy_inds + off_set)
-            self.sell_ax[0].set_ydata(full_minute_prediction[sell_inds] + new_prediction_mean)
+            self.sell_ax[0].set_ydata(buy_values)
             self.sell_ax[0].set_xdata(sell_inds + off_set)
 
         plt.ylim((ymin, ymax))
@@ -1234,7 +1241,6 @@ class NaiveTradingBot(BaseTradingBot):
     def is_jump_in_minute_price_prediction(self, jump_sign): #, confidence_length=1):
         #confidence_length is how many minutes the jump must hold for -1
         #jump_sign should be +-1, -1 for negative jumps and +1 for positive
-        #TODO increase strategy complexity
         if jump_sign == 1:
             move_type = 'low peak'
         elif jump_sign == -1:
@@ -1261,7 +1267,6 @@ class NaiveTradingBot(BaseTradingBot):
             rmse = np.sum(sqaured_predictions)
 
             if (rmse > 1.1*current_err):
-                #TODO fix error handling
                 conf = np.append(conf, [current_err])
                 offsets = np.append(offsets, [ind-shift_size])
 
@@ -1280,17 +1285,20 @@ class NaiveTradingBot(BaseTradingBot):
         sell_column, buy_column = create_single_prediction_column(full_prediction_frame, 3) #The second input is how many minutes to space between trades
         full_sell_inds = np.nonzero(sell_column)[0]
         full_buy_inds = np.nonzero(buy_column)[0]
+
+        #TODO Set the current decision to be the same as the last decision would have been if the last decision was missed
+
         sell_inds = np.nonzero(sell_column[-(self.minute_length+1+off_ind)::])[0]
         buy_inds = np.nonzero(buy_column[-(self.minute_length+1+off_ind)::])[0]
         if ((len(buy_inds) == 0) & (len(sell_inds) == 0)) or (len(sell_inds) == 0):
-            self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, np.array([0]),
+            self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, np.array([0]),
                                  np.array([0]))
             print('no trades')
             return False, None
         elif len(buy_inds) == 0:
             buy_inds = np.array([0])
 
-        self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds)
+        self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, buy_inds, sell_inds)
 
         max_prediction = np.max(neighborhood_predictions)
         min_prediction = np.min(neighborhood_predictions)
