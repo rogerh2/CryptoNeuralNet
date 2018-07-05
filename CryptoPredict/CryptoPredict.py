@@ -42,16 +42,74 @@ def convert_time_to_uct(naive_date_from):
 def find_trade_strategy_value(buy_bool, sell_bool, all_prices):
     #This finds how much money was gained from a starting value of $100 given a particular strategy
     usd_available = 100
+    eth_available = 0
+
     all_buys = all_prices[buy_bool]
     all_sells = all_prices[sell_bool]
-    for i in range(0,len(all_buys)):
-        eth_available = usd_available/all_buys[i]
-        usd_available = all_sells[i]*eth_available
+    b = 0
+    s = 0
 
-    value = usd_available - 100
+    if len(all_sells) > len(all_buys):
+        usd_available = all_prices[all_sells[0]]
+
+    for i in range(0,len(sell_bool)):
+        if buy_bool[i]:
+            if (usd_available > 0):
+                eth_available = usd_available/all_buys[b]
+                usd_available = 0
+            b += 1
+        elif sell_bool[i]:
+            if (eth_available > 0):
+                usd_available = all_sells[s]*eth_available
+                eth_available = 0
+            s += 1
+
+    if usd_available > 0:
+        value = usd_available - 100
+    else:
+        value = all_prices[-1]*eth_available - 100
 
     return value
 
+def find_optimal_trade_strategy(data, show_plots=False, min_price_jump = 1.0001):
+    buy_array = np.zeros(len(data))
+    sell_array = np.zeros(len(data))
+    all_times = np.arange(0,len(data))
+    data_len = len(data)
+    price_is_rising = None
+    for i in range(data_len):
+        ind = data_len - i -1
+        current_price = data[ind]
+        prior_price = data[ind-1]
+        bool_price_test = current_price > prior_price
+
+        if price_is_rising is None:
+            price_is_rising = bool_price_test
+            last_inflection_price = current_price
+        else:
+            if bool_price_test != price_is_rising: # != acts as an xor gate
+                if price_is_rising:
+                    if current_price*min_price_jump < last_inflection_price:
+                        buy_array[ind] = 1
+                else:
+                    if current_price/min_price_jump > last_inflection_price:
+                        sell_array[ind] = 1
+                last_inflection_price = current_price
+                price_is_rising = bool_price_test
+
+    buy_bool = [bool(x) for x in buy_array]
+    sell_bool = [bool(x) for x in sell_array]
+    if show_plots:
+        gain = find_trade_strategy_value(buy_bool, sell_bool, data)
+        plt.plot(all_times[sell_bool], data[sell_bool], 'rx')
+        plt.plot(all_times[buy_bool], data[buy_bool], 'gx')
+        plt.plot(data)
+        plt.title('$'+str(gain))
+        plt.show()
+    else:
+        return sell_bool, buy_bool
+
+#TODO get rid of create_single_prediction_column
 def create_single_prediction_column(price_data_frame, n, show_plots=False):
     #This finds the optimal trading strategy
     all_times = price_data_frame.index
@@ -1282,7 +1340,7 @@ class NaiveTradingBot(BaseTradingBot):
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
         neighborhood_predictions = full_minute_prediction[-(self.minute_length+1+off_ind)::]
         full_prediction_frame = pd.DataFrame(data=full_minute_prediction)
-        sell_column, buy_column = create_single_prediction_column(full_prediction_frame, 3) #The second input is how many minutes to space between trades
+        sell_column, buy_column = find_optimal_trade_strategy(full_prediction_frame, min_price_jump=0.1)
         full_sell_inds = np.nonzero(sell_column)[0]
         full_buy_inds = np.nonzero(buy_column)[0]
 
@@ -1315,7 +1373,7 @@ class NaiveTradingBot(BaseTradingBot):
 
         prediction_check = np.abs(current_prediction - target_prediction)
 
-        if (prediction_check < 0.1*full_width) & (full_width > 2*mean_diff):
+        if (prediction_check < 0.05*full_width) & (full_width > 2*mean_diff):
             print(move_type)
             return True, pred_ind
 
