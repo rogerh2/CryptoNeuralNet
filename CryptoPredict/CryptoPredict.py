@@ -727,7 +727,7 @@ class CoinPriceModel:
 
     #TODO create method to save Data Frames without testing the models
 
-    def train_model(self, neuron_count=200, min_distance_between_trades=5, model_type='price', save_model=False, train_saved_model=False, layers=3, batch_size=96):
+    def train_model(self, neuron_count=200, min_distance_between_trades=5, model_type='price', save_model=False, train_saved_model=False, layers=3, batch_size=96 ):
         self.create_arrays(min_distance_between_trades, model_type=model_type)
         if train_saved_model:
             print('re-trianing model')
@@ -778,27 +778,38 @@ class CoinPriceModel:
         zerod_output = absolute_output - np.mean(test_output[::, 0])
         zerod_prediction = prediction[::, 0] - np.mean(prediction[::, 0])
 
-        buy_bool, sell_bool = find_optimal_trade_strategy(zerod_prediction)
-        buy_times = test_times[buy_bool]
-        sell_times = test_times[sell_bool]
-        buy_prices = absolute_output[buy_bool]
-        sell_prices = absolute_output[sell_bool]
-
         if show_plots:
             N = 3
             x = np.convolve(zerod_prediction, np.ones((N,)) / N)[N-1::]
             x = x.reshape(1, len(x))
             x = x.T
+
+            sell_bool, buy_bool = find_optimal_trade_strategy(zerod_prediction, min_price_jump=4)
+            buy_times = test_times[buy_bool]
+            sell_times = test_times[sell_bool]
+            buy_prices = absolute_output[buy_bool]
+            sell_prices = absolute_output[sell_bool]
+
+            #plot the prediction
             zerod_output = zerod_output.reshape(1, len(zerod_output))
             zerod_output = zerod_output.T
-            plot_df = pd.DataFrame(data=np.hstack((x/(np.max(x)), zerod_output/(np.max(zerod_output)))), index=test_times, columns=['Predicted', 'Measured'])
+            zerod_prediction = zerod_prediction.reshape(1, len(zerod_prediction))
+            zerod_prediction = zerod_prediction.T
+            plot_df = pd.DataFrame(data=np.hstack((zerod_prediction/(np.max(zerod_prediction)), zerod_output/(np.max(zerod_output)))), index=test_times, columns=['Predicted', 'Measured'])
             ax = plot_df.plot(y='Measured', style='bo--')
             plot_df.plot(y='Predicted', style='rx--', ax=ax)
 
             plt.title('Prediction')
             plt.xlabel('Date/Time')
             plt.ylabel('Normalized Price')
+            plt.figure()
 
+            #plot the correlation
+            plt.plot(zerod_output / (np.max(zerod_output)), zerod_prediction / (np.max(zerod_prediction)), 'b.')
+            plt.xlabel('measured price')
+            plt.ylabel('predicted price')
+
+            #plot the returns
             sell_plot_df = pd.DataFrame(data=sell_prices, index=sell_times, columns=['Sell'])
             buy_plot_df = pd.DataFrame(data=buy_prices, index=buy_times, columns=['Buy'])
             price_plot_df = pd.DataFrame(data=test_output, index=test_times, columns=['Price'])
@@ -812,11 +823,6 @@ class CoinPriceModel:
             plt.title('Strategy with ' + str(np.round(strategy_returns, 5)) + '% Returns vs ' + str(np.round(market_returns, 5)) + '% Market')
             plt.xlabel('Date/Time')
             plt.ylabel('Price ($)')
-            plt.figure()
-
-            plt.plot(zerod_output / (np.max(zerod_output)), zerod_prediction/(np.max(zerod_prediction)), 'b.')
-            plt.xlabel('measured price')
-            plt.ylabel('predicted price')
 
             plt.show()
         else:
@@ -1701,7 +1707,7 @@ def increase_saved_dataset_length(original_ds_path, date_to, time_units='minutes
 
 
 # TODO eliminate unnecessary legacy variables from run_neural_net and CryptoPredict
-def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None, save_test_model=True, test_saved_model=False, layer_count=3, batch_size=96, neuron_grid=None):
+def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type='price', use_type='test', data_set_path=None, save_test_model=True, test_saved_model=False, layer_count=3, batch_size=32, neuron_grid=None):
 
     #This creates a CoinPriceModel and saves the data
     if (data_set_path is not None) & (use_type != 'predict') & (not test_saved_model):
@@ -1719,8 +1725,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
     if use_type == 'test':
         if test_saved_model:
             cp = CoinPriceModel(date_from, date_to, days=prediction_length, prediction_ticker=prediction_ticker, bitinfo_list=bitinfo_list, time_units=time_unit, model_path=model_path, need_data_obj=True, data_set_path=data_set_path)
-            cp.train_model(neuron_count=neuron_count, min_distance_between_trades=min_distance_between_trades,
-                           model_type=model_type, save_model=save_test_model, train_saved_model=True, layers=layer_count, batch_size=batch_size)
+            #cp.train_model(neuron_count=neuron_count, min_distance_between_trades=min_distance_between_trades, model_type=model_type, save_model=save_test_model, train_saved_model=True, layers=layer_count, batch_size=batch_size)
             cp.test_model(did_train=False)
         else:
             cp.train_model(neuron_count=neuron_count, min_distance_between_trades=min_distance_between_trades, model_type=model_type, save_model=save_test_model, layers=layer_count, batch_size=batch_size)
@@ -1797,7 +1802,7 @@ if __name__ == '__main__':
         #date_from = '2018-06-15_10:20:00_EST'.replace('_', ' ')
         #date_to = '2018-07-04_20:40:00_EST'.replace('_', ' ')
         date_from = '2018-07-04 20:40:00 EST'
-        date_to = '2018-07-04 22:54:00 EST'
+        date_to = '2018-07-05 00:32:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1808,14 +1813,14 @@ if __name__ == '__main__':
         neuron_count = 100
         layer_count = 3
         batch_size = 32
-        neuron_grid = [38, 42, 44, 46, 48, 50]
+        neuron_grid = [90]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_48neurons_4epochs1530771153.893415.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_4epochs1530777982.803244.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-04_20:40:00_EST.pickle'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-04_20:40:00_EST_to_2018-07-04_22:54:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-04_20:40:00_EST_to_2018-07-05_00:32:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
