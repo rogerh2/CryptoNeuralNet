@@ -1,6 +1,6 @@
 import requests
 from requests.auth import AuthBase
-
+import re
 from datetime import datetime
 from datetime import timedelta
 import pandas as pd
@@ -48,9 +48,6 @@ def find_trade_strategy_value(buy_bool, sell_bool, all_prices):
     all_sells = all_prices[sell_bool]
     b = 0
     s = 0
-
-    if len(all_sells) > len(all_buys):
-        usd_available = all_prices[all_sells[0]]
 
     for i in range(0,len(sell_bool)):
         if buy_bool[i]:
@@ -777,8 +774,15 @@ class CoinPriceModel:
 
         prediction = self.model.predict(test_input)
 
-        zerod_output = test_output[::, 0] - np.mean(test_output[::, 0])
+        absolute_output = test_output[::, 0]
+        zerod_output = absolute_output - np.mean(test_output[::, 0])
         zerod_prediction = prediction[::, 0] - np.mean(prediction[::, 0])
+
+        buy_bool, sell_bool = find_optimal_trade_strategy(zerod_prediction)
+        buy_times = test_times[buy_bool]
+        sell_times = test_times[sell_bool]
+        buy_prices = absolute_output[buy_bool]
+        sell_prices = absolute_output[sell_bool]
 
         if show_plots:
             N = 3
@@ -794,11 +798,26 @@ class CoinPriceModel:
             plt.title('Prediction')
             plt.xlabel('Date/Time')
             plt.ylabel('Normalized Price')
+
+            sell_plot_df = pd.DataFrame(data=sell_prices, index=sell_times, columns=['Sell'])
+            buy_plot_df = pd.DataFrame(data=buy_prices, index=buy_times, columns=['Buy'])
+            price_plot_df = pd.DataFrame(data=test_output, index=test_times, columns=['Price'])
+            ax = sell_plot_df.plot(style='rx')
+            buy_plot_df.plot(style='gx', ax=ax)
+            price_plot_df.plot(ax=ax)
+            strategy_value = find_trade_strategy_value(buy_bool, sell_bool, absolute_output)
+            strategy_returns = strategy_value/100
+            market_returns = (absolute_output[-1] - absolute_output[0])/absolute_output[0]
+
+            plt.title('Strategy with ' + str(np.round(strategy_returns, 5)) + '% Returns vs ' + str(np.round(market_returns, 5)) + '% Market')
+            plt.xlabel('Date/Time')
+            plt.ylabel('Price ($)')
             plt.figure()
 
             plt.plot(zerod_output / (np.max(zerod_output)), zerod_prediction/(np.max(zerod_prediction)), 'b.')
             plt.xlabel('measured price')
             plt.ylabel('predicted price')
+
             plt.show()
         else:
             N = 3
@@ -1661,9 +1680,15 @@ class NaiveTradingBot(BaseTradingBot):
         print('fin')
 
 
-def increase_saved_dataset_length(date_from, og_to_date, original_ds_path, date_to, time_units='minutes'):
+def increase_saved_dataset_length(original_ds_path, date_to, time_units='minutes'):
+    date_from_search = re.search(r'^.*from_(.*)_to_.*$', original_ds_path).group(1)
+    date_from = date_from_search.replace('_', ' ')
+    date_to_search = re.search('^.*to_(.*).pickle.*$', original_ds_path).group(1)
+    og_to_date = date_to_search.replace('_', ' ')
+
     with open(original_ds_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
+
 
     data_obj = DataSet(date_from=date_from, date_to=og_to_date, prediction_length=30, bitinfo_list=['eth'], prediction_ticker='ETH', time_units='min', fin_table=saved_table, aggregate=1)
     data_obj.add_data(date_to)
@@ -1724,7 +1749,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 3
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1769,8 +1794,10 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = '2018-06-14 18:20:00 EST'
-        date_to = '2018-06-14 21:20:00 EST'
+        #date_from = '2018-06-15_10:20:00_EST'.replace('_', ' ')
+        #date_to = '2018-07-04_20:40:00_EST'.replace('_', ' ')
+        date_from = '2018-07-04 20:40:00 EST'
+        date_to = '2018-07-04 22:54:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1781,13 +1808,14 @@ if __name__ == '__main__':
         neuron_count = 100
         layer_count = 3
         batch_size = 32
-        neuron_grid = [30, 40, 50, 60, 70, 80, 90]
+        neuron_grid = [38, 42, 44, 46, 48, 50]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_3epochs1530245671.299538.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_48neurons_4epochs1530771153.893415.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-14_18:20:00_EST_to_2018-06-14_21:20:00_EST.pickle'
+        #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-04_20:40:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-04_20:40:00_EST_to_2018-07-04_22:54:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
@@ -1796,7 +1824,7 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_3epochs1530245671.299538.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_48neurons_4epochs1530771153.893415.h5'
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                                     api_key='redacted',
