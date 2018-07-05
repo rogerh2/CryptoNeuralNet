@@ -68,7 +68,8 @@ def find_trade_strategy_value(buy_bool, sell_bool, all_prices):
 
     return value
 
-def find_optimal_trade_strategy(data, show_plots=False, min_price_jump = 1.0001):
+def find_optimal_trade_strategy(offset_data, show_plots=False, min_price_jump = 1.0001):
+    data = offset_data - np.min(offset_data)
     buy_array = np.zeros(len(data))
     sell_array = np.zeros(len(data))
     all_times = np.arange(0,len(data))
@@ -96,6 +97,8 @@ def find_optimal_trade_strategy(data, show_plots=False, min_price_jump = 1.0001)
 
     buy_bool = [bool(x) for x in buy_array]
     sell_bool = [bool(x) for x in sell_array]
+    buy_bool[0] = False
+    sell_bool[-1] = False
     if show_plots:
         gain = find_trade_strategy_value(buy_bool, sell_bool, data)
         plt.plot(all_times[sell_bool], data[sell_bool], 'rx')
@@ -105,6 +108,22 @@ def find_optimal_trade_strategy(data, show_plots=False, min_price_jump = 1.0001)
         plt.show()
     else:
         return sell_bool, buy_bool
+
+def clean_data(data):
+    new_data = data
+    data_diff = np.diff(data)
+    diff_mean = np.mean(np.abs(data_diff))
+    diff_std = np.std(np.abs(data_diff))
+    for i in range(1, len(data)-1):
+        prior_diff = data_diff[i-1]
+        next_diff = data_diff[i]
+        prior_diff_sign = prior_diff > 0
+        next_diff_sign = next_diff > 0
+        if prior_diff_sign != next_diff_sign: #this implements xor
+            if (np.abs(prior_diff) > (diff_mean + diff_std)) or (np.abs(next_diff) > (diff_mean + diff_std)):
+                new_data[i] = (data[i-1] + data[i+1])/2
+
+    return  new_data
 
 #TODO get rid of create_single_prediction_column
 def create_single_prediction_column(price_data_frame, n, show_plots=False):
@@ -774,9 +793,9 @@ class CoinPriceModel:
 
         prediction = self.model.predict(test_input)
 
-        absolute_output = test_output[::, 0]
+        absolute_output =test_output[::, 0]
         zerod_output = absolute_output - np.mean(test_output[::, 0])
-        zerod_prediction = prediction[::, 0] - np.mean(prediction[::, 0])
+        zerod_prediction =  clean_data(prediction[::, 0] - np.mean(prediction[::, 0]))
 
         if show_plots:
             N = 3
@@ -784,7 +803,7 @@ class CoinPriceModel:
             x = x.reshape(1, len(x))
             x = x.T
 
-            sell_bool, buy_bool = find_optimal_trade_strategy(zerod_prediction, min_price_jump=4)
+            sell_bool, buy_bool = find_optimal_trade_strategy(zerod_prediction, min_price_jump=1.25)
             buy_times = test_times[buy_bool]
             sell_times = test_times[sell_bool]
             buy_prices = absolute_output[buy_bool]
@@ -872,6 +891,7 @@ class CoinPriceModel:
         scaled_price = zerod_price/np.max(zerod_price)
         scaled_prediction = (prediction[::,0] - np.min(prediction))/np.max(prediction - np.min(prediction))
         zerod_prediction = scaled_prediction + scaled_price[-1] - scaled_prediction[-self.prediction_length-1]
+        zerod_prediction = clean_data(zerod_prediction)
         columstr = 'Predicted ' + time_units
         prediction_table = pd.DataFrame({columstr: zerod_prediction}, index=test_data.final_table.index + delta)
         price_table = pd.DataFrame({'Current': scaled_price},index=test_data.final_table.index)
@@ -1110,7 +1130,7 @@ class BaseTradingBot:
         x = np.convolve(full_minute_prediction.values[::,0], np.ones((N,)) / N)[N - 1::] #The prediction is too jumpy, this will smooth it
         x_frame = pd.DataFrame(data=x, index=full_minute_prediction.index, columns=full_minute_prediction.columns)
 
-        self.minute_prediction = x_frame
+        self.minute_prediction = full_minute_prediction
         self.minute_price = full_minute_price
 
         if is_hourly_prediction_needed:
@@ -1365,7 +1385,7 @@ class NaiveTradingBot(BaseTradingBot):
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
         neighborhood_predictions = full_minute_prediction[-(self.minute_length+1+off_ind)::]
         full_prediction_frame = pd.DataFrame(data=full_minute_prediction)
-        sell_column, buy_column = find_optimal_trade_strategy(full_prediction_frame, min_price_jump=0.1)
+        sell_column, buy_column = find_optimal_trade_strategy(full_prediction_frame, min_price_jump=1.25)
         full_sell_inds = np.nonzero(sell_column)[0]
         full_buy_inds = np.nonzero(buy_column)[0]
 
@@ -1389,16 +1409,12 @@ class NaiveTradingBot(BaseTradingBot):
         current_prediction = neighborhood_predictions[0]
         if jump_sign == -1:
             pred_ind = sell_inds[0]
-            target_prediction = neighborhood_predictions[pred_ind]
         elif jump_sign == 1:
             pred_ind = buy_inds[0]
-            target_prediction = neighborhood_predictions[pred_ind]
 
         mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
 
-        prediction_check = np.abs(current_prediction - target_prediction)
-
-        if (prediction_check < 0.05*full_width) & (full_width > 2*mean_diff):
+        if (pred_ind < 1) & (full_width > 2*mean_diff):
             print(move_type)
             return True, pred_ind
 
@@ -1800,9 +1816,9 @@ if __name__ == '__main__':
         day = '24'
 
         #date_from = '2018-06-15_10:20:00_EST'.replace('_', ' ')
-        #date_to = '2018-07-04_20:40:00_EST'.replace('_', ' ')
-        date_from = '2018-07-04 20:40:00 EST'
-        date_to = '2018-07-05 00:32:00 EST'
+        #date_to = '2018-07-05_15:21:00_EST'.replace('_', ' ')
+        date_from = '2018-07-05 15:21:00 EST'
+        date_to = '2018-07-05 18:30:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1810,17 +1826,17 @@ if __name__ == '__main__':
         time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 100
+        neuron_count = 40
         layer_count = 3
-        batch_size = 32
-        neuron_grid = [90]
+        batch_size = 96
+        neuron_grid = [45]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_4epochs1530777982.803244.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530839437.023472.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-04_20:40:00_EST.pickle'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-04_20:40:00_EST_to_2018-07-05_00:32:00_EST.pickle'
+        #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-05_15:21:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-05_15:21:00_EST_to_2018-07-05_18:23:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
