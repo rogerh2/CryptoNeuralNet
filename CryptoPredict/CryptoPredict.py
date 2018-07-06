@@ -1286,14 +1286,16 @@ class NaiveTradingBot(BaseTradingBot):
             self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
     def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices, buy_inds, sell_inds, pred_buy_inds, pred_sell_inds):
+        #The two lines below create x axis labels
         full_prediction_times = [dt.strftime('%H:%M') for dt in self.minute_prediction.index]
         full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
 
+        #This section sets offsets for the verticle and horizontal positions of the prediction
         off_set = off_ind + self.minute_length
         reverse_offset = len(full_minute_prices) - off_set
-        price_len = len(full_minute_prices)
         new_prediction_mean = np.mean(full_minute_prices[off_set::]) - np.mean(full_minute_prediction[0:reverse_offset])
 
+        #This section creates the y limits for the graph
         min_price = np.min(full_minute_prices)
         min_pred = np.min(full_minute_prediction + new_prediction_mean)
         max_price = np.max(full_minute_prices)
@@ -1302,20 +1304,29 @@ class NaiveTradingBot(BaseTradingBot):
         ymin = np.min(np.array([min_price, min_pred]))
         ymax = np.max(np.array([max_price, max_pred]))
 
-
+        #This creates the x axis and ticks
         x_pred = range(off_set, len(full_minute_prediction) + off_set)
         x_price = range(0, len(full_minute_prices))
         n = int((len(full_minute_prediction) + off_ind + self.minute_length)/5)
         x = range(0, len(full_minute_prediction) + off_ind + self.minute_length + n, n)
         all_ticks = full_price_times + full_prediction_times[-(self.minute_length+1)::]
 
-        sell_pred_values = full_minute_prediction[pred_sell_inds + reverse_offset] + new_prediction_mean
-        sell_price_values = full_minute_prices[sell_inds[0:-len(pred_sell_inds)]+off_set]
-        sell_values = np.hstack((sell_price_values, sell_pred_values))
+        if len(buy_inds) == 0:
+            sell_pred_values = np.array([0])
+            sell_price_values = np.array([0])
+            sell_values = np.hstack((sell_price_values, sell_pred_values))
 
-        buy_pred_values = full_minute_prediction[pred_buy_inds + reverse_offset] + new_prediction_mean
-        buy_price_values = full_minute_prices[buy_inds[0:-len(pred_buy_inds)]+off_set]
-        buy_values = np.hstack((buy_price_values, buy_pred_values))
+            buy_pred_values = np.array([0])
+            buy_price_values = np.array([0])
+            buy_values = np.hstack((buy_price_values, buy_pred_values))
+        else:
+            sell_pred_values = full_minute_prediction[pred_sell_inds + reverse_offset] + new_prediction_mean
+            sell_price_values = full_minute_prices[sell_inds[0:-len(pred_sell_inds)]+off_set]
+            sell_values = np.hstack((sell_price_values, sell_pred_values))
+
+            buy_pred_values = full_minute_prediction[pred_buy_inds + reverse_offset] + new_prediction_mean
+            buy_price_values = full_minute_prices[buy_inds[0:-len(pred_buy_inds)]+off_set]
+            buy_values = np.hstack((buy_price_values, buy_pred_values))
 
         if self.price_ax is None:
             self.price_ax = plt.plot(x_price, full_minute_prices, 'b-')
@@ -1326,9 +1337,9 @@ class NaiveTradingBot(BaseTradingBot):
             self.price_ax[0].set_ydata(full_minute_prices)
             self.pred_ax[0].set_ydata(full_minute_prediction + new_prediction_mean)
             self.pred_ax[0].set_xdata(x_pred)
-            self.buy_ax[0].set_ydata(sell_values)
+            self.buy_ax[0].set_ydata(buy_values)
             self.buy_ax[0].set_xdata(buy_inds + off_set)
-            self.sell_ax[0].set_ydata(buy_values)
+            self.sell_ax[0].set_ydata(sell_values)
             self.sell_ax[0].set_xdata(sell_inds + off_set)
 
         plt.ylim((ymin, ymax))
@@ -1352,7 +1363,7 @@ class NaiveTradingBot(BaseTradingBot):
         full_minute_prediction = self.minute_prediction.values[::, 0]
         full_minute_prices = self.minute_price.values[::, 0]
         window_size = 25
-        shift_size = 10
+        shift_size = 0
         current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
 
         neighborhood_prices = full_minute_prices[-window_size::]
@@ -1378,28 +1389,28 @@ class NaiveTradingBot(BaseTradingBot):
 
         else:
             print('low confidence')
-            self.plot_prediction(0, full_minute_prediction, full_minute_prices, np.array([0]), np.array([0]))
+            self.plot_prediction(0, full_minute_prediction, full_minute_prices, np.array([0]), np.array([0]), np.array([0]), np.array([0]))
             return False, None
 
 
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
         neighborhood_predictions = full_minute_prediction[-(self.minute_length+1+off_ind)::]
         full_prediction_frame = pd.DataFrame(data=full_minute_prediction)
-        sell_column, buy_column = find_optimal_trade_strategy(full_prediction_frame, min_price_jump=1.25)
+        sell_column, buy_column = find_optimal_trade_strategy(full_prediction_frame.values, min_price_jump=1.25)
         full_sell_inds = np.nonzero(sell_column)[0]
         full_buy_inds = np.nonzero(buy_column)[0]
 
         #TODO Set the current decision to be the same as the last decision would have been if the last decision was missed
 
-        sell_inds = np.nonzero(sell_column[-(self.minute_length+1+off_ind)::])[0]
-        buy_inds = np.nonzero(buy_column[-(self.minute_length+1+off_ind)::])[0]
+        sell_inds = np.nonzero(sell_column[-(self.minute_length+off_ind)::])[0]
+        buy_inds = np.nonzero(buy_column[-(self.minute_length+off_ind)::])[0]
         if ((len(buy_inds) == 0) & (len(sell_inds) == 0)) or (len(sell_inds) == 0):
             self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, np.array([0]),
                                  np.array([0]))
             print('no trades')
             return False, None
         elif len(buy_inds) == 0:
-            buy_inds = np.array([0])
+            buy_inds = np.array([3])
 
         self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, buy_inds, sell_inds)
 
@@ -1571,7 +1582,7 @@ class NaiveTradingBot(BaseTradingBot):
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         last_training_time = 0
-        cutoff_time = current_time + 9*3600
+        cutoff_time = current_time + 4*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         hold_eth = False
         whale_watch = False
@@ -1817,8 +1828,8 @@ if __name__ == '__main__':
 
         #date_from = '2018-06-15_10:20:00_EST'.replace('_', ' ')
         #date_to = '2018-07-05_15:21:00_EST'.replace('_', ' ')
-        date_from = '2018-07-05 15:21:00 EST'
-        date_to = '2018-07-05 18:30:00 EST'
+        date_from = '2018-07-05 19:00:00 EST'
+        date_to = '2018-07-05 20:00:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1832,11 +1843,11 @@ if __name__ == '__main__':
         neuron_grid = [45]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530839437.023472.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Live_Tested_Models/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_3epochs1530245671.299538.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-05_15:21:00_EST.pickle'
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-05_15:21:00_EST_to_2018-07-05_18:23:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-05_18:00:00_EST_to_2018-07-05_20:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
@@ -1845,7 +1856,7 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_48neurons_4epochs1530771153.893415.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530839437.023472.h5'
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                                     api_key='redacted',
