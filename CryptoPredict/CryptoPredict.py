@@ -523,6 +523,7 @@ class DataSet:
             self.fin_table = fin_table
         self.prediction_ticker = prediction_ticker
         self.date_to = date_to
+        self.date_from = date_from
         if prediction_length is not None:
             self.prediction_length = prediction_length
         self.time_units = time_units
@@ -836,10 +837,10 @@ class CoinPriceModel:
             buy_plot_df.plot(style='gx', ax=ax)
             price_plot_df.plot(ax=ax)
             strategy_value = find_trade_strategy_value(buy_bool, sell_bool, absolute_output)
-            strategy_returns = strategy_value/100
-            market_returns = (absolute_output[-1] - absolute_output[0])/absolute_output[0]
+            strategy_returns = strategy_value
+            market_returns = 100*(absolute_output[-1] - absolute_output[0])/absolute_output[0]
 
-            plt.title('Strategy with ' + str(np.round(strategy_returns, 5)) + '% Returns vs ' + str(np.round(market_returns, 5)) + '% Market')
+            plt.title('Strategy with ' + str(np.round(strategy_returns, 3)) + '% Returns vs ' + str(np.round(market_returns, 3)) + '% Market')
             plt.xlabel('Date/Time')
             plt.ylabel('Price ($)')
 
@@ -1372,17 +1373,29 @@ class NaiveTradingBot(BaseTradingBot):
         conf = np.array([]) #average of residuals
         offsets = conf #the offset
 
-        for ind in range(0, 2*shift_size): #This and the following if statement find the offset that best fits the data
-            test_predictions = all_test_predictions[(ind):(window_size+ind)]
+        if shift_size > 0:
+            for ind in range(0, 2*shift_size): #This and the following if statement find the offset that best fits the data
+                test_predictions = all_test_predictions[(ind):(window_size+ind)]
+                current_fit = np.polyfit(neighborhood_prices, test_predictions, 1, full=True)
+                current_err = current_fit[1]
+                mean_prediction = np.mean(test_predictions)
+                sqaured_predictions = [(test_prediction-mean_prediction)**2 for test_prediction in test_predictions]
+                rmse = np.sum(sqaured_predictions)
+
+                if (rmse > 1.1*current_err):
+                    conf = np.append(conf, [current_err])
+                    offsets = np.append(offsets, [ind-shift_size])
+        else:
+            test_predictions = all_test_predictions[0:window_size]
             current_fit = np.polyfit(neighborhood_prices, test_predictions, 1, full=True)
             current_err = current_fit[1]
             mean_prediction = np.mean(test_predictions)
-            sqaured_predictions = [(test_prediction-mean_prediction)**2 for test_prediction in test_predictions]
+            sqaured_predictions = [(test_prediction - mean_prediction) ** 2 for test_prediction in test_predictions]
             rmse = np.sum(sqaured_predictions)
 
-            if (rmse > 1.1*current_err):
-                conf = np.append(conf, [current_err])
-                offsets = np.append(offsets, [ind-shift_size])
+            if (rmse > 1.1 * current_err):
+                conf = np.array([0, 1, 1])
+                offsets = np.array([0, 0, 0])
 
         if len(offsets) > 0:
             off_ind = -int(offsets[np.argmin(conf)])
@@ -1425,9 +1438,20 @@ class NaiveTradingBot(BaseTradingBot):
 
         mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
 
-        if (pred_ind < 1) & (full_width > 2*mean_diff):
+        if (pred_ind < 2) & (full_width > 2*mean_diff):
             print(move_type)
             return True, pred_ind
+        elif (pred_ind < 2):
+            print('variance too high')
+        else:
+            prior_sell_inds = np.nonzero(sell_column[0:-(self.minute_length + off_ind)])[0]
+            prior_buy_inds = np.nonzero(buy_column[0:-(self.minute_length + off_ind)])[0]
+            if (prior_sell_inds[-1] > prior_buy_inds[-1]) & (jump_sign == -1):
+                print('missed ' + move_type)
+                return True, 3
+            elif (prior_sell_inds[-1] < prior_buy_inds[-1]) & (jump_sign == 1):
+                print('missed ' + move_type)
+                return True, 3
 
         print('no peak')
         return False, None
@@ -1826,10 +1850,10 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        #date_from = '2018-06-15_10:20:00_EST'.replace('_', ' ')
-        #date_to = '2018-07-05_15:21:00_EST'.replace('_', ' ')
-        date_from = '2018-07-05 19:00:00 EST'
-        date_to = '2018-07-05 20:00:00 EST'
+        #date_from = '2018-06-15 10:20:00 EST'
+        #date_to = '2018-07-05 20:29:00 EST'
+        date_from = '2018-07-05 21:35:00 EST'
+        date_to = '2018-07-06 01:22:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -1837,17 +1861,17 @@ if __name__ == '__main__':
         time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 40
+        neuron_count = 70
         layer_count = 3
         batch_size = 96
-        neuron_grid = [45]
+        neuron_grid = [40, 40, 40, 40, 40]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Live_Tested_Models/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_3epochs1530245671.299538.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-05_15:21:00_EST.pickle'
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-05_18:00:00_EST_to_2018-07-05_20:00:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-05_20:29:00_EST_to_2018-07-05_21:35:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
@@ -1856,7 +1880,7 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530839437.023472.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                                     api_key='redacted',
