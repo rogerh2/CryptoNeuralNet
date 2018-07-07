@@ -846,9 +846,12 @@ class CoinPriceModel:
 
             plt.show()
         else:
-            N = 3
-            x = np.convolve(zerod_prediction, np.ones((N,)) / N)[N - 1::]
-            return x, test_output
+            #N = 3
+            #x = np.convolve(zerod_prediction, np.ones((N,)) / N)[N - 1::]
+
+            zerod_prediction = zerod_prediction.reshape(1, len(zerod_prediction))
+            zerod_prediction = zerod_prediction.T
+            return zerod_prediction, test_output
 
     def create_standard_dates(self):
         utc_to_date = datetime.utcnow()
