@@ -54,9 +54,9 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
     prediction = prediction/np.max(prediction)
     data = data - np.min(data)
     data = data/np.max(data)
-    fuzziness = 5
+    #fuzziness = 5
 
-    for i in range(fuzziness, data_len-offset):
+    for i in range(0, data_len-offset):
         ind = data_len - i - 1
         past_predictions = prediction[(ind-offset):(ind)]
         past_data = data[(ind-offset):(ind)]
@@ -77,19 +77,19 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
         else:
             if bool_price_test != price_is_rising:  # != acts as an xor gate
                 if price_is_rising:
-                    current_price = np.max(prediction[(ind - fuzziness):(ind + fuzziness)])
+                    #current_price = np.max(prediction[(ind - fuzziness):(ind + fuzziness)])
                     if (current_price+current_err) < last_inflection_price:
                         buy_array[ind] = 1
-                        last_inflection_price = current_price+current_err
+                        last_inflection_price = current_price
                     else:
-                        last_inflection_price = current_price+current_err
+                        last_inflection_price = current_price
                 else:
-                    current_price = np.min(prediction[(ind - fuzziness):(ind + fuzziness)])
+                    #current_price = np.min(prediction[(ind - fuzziness):(ind + fuzziness)])
                     if (current_price-current_err) > last_inflection_price:
                         sell_array[ind] = 1
-                        last_inflection_price = current_price-current_err
+                        last_inflection_price = current_price
                     else:
-                        last_inflection_price = current_price-current_err
+                        last_inflection_price = current_price
 
                 price_is_rising = bool_price_test
 
@@ -104,26 +104,26 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
         plt.show()
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-02_09:46:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-08_08:11:00_UTC.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-05_20:29:00_EST_to_2018-07-05_21:35:00_EST.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
-    date_from = '2018-07-05 21:35:00 EST'
-    date_to = '2018-07-06 01:22:00 EST'
+    date_from = '2018-07-08 00:00:00 UTC'
+    date_to = '2018-07-08 08:11:00 UTC'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    #cp.test_model(did_train=False) #currently at 12.994%
+    cp.test_model(did_train=False) #currently at 12.994%
     zerod_prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     absolute_output = test_output[::, 0]
     zerod_output = absolute_output - np.mean(test_output[::, 0])
     zerod_output = zerod_output.reshape(1, len(zerod_output))
     zerod_output = zerod_output.T
-    findoptimaltradestrategystochastic(zerod_prediction[::, 0], zerod_output[::, 0], 60, absolute_output, show_plots=True)
+    findoptimaltradestrategystochastic(zerod_prediction[::, 0], zerod_output[::, 0], 30, absolute_output, show_plots=True)
 
     price = saved_table.ETH_high.values
     findoptimaltradestrategy(price, show_plots=True)

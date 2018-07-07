@@ -495,9 +495,9 @@ class DataSet:
                     if all(last_news_publication_times):
                         current_news = last_news
                     else:
-                        current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
+                        current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' UTC')
                 else:
-                    current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' EST')
+                    current_news = cryp_obj.news('ETH', date_before=current_dt.strftime('%Y-%m-%d %H:%M:%S') + ' UTC')
 
                 last_news = current_news
 
@@ -1855,8 +1855,8 @@ if __name__ == '__main__':
 
         #date_from = '2018-06-15 10:20:00 EST'
         #date_to = '2018-07-05 20:29:00 EST'
-        date_from = '2018-07-05 21:35:00 EST'
-        date_to = '2018-07-06 01:22:00 EST'
+        date_from = '2018-07-08 00:00:00 UTC'
+        date_to = '2018-07-08 08:11:00 UTC'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
