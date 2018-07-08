@@ -920,7 +920,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
     #TODO move the create methods to the DataSet class
 
-    def create_test_price_columns(self, should_train=False, min_distance_between_trades=5, n=5):
+    def create_test_price_columns(self, should_train=False, min_distance_between_trades=5, n=30):
         #TODO delete extraneous code
         #This creates a table with 2*n columns that contains n columns of the price for the past n units of time and prediction for the next n units. This is meant to train the strategy model
 
@@ -943,15 +943,15 @@ class CryptoTradeStrategyModel(CoinPriceModel):
             prediction, price = self.test_model(did_train=False, show_plots=False, min_distance_between_trades=min_distance_between_trades, model_type='price')
 
         all_times = self.times
-        # column_len = len(prediction) - 2*n
-        # prediction_columns = np.zeros((column_len, n))
-        # time_columns = []
-        #
-        # prediction_data = prediction#.reshape(1, len(prediction)).T #This makes it easier to add data to columns
-        #
-        # for ind in range(0, column_len):
-        #     prediction_columns[ind, ::] = prediction_data[(ind + n):(ind + 2*n)]
-        #     time_columns.insert(0, all_times[ind+n])
+        column_len = len(prediction) - 2*n
+        prediction_columns = np.zeros((column_len, n))
+        time_columns = []
+
+        prediction_data = prediction#.reshape(1, len(prediction)).T #This makes it easier to add data to columns
+
+        for ind in range(0, column_len):
+            prediction_columns[ind, ::] = prediction_data[(ind + n):(ind + 2*n)]
+            time_columns.insert(0, all_times[ind+n])
 
         return prediction[::, 0], all_times
 
@@ -991,12 +991,32 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
         return loss_val
 
-    def custom_loss_func(self, y_true, y_pred):
-        loss_val = (self.specificity(y_true, y_pred)+K.epsilon())*(self.sensitivity(y_true, y_pred)+K.epsilon())
+    def custom_sell_loss_func(self, y_true, y_pred):
+        price_data = self.data_obj.fin_table[self.prediction_ticker.upper()+'_high'].values
+        predicted_trades = [x > K.mean(y_pred) for x in y_pred]
+        true_trades = [bool(x) for x in y_true]
+
+        sell_bool, buy_bool = find_optimal_trade_strategy(price_data)
+        true_val = find_trade_strategy_value(buy_bool, sell_bool, price_data)
+        predicted_val = find_trade_strategy_value(buy_bool, predicted_trades, price_data)
+
+        loss_val = predicted_val/true_val
+        return loss_val
+
+    def custom_buy_loss_func(self, y_true, y_pred):
+        price_data = self.data_obj.fin_table[self.prediction_ticker.upper()+'_high'].values
+        predicted_trades = [x > K.mean(y_pred) for x in y_pred]
+        true_trades = [bool(x) for x in y_true]
+
+        sell_bool, buy_bool = find_optimal_trade_strategy(price_data)
+        true_val = find_trade_strategy_value(buy_bool, sell_bool, price_data)
+        predicted_val = find_trade_strategy_value(predicted_trades, predicted_trades, price_data)
+
+        loss_val = predicted_val/true_val
         return loss_val
 
     #TODO make model methods more modular for simpler integration of new models (like the strategy model)
-    def build_strategy_model(self, inputs, neurons, strategy_activ_func = 'tanh', output_size=1, dropout=0, layers=1, final_activation = 'sigmoid'):
+    def build_strategy_model(self, inputs, neurons, strategy_type, strategy_activ_func = 'tanh', output_size=1, dropout=0, layers=1, final_activation = 'sigmoid'):
         is_leaky = self.strategy_is_leakyrelu
         activ_func = strategy_activ_func
         strategy_model = Sequential()
@@ -1013,6 +1033,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
                 strategy_model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         strategy_model.add(Dense(units=output_size, activation=final_activation))
+
         strategy_model.compile(loss=self.strategy_loss_fun, optimizer=keras.optimizers.adam(lr=0.001))
 
         return strategy_model
@@ -1055,8 +1076,8 @@ class CryptoTradeStrategyModel(CoinPriceModel):
 
 
 
-        self.buy_model = self.build_strategy_model(training_input, neurons=buy_neuron_count, layers=1, strategy_activ_func='soft_max', final_activation='sigmoid')
-        self.sell_model = self.build_strategy_model(training_input, neurons=sell_neuron_count, layers=1, strategy_activ_func='soft_max', final_activation='sigmoid')
+        self.buy_model = self.build_strategy_model(training_input, neurons=buy_neuron_count, strategy_type='buy', layers=1, strategy_activ_func='soft_max', final_activation='sigmoid')
+        self.sell_model = self.build_strategy_model(training_input, neurons=sell_neuron_count, strategy_type='sell', layers=1, strategy_activ_func='soft_max', final_activation='sigmoid')
 
         estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=0, verbose=0, mode='auto')
 
