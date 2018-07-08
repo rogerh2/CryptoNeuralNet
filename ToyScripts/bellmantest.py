@@ -63,7 +63,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
         #Find error
         current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
-        current_err = current_fit[1]
+        current_err = 2*np.sqrt(current_fit[1]/offset)
 
         #Find trades
         current_price = prediction[ind]
@@ -78,14 +78,14 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
             if bool_price_test != price_is_rising:  # != acts as an xor gate
                 if price_is_rising:
                     #current_price = np.max(prediction[(ind - fuzziness):(ind + fuzziness)])
-                    if (current_price+current_err) < last_inflection_price:
+                    if (current_price+current_err) < (last_inflection_price):
                         buy_array[ind] = 1
                         last_inflection_price = current_price
                     else:
                         last_inflection_price = current_price
                 else:
                     #current_price = np.min(prediction[(ind - fuzziness):(ind + fuzziness)])
-                    if (current_price-current_err) > last_inflection_price:
+                    if (current_price-current_err) > (last_inflection_price):
                         sell_array[ind] = 1
                         last_inflection_price = current_price
                     else:
@@ -117,7 +117,7 @@ if __name__ == '__main__':
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    cp.test_model(did_train=False) #currently at 12.994%
+    #cp.test_model(did_train=False)
     zerod_prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     absolute_output = test_output[::, 0]
     zerod_output = absolute_output - np.mean(test_output[::, 0])
