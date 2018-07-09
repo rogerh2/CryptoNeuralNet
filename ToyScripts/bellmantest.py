@@ -50,11 +50,14 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
     data_len = len(data)
     price_is_rising = None
 
-    prediction = prediction - np.min(prediction)
-    prediction = prediction/np.max(prediction)
-    data = data - np.min(data)
-    data = data/np.max(data)
-    #fuzziness = 5
+    zerod_prediction = prediction - np.min(prediction)
+    scaled_prediction = zerod_prediction/np.max(zerod_prediction)
+    prediction = np.max(data)*scaled_prediction + np.mean(data)
+
+    # data = data - np.min(data)
+    # data = data/np.max(data)
+    fuzziness = 5
+    window_size = 15
 
     for i in range(0, data_len-offset):
         ind = data_len - i - 1
@@ -63,29 +66,42 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
         #Find error
         current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
-        current_err = 2*np.sqrt(current_fit[1]/offset)
+        err = np.sqrt(current_fit[1]/offset)
+        fit_offset = current_fit[0][0]
+        fit_coeff = current_fit[0][1]
+        const_diff = 2*err
 
         #Find trades
         current_price = prediction[ind]
         prior_price = prediction[ind - 1]
         bool_price_test = current_price > prior_price
+        upper_price = current_price + err
+        lower_price = current_price - err
 
 
         if price_is_rising is None:
             price_is_rising = bool_price_test
             last_inflection_price = current_price
         else:
+            upper_inflec = last_inflection_price + err
+            lower_inflec = last_inflection_price - err
             if bool_price_test != price_is_rising:  # != acts as an xor gate
                 if price_is_rising:
-                    #current_price = np.max(prediction[(ind - fuzziness):(ind + fuzziness)])
-                    if (current_price+current_err) < (last_inflection_price):
+                    ln_diff = np.log(upper_price) - np.log(lower_price)
+                    sq_diff = (upper_inflec**2 - lower_inflec**2)/2
+                    check_val = sq_diff * ln_diff - const_diff
+
+                    if check_val > 0:
                         buy_array[ind] = 1
                         last_inflection_price = current_price
                     else:
                         last_inflection_price = current_price
                 else:
-                    #current_price = np.min(prediction[(ind - fuzziness):(ind + fuzziness)])
-                    if (current_price-current_err) > (last_inflection_price):
+                    sq_diff = (upper_price**2 - lower_price**2)/2
+                    ln_diff = np.log(upper_inflec) - np.log(lower_inflec)
+                    check_val = sq_diff * ln_diff - const_diff
+
+                    if check_val > 0:
                         sell_array[ind] = 1
                         last_inflection_price = current_price
                     else:
@@ -104,20 +120,20 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
         plt.show()
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-08_08:11:00_UTC.pickle'
-    #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-05_20:29:00_EST_to_2018-07-05_21:35:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_02:15:00_UTC.pickle'
+    #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-05_15:21:00_EST.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
     date_from = '2018-07-08 00:00:00 UTC'
-    date_to = '2018-07-08 08:11:00 UTC'
+    date_to = '2018-07-09 00:11:00 UTC'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    #cp.test_model(did_train=False)
+    cp.test_model(did_train=False)
     zerod_prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     absolute_output = test_output[::, 0]
     zerod_output = absolute_output - np.mean(test_output[::, 0])

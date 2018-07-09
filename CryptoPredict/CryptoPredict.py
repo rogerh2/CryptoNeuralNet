@@ -691,7 +691,7 @@ class CoinPriceModel:
                     saved_table = pickle.load(ds_file)
 
             else:
-                saved_table=None
+                saved_table=None\
 
             self.data_obj = DataSet(date_from=date_from, date_to=date_to, prediction_length=self.prediction_length,
                                     bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units, fin_table=saved_table, aggregate=aggregate_val)
@@ -853,7 +853,7 @@ class CoinPriceModel:
 
             zerod_prediction = zerod_prediction.reshape(1, len(zerod_prediction))
             zerod_prediction = zerod_prediction.T
-            return zerod_prediction, test_output
+            return prediction, test_output
 
     def create_standard_dates(self):
         utc_to_date = datetime.utcnow()
@@ -943,15 +943,15 @@ class CryptoTradeStrategyModel(CoinPriceModel):
             prediction, price = self.test_model(did_train=False, show_plots=False, min_distance_between_trades=min_distance_between_trades, model_type='price')
 
         all_times = self.times
-        column_len = len(prediction) - 2*n
-        prediction_columns = np.zeros((column_len, n))
-        time_columns = []
-
-        prediction_data = prediction#.reshape(1, len(prediction)).T #This makes it easier to add data to columns
-
-        for ind in range(0, column_len):
-            prediction_columns[ind, ::] = prediction_data[(ind + n):(ind + 2*n)]
-            time_columns.insert(0, all_times[ind+n])
+        # column_len = len(prediction) - 2*n
+        # prediction_columns = np.zeros((column_len, n))
+        # time_columns = []
+        #
+        # prediction_data = prediction#.reshape(1, len(prediction)).T #This makes it easier to add data to columns
+        #
+        # for ind in range(0, column_len):
+        #     prediction_columns[ind, ::] = prediction_data[(ind + n):(ind + 2*n)]
+        #     time_columns.insert(0, all_times[ind+n])
 
         return prediction[::, 0], all_times
 
@@ -969,7 +969,7 @@ class CryptoTradeStrategyModel(CoinPriceModel):
         buy_strategy_frame = pd.merge(strategy_input_frame, buy_frame, left_index=True, right_index=True)
         sell_strategy_frame = pd.merge( strategy_input_frame, sell_frame, left_index=True, right_index=True)
 
-        self.strategy_frame = pd.concat([strategy_input_frame, buy_frame, sell_frame], axis=1, join_axes=[strategy_input_frame.index])
+        self.strategy_frame = pd.concat([strategy_input_frame, buy_frame[0:len(strategy_input_frame)], sell_frame[0:len(strategy_input_frame)]], axis=1, join_axes=[strategy_input_frame.index])
 
         if show_plots:
             ax1 = sell_strategy_frame[self.prediction_ticker.upper() + '_high'].plot(style='b--')
@@ -1841,7 +1841,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 1
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -1852,7 +1852,7 @@ if __name__ == '__main__':
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
         time_units = 'minutes'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-08_08:11:00_UTC.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-05_15:21:00_EST.pickle'
         neuron_grid = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
@@ -1889,7 +1889,7 @@ if __name__ == '__main__':
         #date_from = '2018-06-15 10:20:00 EST'
         #date_to = '2018-07-05 20:29:00 EST'
         date_from = '2018-07-08 00:00:00 UTC'
-        date_to = '2018-07-08 08:11:00 UTC'
+        date_to = '2018-07-09 00:11:00 UTC'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
