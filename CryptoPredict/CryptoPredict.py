@@ -806,7 +806,7 @@ class CoinPriceModel:
             x = x.reshape(1, len(x))
             x = x.T
 
-            sell_bool, buy_bool = find_optimal_trade_strategy(zerod_prediction, min_price_jump=1.25)
+            sell_bool, buy_bool = find_optimal_trade_strategy(zerod_prediction, min_price_jump=1)
             buy_times = test_times[buy_bool]
             sell_times = test_times[sell_bool]
             buy_prices = absolute_output[buy_bool]
@@ -1888,16 +1888,16 @@ if __name__ == '__main__':
 
         #date_from = '2018-06-15 10:20:00 EST'
         #date_to = '2018-07-05 20:29:00 EST'
-        date_from = '2018-07-08 00:00:00 UTC'
-        date_to = '2018-07-09 00:11:00 UTC'
-        prediction_length = 30
+        date_from = '2018-06-14 08:00:00 UTC'
+        date_to = '2018-07-14 08:00:00 UTC'
+        prediction_length = 6
         epochs = 5000
         prediction_ticker = 'ETH'
         bitinfo_list = ['eth']
-        time_unit = 'minutes'
+        time_unit = 'hours'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 70
+        neuron_count = 30
         layer_count = 3
         batch_size = 96
         neuron_grid = [40, 40, 40, 40, 40]
@@ -1907,7 +1907,7 @@ if __name__ == '__main__':
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-05_15:21:00_EST.pickle'
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-05_20:29:00_EST_to_2018-07-05_21:35:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_from_2018-06-14_08:00:00_UTC_to_2018-07-14_08:00:00_UTC.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)

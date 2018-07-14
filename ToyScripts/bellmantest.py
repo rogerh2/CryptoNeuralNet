@@ -65,6 +65,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
         err_arr = np.array([])
         off_arr = err_arr
         coeff_arr = err_arr
+        #TODO use 95% conf int
         err_judgement_arr = err_arr #this array will contain the residual from the prior datum
 
         for j in range(10, offset):
@@ -73,18 +74,18 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
             #Find error
             current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
+            curr_coeff = current_fit[0][0]
+            curr_off = current_fit[0][1]
             current_err = np.sqrt(current_fit[1]/j)
             err_arr = np.append(err_arr, current_err)
-            curr_coeff = current_fit[0][1]
-            curr_off = current_fit[0][0]
             off_arr = np.append(off_arr, curr_off)
             coeff_arr = np.append(coeff_arr, curr_coeff)
-            err_judgement_arr = np.append(err_judgement_arr, np.abs(curr_coeff*prediction[ind] + curr_off - data[ind]))
+            err_judgement_arr = np.append(err_judgement_arr, np.abs(prediction[ind-1] - curr_off - curr_coeff*data[ind-1]))
 
-        err_ind = np.argmin(err_judgement_arr)
+        err_ind = np.argmin(np.abs(err_judgement_arr))
         err = err_arr[err_ind] #np.sqrt(current_fit[1]/offset)
-        fit_offset = off_arr[err_ind]
-        fit_coeff = coeff_arr[err_ind]
+        fit_coeff = 1#/coeff_arr[err_ind]
+        fit_offset = 0#-off_arr[err_ind]/fit_coeff
         const_diff = 2*err
 
         #Find trades
@@ -131,23 +132,24 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
     buy_bool = [bool(x) for x in buy_array]
     sell_bool = [bool(x) for x in sell_array]
     if show_plots:
+        market_returns = 100 * (absolute_output[-1] - absolute_output[0]) / absolute_output[0]
         returns = find_trade_strategy_value(buy_bool, sell_bool, absolute_output)
         plt.plot(all_times[sell_bool], absolute_output[sell_bool], 'rx')
         plt.plot(all_times[buy_bool], absolute_output[buy_bool], 'gx')
         plt.plot(absolute_output)
-        plt.title('Return of ' + str(returns) + '%')
+        plt.title('Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market')
         plt.show()
 
 if __name__ == '__main__':
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_19:52:00_EST.pickle'
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_19:52:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-13_01:01:00_UTC.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
-    date_from = '2018-07-08 00:00:00 UTC'
-    date_to = '2018-07-09 19:52:00 UTC'
+    date_from = '2018-07-06 01:22:00 UTC'
+    date_to = '2018-07-13 01:01:00 UTC'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-05 20:29:00 EST'
     bitinfo_list = ['eth']
@@ -155,12 +157,12 @@ if __name__ == '__main__':
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
     cp.test_model(did_train=False)
-    zerod_prediction, test_output = cp.test_model(did_train=False, show_plots=False)
+    prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     absolute_output = test_output[::, 0]
     zerod_output = absolute_output - np.mean(test_output[::, 0])
     zerod_output = zerod_output.reshape(1, len(zerod_output))
     zerod_output = zerod_output.T
-    findoptimaltradestrategystochastic(zerod_prediction[::, 0], zerod_output[::, 0], 40, absolute_output, show_plots=True)
+    findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, absolute_output, show_plots=True)
 
     price = saved_table.ETH_high.values
     findoptimaltradestrategy(price, show_plots=True)
