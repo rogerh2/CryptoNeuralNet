@@ -65,32 +65,32 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
         err_arr = np.array([])
         off_arr = err_arr
         coeff_arr = err_arr
-        #TODO use 95% conf int
+        #TODO try different error judgements (think of ways)
         err_judgement_arr = err_arr #this array will contain the residual from the prior datum
 
-        for j in range(10, offset):
-            past_predictions = prediction[(ind-j):(ind)]
-            past_data = data[(ind-j):(ind)]
+        for N in range(10, offset):
+            past_predictions = prediction[(ind-N):(ind)]
+            past_data = data[(ind-N):(ind)]
 
             #Find error
             current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
             curr_coeff = current_fit[0][0]
             curr_off = current_fit[0][1]
-            current_err = np.sqrt(current_fit[1]/j)
+            current_err = np.sqrt(current_fit[1]/(N-1))
             err_arr = np.append(err_arr, current_err)
             off_arr = np.append(off_arr, curr_off)
             coeff_arr = np.append(coeff_arr, curr_coeff)
-            err_judgement_arr = np.append(err_judgement_arr, np.abs(prediction[ind-1] - curr_off - curr_coeff*data[ind-1]))
+            err_judgement_arr = np.append(err_judgement_arr, current_err/np.sqrt(N))#np.abs(prediction[ind-1] - curr_off - curr_coeff*data[ind-1]) - current_err)
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
         err = err_arr[err_ind] #np.sqrt(current_fit[1]/offset)
-        fit_coeff = 1#/coeff_arr[err_ind]
-        fit_offset = 0#-off_arr[err_ind]/fit_coeff
-        const_diff = 2*err
+        fit_coeff = 1/coeff_arr[err_ind]
+        fit_offset = -off_arr[err_ind]/fit_coeff
+        const_diff = 2*err*fit_coeff
 
         #Find trades
-        current_price = fit_coeff*prediction[ind] + fit_offset
-        prior_price = fit_coeff*prediction[ind - 1] + fit_offset
+        current_price = np.mean(fit_coeff*prediction[(ind-fuzziness):(ind+fuzziness)] + fit_offset)
+        prior_price = np.mean(fit_coeff*prediction[(ind-fuzziness-1):(ind+fuzziness-1)] + fit_offset)
         bool_price_test = current_price > prior_price
         upper_price = current_price + err
         lower_price = current_price - err
@@ -132,7 +132,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
     buy_bool = [bool(x) for x in buy_array]
     sell_bool = [bool(x) for x in sell_array]
     if show_plots:
-        market_returns = 100 * (absolute_output[-1] - absolute_output[0]) / absolute_output[0]
+        market_returns = 100 * (absolute_output[-1] - absolute_output[30]) / absolute_output[0]
         returns = find_trade_strategy_value(buy_bool, sell_bool, absolute_output)
         plt.plot(all_times[sell_bool], absolute_output[sell_bool], 'rx')
         plt.plot(all_times[buy_bool], absolute_output[buy_bool], 'gx')
@@ -142,14 +142,14 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
 if __name__ == '__main__':
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_19:52:00_EST.pickle'
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-13_01:01:00_UTC.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-14_23:30:00_UTC.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
     date_from = '2018-07-06 01:22:00 UTC'
-    date_to = '2018-07-13 01:01:00 UTC'
+    date_to = '2018-07-14 23:30:00 UTC'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-05 20:29:00 EST'
     bitinfo_list = ['eth']

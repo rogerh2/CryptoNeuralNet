@@ -1888,13 +1888,13 @@ if __name__ == '__main__':
 
         #date_from = '2018-06-15 10:20:00 EST'
         #date_to = '2018-07-05 20:29:00 EST'
-        date_from = '2018-06-14 08:00:00 UTC'
-        date_to = '2018-07-14 08:00:00 UTC'
-        prediction_length = 6
+        date_from = '2018-07-15 00:00:00 UTC'
+        date_to = '2018-07-16 00:00:00 UTC'
+        prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
         bitinfo_list = ['eth']
-        time_unit = 'hours'
+        time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
         neuron_count = 30
@@ -1907,7 +1907,7 @@ if __name__ == '__main__':
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-05_15:21:00_EST.pickle'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_from_2018-06-14_08:00:00_UTC_to_2018-07-14_08:00:00_UTC.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_from_2018-06-14_08:00:00_UTC_to_2018-07-14_08:00:00_UTC.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
