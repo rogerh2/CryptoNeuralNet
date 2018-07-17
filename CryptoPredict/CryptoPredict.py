@@ -1888,8 +1888,8 @@ if __name__ == '__main__':
 
         #date_from = '2018-06-15 10:20:00 EST'
         #date_to = '2018-07-05 20:29:00 EST'
-        date_from = '2018-07-15 00:00:00 UTC'
-        date_to = '2018-07-16 00:00:00 UTC'
+        date_from = '2018-07-16 06:00:00 UTC'
+        date_to = '2018-07-16 23:00:00 UTC'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
