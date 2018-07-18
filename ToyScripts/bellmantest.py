@@ -131,7 +131,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
     buy_bool = [bool(x) for x in buy_array]
     sell_bool = [bool(x) for x in sell_array]
     if show_plots:
-        market_returns = 100 * (absolute_output[-1] - absolute_output[30]) / absolute_output[0]
+        market_returns = 100 * (absolute_output[-1] - absolute_output[30]) / absolute_output[30]
         returns = find_trade_strategy_value(buy_bool, sell_bool, absolute_output)
         plt.plot(all_times[sell_bool], absolute_output[sell_bool], 'rx')
         plt.plot(all_times[buy_bool], absolute_output[buy_bool], 'gx')
@@ -141,7 +141,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
 if __name__ == '__main__':
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_19:52:00_EST.pickle'
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-16_22:26:00_UTC.pickle'
+    pickle_path = '//Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-17_20:06:00_UTC.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
@@ -149,7 +149,7 @@ if __name__ == '__main__':
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
     date_from = '2018-07-06 01:22:00 UTC'
-    date_to = '2018-07-16 22:26:00 UTC'
+    date_to = '2018-07-17 20:06:00 UTC'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-05 20:29:00 EST'
     bitinfo_list = ['eth']

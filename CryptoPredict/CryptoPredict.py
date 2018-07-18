@@ -109,6 +109,92 @@ def find_optimal_trade_strategy(offset_data, show_plots=False, min_price_jump = 
     else:
         return sell_bool, buy_bool
 
+def find_optimal_trade_strategy_stochastic(prediction, data, offset=40, prediction_offset = 30):
+
+    buy_array = np.zeros(len(data))
+    sell_array = np.zeros(len(data))
+    data_len = len(data)
+    price_is_rising = None
+
+    for i in range(0, data_len-offset):
+        print(str(round(100*i/(data_len-offset), 2)) + '% done finding strategy')
+        ind = data_len - i - 1
+        data_ind = ind + prediction_offset
+        err_arr = np.array([])
+        off_arr = err_arr
+        coeff_arr = err_arr
+        err_judgement_arr = err_arr #this array will contain the residual from the prior datum
+
+        for N in range(10, offset):
+            if i >= prediction_offset:
+                past_predictions = prediction[(ind-N):(ind)]
+                past_data = data[(data_ind-N):(data_ind)]
+            else:
+                past_predictions = prediction[(prediction_offset - N):(prediction_offset+1)]
+                past_data = data[(-N)::]
+
+            #Find error
+            current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
+            curr_coeff = current_fit[0][0]
+            curr_off = current_fit[0][1]
+            current_err = np.sqrt(current_fit[1]/(N-1))
+            err_arr = np.append(err_arr, current_err)
+            off_arr = np.append(off_arr, curr_off)
+            coeff_arr = np.append(coeff_arr, curr_coeff)
+            err_judgement_arr = np.append(err_judgement_arr, current_err/np.sqrt(N))#np.abs(prediction[ind-1] - curr_off - curr_coeff*data[ind-1]) - current_err)
+
+        err_ind = np.argmin(np.abs(err_judgement_arr))
+        err = err_arr[err_ind] #np.sqrt(current_fit[1]/offset)
+        fit_coeff = 1/coeff_arr[err_ind]
+        fit_offset = -off_arr[err_ind]/fit_coeff
+        const_diff = 2*err*fit_coeff
+        fuzziness = err_ind
+
+        #Find trades
+        current_price = np.mean(fit_coeff*prediction[(ind-fuzziness):(ind+fuzziness)] + fit_offset) #(ind-fuzziness):(ind+fuzziness)
+        prior_price = np.mean(fit_coeff*prediction[(ind-fuzziness-1):(ind+fuzziness-1)] + fit_offset) #(ind-fuzziness-1):(ind+fuzziness-1)]
+        bool_price_test = current_price > prior_price
+        upper_price = current_price + err
+        lower_price = current_price - err
+
+
+        if price_is_rising is None:
+            price_is_rising = bool_price_test
+            last_inflection_price = current_price
+        else:
+            upper_inflec = last_inflection_price + err
+            lower_inflec = last_inflection_price - err
+            if bool_price_test != price_is_rising:  # != acts as an xor gate
+                if price_is_rising:
+                    ln_diff = np.log(upper_price) - np.log(lower_price)
+                    sq_diff = (upper_inflec**2 - lower_inflec**2)/2
+                    check_val = sq_diff * ln_diff - const_diff
+                    #The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
+                    #for both the buy and sell prices based on past errors
+                    #both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
+
+                    if check_val > 0:
+                        buy_array[ind] = 1
+                        last_inflection_price = current_price
+                    else:
+                        last_inflection_price = current_price
+                else:
+                    sq_diff = (upper_price**2 - lower_price**2)/2
+                    ln_diff = np.log(upper_inflec) - np.log(lower_inflec)
+                    check_val = sq_diff * ln_diff - const_diff
+
+                    if check_val > 0:
+                        sell_array[ind] = 1
+                        last_inflection_price = current_price
+                    else:
+                        last_inflection_price = current_price
+
+                price_is_rising = bool_price_test
+
+    buy_bool = [bool(x) for x in buy_array]
+    sell_bool = [bool(x) for x in sell_array]
+    return sell_bool, buy_bool
+
 def clean_data(data):
     new_data = data
     data_diff = np.diff(data)
@@ -1297,11 +1383,12 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 148.47 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 147.12 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     price_ax = None
     pred_ax = None
     buy_ax = None
     sell_ax = None
+    starting_price = None
     #TODO remove dependence on hourly prediction
 
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -1379,12 +1466,16 @@ class NaiveTradingBot(BaseTradingBot):
             self.sell_ax[0].set_ydata(sell_values)
             self.sell_ax[0].set_xdata(sell_inds + off_set)
 
+        current_price = full_minute_prices[-1]
+        starting_price = self.starting_price
+        market_returns = str(np.round((current_price - starting_price)/starting_price, 3))
+
         plt.ylim((ymin, ymax))
         plt.xlim((x[0], x[-1]))
         plt.xticks(x, all_ticks[::n])
 
         plt.legend(('Current', 'Predicted'))
-        plt.title('Normalized Price and Prediction')
+        plt.title('Normalized Price and Prediction ( ' + str(market_returns) + '% Market )')
 
         plt.draw()
         plt.pause(0.1)
@@ -1445,7 +1536,7 @@ class NaiveTradingBot(BaseTradingBot):
         #neighborhood_predictions = all_test_predictions[(window_size-1)::]
         neighborhood_predictions = full_minute_prediction[-(self.minute_length+1+off_ind)::]
         full_prediction_frame = pd.DataFrame(data=full_minute_prediction)
-        sell_column, buy_column = find_optimal_trade_strategy(full_prediction_frame.values, min_price_jump=1.25)
+        sell_column, buy_column = find_optimal_trade_strategy_stochastic(full_minute_prediction, full_minute_prices)#find_optimal_trade_strategy(full_prediction_frame.values, min_price_jump=1.25)
         full_sell_inds = np.nonzero(sell_column)[0]
         full_buy_inds = np.nonzero(buy_column)[0]
 
@@ -1516,7 +1607,7 @@ class NaiveTradingBot(BaseTradingBot):
 
         return  usd_wallet, crypto_wallet
 
-    def trade_logic(self, order_dict, last_order_dict):
+    def trade_logic(self): #, order_dict, last_order_dict):
         buy_bool, buy_ind = self.is_jump_in_minute_price_prediction(1)
 
         sell_bool, sell_ind = self.is_jump_in_minute_price_prediction(-1)
@@ -1525,19 +1616,20 @@ class NaiveTradingBot(BaseTradingBot):
             buy_bool = buy_ind < sell_ind
             sell_bool = not buy_bool
 
-        if buy_bool:
-            current_price = round(float(order_dict['bids'][0][0]), 2)
-            last_price = round(float(last_order_dict['bids'][0][0]), 2)
-            current_price_delta = (current_price - last_price)/last_price
-            if current_price_delta < -0.003:
-                buy_bool = False
-
-        elif sell_bool:
-            current_price = round(float(order_dict['asks'][0][0]), 2)
-            last_price = round(float(last_order_dict['bids'][0][0]), 2)
-            current_price_delta = (current_price - last_price)/last_price
-            if current_price_delta > 0.003:
-                sell_bool = False
+        #TODO remove if unnecessary
+        # if buy_bool:
+        #     current_price = round(float(order_dict['bids'][0][0]), 2)
+        #     last_price = round(float(last_order_dict['bids'][0][0]), 2)
+        #     current_price_delta = (current_price - last_price)/last_price
+        #     if current_price_delta < -0.003:
+        #         buy_bool = False
+        #
+        # elif sell_bool:
+        #     current_price = round(float(order_dict['asks'][0][0]), 2)
+        #     last_price = round(float(last_order_dict['bids'][0][0]), 2)
+        #     current_price_delta = (current_price - last_price)/last_price
+        #     if current_price_delta > 0.003:
+        #         sell_bool = False
 
         return  buy_bool, sell_bool
 
@@ -1642,29 +1734,30 @@ class NaiveTradingBot(BaseTradingBot):
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         last_training_time = 0
-        cutoff_time = current_time + 4*3600
+        cutoff_time = current_time + 84*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         hold_eth = False
         whale_watch = False
-        last_price = 0
+        #last_price = 0
+        self.starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         while current_time < cutoff_time:
             #TODO break up tasks in this loop into different methods
             if (current_time > (last_check + 60)) & (current_time < (last_training_time + 1*3600)):
                 last_check = current_time
-                order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
-                order_dict = self.time_out_check(order_dict)
-                order_book = order_dict['bids']
-                last_price = round(float(order_book[0][0]), 2)
+                #order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+                #order_dict = self.time_out_check(order_dict)
+                #order_book = order_dict['bids']
+                #last_price = round(float(order_book[0][0]), 2)
                 time.sleep(1) #ratelimit
                 self.find_data(is_hourly_prediction_needed=False)
-                should_buy, should_sell = self.trade_logic(order_dict, last_order_dict)
+                should_buy, should_sell = self.trade_logic()
 
                 if should_buy:
                     hold_eth = True
                 elif should_sell:
                     hold_eth = False
 
-                last_order_dict = order_dict
+                #last_order_dict = order_dict
                 last_trade_check = current_time
                 current_trade_time = current_time
                 should_stop_loop = False
@@ -1841,7 +1934,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 2
+    code_block = 3
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
