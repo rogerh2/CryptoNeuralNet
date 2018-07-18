@@ -85,11 +85,11 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
         fit_coeff = 1/coeff_arr[err_ind]
         fit_offset = -off_arr[err_ind]/fit_coeff
         const_diff = 2*err*fit_coeff
-        fuzziness = err_ind
+        fuzziness = err_ind + 10
 
-        #Find trades
-        current_price = np.mean(fit_coeff*prediction[(ind-fuzziness):(ind+fuzziness)] + fit_offset) #(ind-fuzziness):(ind+fuzziness)
-        prior_price = np.mean(fit_coeff*prediction[(ind-fuzziness-1):(ind+fuzziness-1)] + fit_offset) #(ind-fuzziness-1):(ind+fuzziness-1)]
+
+        current_price = np.mean(fit_coeff * prediction[(ind - fuzziness):(ind + fuzziness)] + fit_offset)
+        prior_price = np.mean(fit_coeff * prediction[(ind - fuzziness - 1):(ind + fuzziness - 1)] + fit_offset)
         bool_price_test = current_price > prior_price
         upper_price = current_price + err
         lower_price = current_price - err
@@ -141,15 +141,15 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
 if __name__ == '__main__':
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_19:52:00_EST.pickle'
-    pickle_path = '//Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-17_20:06:00_UTC.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-18_02:00:00_UTC_to_2018-07-18_13:00:00_UTC.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
-    date_from = '2018-07-06 01:22:00 UTC'
-    date_to = '2018-07-17 20:06:00 UTC'
+    date_from = '2018-07-18 02:00:00 UTC'
+    date_to = '2018-07-18 13:00:00 UTC'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-05 20:29:00 EST'
     bitinfo_list = ['eth']
