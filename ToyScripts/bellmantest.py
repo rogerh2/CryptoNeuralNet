@@ -5,7 +5,7 @@ from CryptoPredict.CryptoPredict import find_trade_strategy_value
 from  CryptoPredict.CryptoPredict import CoinPriceModel
 
 
-def findoptimaltradestrategy(data, show_plots=False, min_price_jump = 1.0001):
+def findoptimaltradestrategy(data, show_plots=False, min_price_jump = 1.003):
     buy_array = np.zeros(len(data))
     sell_array = np.zeros(len(data))
     all_times = np.arange(0,len(data))
@@ -81,9 +81,9 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
             err_judgement_arr = np.append(err_judgement_arr, current_err/np.sqrt(N))#np.abs(prediction[ind-1] - curr_off - curr_coeff*data[ind-1]) - current_err)
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
-        err = err_arr[err_ind] #np.sqrt(current_fit[1]/offset)
         fit_coeff = 1/coeff_arr[err_ind]
-        fit_offset = -off_arr[err_ind]/fit_coeff
+        err = err_arr[err_ind]*fit_coeff
+        fit_offset = -off_arr[err_ind]*fit_coeff
         const_diff = 2*err*fit_coeff
         fuzziness = err_ind + 10
 
@@ -94,31 +94,31 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
         upper_price = current_price + err
         lower_price = current_price - err
 
-
+        #TODO check integrals, they appear to be WRONG
         if price_is_rising is None:
             price_is_rising = bool_price_test
-            last_inflection_price = current_price
+            last_inflection_price = current_price #TODO have this depend on current info only, not on future data
         else:
             upper_inflec = last_inflection_price + err
             lower_inflec = last_inflection_price - err
             if bool_price_test != price_is_rising:  # != acts as an xor gate
                 if price_is_rising:
                     ln_diff = np.log(upper_price) - np.log(lower_price)
-                    sq_diff = (upper_inflec**2 - lower_inflec**2)/2
-                    check_val = sq_diff * ln_diff - const_diff
+                    sq_diff = ((upper_inflec)**2 - (lower_inflec)**2)/2
+                    check_val = (1/const_diff)*(last_inflection_price - current_price)*ln_diff #0.994 * sq_diff * ln_diff / const_diff - 1
                     #The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
                     #for both the buy and sell prices based on past errors
                     #both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
-
+                    print(str(check_val))
                     if check_val > 0:
                         buy_array[ind] = 1
                         last_inflection_price = current_price
                     else:
                         last_inflection_price = current_price
                 else:
-                    sq_diff = (upper_price**2 - lower_price**2)/2
                     ln_diff = np.log(upper_inflec) - np.log(lower_inflec)
-                    check_val = sq_diff * ln_diff - const_diff
+                    sq_diff = ((upper_price)**2 - (lower_price)**2)/2
+                    check_val = (-1/const_diff)*(last_inflection_price - current_price)*ln_diff #0.994 * sq_diff * ln_diff / const_diff - 1
 
                     if check_val > 0:
                         sell_array[ind] = 1
@@ -141,22 +141,22 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
 if __name__ == '__main__':
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_19:52:00_EST.pickle'
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-18_02:00:00_UTC_to_2018-07-18_13:00:00_UTC.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-17_20:06:00_UTC.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
-    date_from = '2018-07-18 02:00:00 UTC'
-    date_to = '2018-07-18 13:00:00 UTC'
+    date_from = '2018-07-06 01:22:00 UTC'
+    date_to = '2018-07-17 20:06:00 UTC'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-05 20:29:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    cp.test_model(did_train=False)
+    #cp.test_model(did_train=False)
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     absolute_output = test_output[::, 0]
     zerod_output = absolute_output - np.mean(test_output[::, 0])

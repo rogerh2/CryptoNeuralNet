@@ -52,7 +52,7 @@ def find_trade_strategy_value(buy_bool, sell_bool, all_prices):
     for i in range(0,len(sell_bool)):
         if buy_bool[i]:
             if (usd_available > 0):
-                eth_available = usd_available/all_buys[b]
+                eth_available = usd_available/(all_buys[b])
                 usd_available = 0
             b += 1
         elif sell_bool[i]:
