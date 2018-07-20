@@ -48,16 +48,17 @@ def find_trade_strategy_value(buy_bool, sell_bool, all_prices):
     all_sells = all_prices[sell_bool]
     b = 0
     s = 0
+    trade_fee_correction = 1
 
     for i in range(0,len(sell_bool)):
         if buy_bool[i]:
             if (usd_available > 0):
-                eth_available = usd_available/(all_buys[b])
+                eth_available = trade_fee_correction*usd_available/(all_buys[b])
                 usd_available = 0
             b += 1
         elif sell_bool[i]:
             if (eth_available > 0):
-                usd_available = all_sells[s]*eth_available
+                usd_available = trade_fee_correction*all_sells[s]*eth_available
                 eth_available = 0
             s += 1
 
