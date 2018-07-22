@@ -3,9 +3,28 @@ import matplotlib.pyplot as plt
 import pickle
 from CryptoPredict.CryptoPredict import find_trade_strategy_value
 from  CryptoPredict.CryptoPredict import CoinPriceModel
+from scipy.special import expi #exponentianl integral
+from scipy.special import erf #error function
+from scipy.special import ndtr #gaussian cumulative distribution
+
+def gauss(x_i, x_f, mu, sigma):
+    gauss_eval_i = (1 / np.sqrt(2 * np.pi * sigma ** 2)) * np.exp(-((x_i - mu) ** 2) / (2 * sigma ** 2))
+    gauss_eval_f = (1 / np.sqrt(2 * np.pi * sigma ** 2)) * np.exp(-((x_f - mu) ** 2) / (2 * sigma ** 2))
+    gauss_eval = gauss_eval_f - gauss_eval_i
+    return gauss_eval
+
+def findtradeexpexctationvaluewithguassiandistribution(b, s, err):
+    constdiff = 2*erf(2*err)
+    sell_int = s + 2*err*(gauss(s-2*err, s+2*err, s, err))/(ndtr(s+2*err) - ndtr(s-2*err))
+    buy_int = b + 2*err*(expi(b+2*err)-expi(b-2*err))
+
+    expected_return = buy_int*sell_int - constdiff**2
+
+    return expected_return
 
 
-def findoptimaltradestrategy(data, show_plots=False, min_price_jump = 1):
+
+def findoptimaltradestrategy(data, show_plots=False, min_price_jump = 1.006):
     buy_array = np.zeros(len(data))
     sell_array = np.zeros(len(data))
     all_times = np.arange(0,len(data))
@@ -72,20 +91,20 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
             #Find error
             current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
-            curr_coeff = current_fit[0][0]
-            curr_off = current_fit[0][1]
+            current_coeff = current_fit[0][0]
+            current_off = current_fit[0][1]
             current_err = np.sqrt(current_fit[1]/(N-1))
             err_arr = np.append(err_arr, current_err)
-            off_arr = np.append(off_arr, curr_off)
-            coeff_arr = np.append(coeff_arr, curr_coeff)
-            err_judgement_arr = np.append(err_judgement_arr, current_err/np.sqrt(N))#np.abs(prediction[ind-1] - curr_off - curr_coeff*data[ind-1]) - current_err)
+            off_arr = np.append(off_arr, current_off)
+            coeff_arr = np.append(coeff_arr, current_coeff)
+            err_judgement_arr = np.append(err_judgement_arr, np.abs(prediction[ind-1] - current_off - current_coeff*data[ind-1]) + current_err) # current_err/np.sqrt(N)) #
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
         fit_coeff = 1/coeff_arr[err_ind]
-        err = err_arr[err_ind]*fit_coeff
+        err = 2*err_arr[err_ind]*fit_coeff
         fit_offset = -off_arr[err_ind]*fit_coeff
         const_diff = 2*err
-        fuzziness = err_ind + 10
+        fuzziness = 30#int((err_ind + 10)/2) #TODO make more logical fuzziness
 
 
         current_price = np.mean(fit_coeff * prediction[(ind - fuzziness):(ind + fuzziness)] + fit_offset)
@@ -94,7 +113,6 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
         upper_price = current_price + err
         lower_price = current_price - err
 
-        #TODO check integrals, they appear to be WRONG
         if price_is_rising is None:
             price_is_rising = bool_price_test
             last_inflection_price = current_price #TODO have this depend on current info only, not on future data
@@ -105,7 +123,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
                 if price_is_rising:
                     ln_diff = np.log(upper_price) - np.log(lower_price)
                     sq_diff = ((upper_inflec)**2 - (lower_inflec)**2)/2
-                    check_val = sq_diff * ln_diff / const_diff - const_diff
+                    check_val = sq_diff * ln_diff / const_diff**2 - 1
                     #The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
                     #for both the buy and sell prices based on past errors
                     #both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
@@ -118,7 +136,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
                 else:
                     ln_diff = np.log(upper_inflec) - np.log(lower_inflec)
                     sq_diff = ((upper_price)**2 - (lower_price)**2)/2
-                    check_val = sq_diff * ln_diff / const_diff - const_diff
+                    check_val = sq_diff * ln_diff / const_diff ** 2 - 1
 
                     if check_val > 0:
                         sell_array[ind] = 1
@@ -141,15 +159,15 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
 if __name__ == '__main__':
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_19:52:00_EST.pickle'
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-15_00:00:00_UTC_to_2018-07-16_00:00:00_UTC.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-17_20:06:00_UTC.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
 
-    date_from = '2018-07-15 00:00:00 UTC'
-    date_to = '2018-07-16 00:11:00 UTC'
+    date_from = '2018-07-06 01:22:00 UTC'
+    date_to = '2018-07-17 20:06:00 UTC'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-05 20:29:00 EST'
     bitinfo_list = ['eth']
