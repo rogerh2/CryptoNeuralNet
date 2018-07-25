@@ -206,7 +206,7 @@ def find_optimal_trade_strategy_stochastic(prediction, data, offset=40, predicti
                     #The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
                     #for both the buy and sell prices based on past errors
                     #both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
-                    if check_val > (const_diff/(current_price)):
+                    if check_val > 0:
                         buy_array[ind] = 1
 
                     next_inflection_ind = ind
@@ -215,7 +215,7 @@ def find_optimal_trade_strategy_stochastic(prediction, data, offset=40, predicti
                     sq_diff = ((upper_price)**2 - (lower_price)**2)/(2*const_diff)
                     check_val = sq_diff * ln_diff - 1
 
-                    if check_val > (const_diff/(next_inflection_price)):
+                    if check_val > 0:
                         sell_array[ind] = 1
 
                     next_inflection_ind = ind
@@ -1416,7 +1416,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 146.44 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 145.94 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     price_ax = None
     pred_ax = None
     buy_ax = None
@@ -1520,9 +1520,11 @@ class NaiveTradingBot(BaseTradingBot):
         #confidence_length is how many minutes the jump must hold for -1
         #jump_sign should be +-1, -1 for negative jumps and +1 for positive
         if jump_sign == 1:
-            move_type = 'low peak'
+            move_type = 'buy'
+            peak_type = 'low peak'
         elif jump_sign == -1:
-            move_type = 'high peak'
+            move_type = 'sell'
+            peak_type = 'high peak'
 
         full_minute_prediction = self.minute_prediction.values[::, 0]
         full_minute_prices = self.minute_price.values[::, 0]
@@ -1597,17 +1599,20 @@ class NaiveTradingBot(BaseTradingBot):
         min_prediction = np.min(neighborhood_predictions)
         full_width = max_prediction-min_prediction
         current_prediction = neighborhood_predictions[0]
-        if jump_sign == -1:
+        if jump_sign == -1 & (len(sell_inds) > 0):
             pred_ind = sell_inds[0]
-        elif jump_sign == 1:
+        elif jump_sign == 1 & (len(buy_inds) > 0):
             pred_ind = buy_inds[0]
+        else:
+            print('no ' + move_type + 's')
+            return False, None
 
         mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
         prior_sell_inds = np.nonzero(sell_column[0:-(self.minute_length + off_ind)])[0]
         prior_buy_inds = np.nonzero(buy_column[0:-(self.minute_length + off_ind)])[0]
 
         if (pred_ind < 2):
-            print(move_type)
+            print(peak_type)
             return True, pred_ind
         elif (len(prior_sell_inds) > 0) & (len(prior_buy_inds) > 0):
             if (prior_sell_inds[-1] > prior_buy_inds[-1]) & (jump_sign == -1):
@@ -1771,7 +1776,7 @@ class NaiveTradingBot(BaseTradingBot):
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         last_training_time = 0
-        cutoff_time = current_time + 20*3600
+        cutoff_time = current_time + 12*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         hold_eth = False
         whale_watch = False
@@ -1780,7 +1785,7 @@ class NaiveTradingBot(BaseTradingBot):
         self.starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         while current_time < cutoff_time:
             #TODO break up tasks in this loop into different methods
-            if (current_time > (last_check + 60)) & (current_time < (last_training_time + 1*3600)):
+            if (current_time > (last_check + 60)):# & (current_time < (last_training_time + 1*3600)):
                 last_check = current_time
                 #order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
                 #order_dict = self.time_out_check(order_dict)
@@ -1809,19 +1814,19 @@ class NaiveTradingBot(BaseTradingBot):
                         current_trade_time = datetime.utcnow().timestamp()
                         whale_watch = False
 
-            elif current_time > (last_training_time + 1*3600):
-                #In theory this should retrain the model every hour
-                last_training_time = current_time
-                to_date = self.minute_cp.create_standard_dates()
-                from_delta = timedelta(hours=2)
-                from_date = to_date - from_delta
-                fmt = '%Y-%m-%d %H:%M:%S %Z'
-                training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
-                                        prediction_length=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
-                                        prediction_ticker=self.prediction_ticker, time_units='minutes')
-                self.minute_cp.data_obj = training_data
-
-                self.minute_cp.update_model_training()
+            # elif current_time > (last_training_time + 1*3600):
+            #     #In theory this should retrain the model every hour
+            #     last_training_time = current_time
+            #     to_date = self.minute_cp.create_standard_dates()
+            #     from_delta = timedelta(hours=2)
+            #     from_date = to_date - from_delta
+            #     fmt = '%Y-%m-%d %H:%M:%S %Z'
+            #     training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
+            #                             prediction_length=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
+            #                             prediction_ticker=self.prediction_ticker, time_units='minutes')
+            #     self.minute_cp.data_obj = training_data
+            #
+            #     self.minute_cp.update_model_training()
             else:
                 #TODO ensure bot updates trades after missing inflection
                 time.sleep(1) #avoid timeouts
@@ -2018,9 +2023,9 @@ if __name__ == '__main__':
         day = '24'
 
         #date_from = '2018-06-15 10:20:00 EST'
-        #date_to = '2018-07-05 20:29:00 EST'
-        date_from = '2018-07-18 02:00:00 UTC'
-        date_to = '2018-07-18 13:00:00 UTC'
+        #date_to = '2018-07-23 22:07:00 EST'
+        date_from = '2018-07-23 22:08:00 UTC'
+        date_to = '2018-07-25 01:47:00 UTC'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -2028,17 +2033,17 @@ if __name__ == '__main__':
         time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
-        neuron_count = 30
+        neuron_count = 40
         layer_count = 3
         batch_size = 96
         neuron_grid = [40, 40, 40, 40, 40]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
-        #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-05_15:21:00_EST.pickle'
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_hours_from_2018-06-14_08:00:00_UTC_to_2018-07-14_08:00:00_UTC.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-24_10:17:00_UTC_to_2018-07-25_01:47:00_UTC.pickle'
+        #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-23_22:07:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
@@ -2047,8 +2052,14 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_2epochs1532511197.609725.h5'
 
+        naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
+                                    api_key='redacted',
+                                    secret_key='redacted',
+                                    passphrase='redacted', is_sandbox_api=False, minute_len=30)
+
+        naive_bot.continuous_monitoring()
 
         #Another great unit test
         # minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_15minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_6epochs_200neuron1527096914.695041.h5'

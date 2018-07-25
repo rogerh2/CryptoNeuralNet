@@ -120,7 +120,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
                     #The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
                     #for both the buy and sell prices based on past errors
                     #both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
-                    if check_val > (const_diff/(current_price)):
+                    if check_val > 0: #(const_diff/(current_price)):
                         buy_array[ind] = 1
 
                     next_inflection_ind = ind
@@ -131,7 +131,7 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
                     print(str(check_val))
 
-                    if check_val > (const_diff/(next_inflection_price)):
+                    if check_val > 0: #(const_diff/(next_inflection_price)):
                         sell_array[ind] = 1
 
                     next_inflection_ind = ind
@@ -162,15 +162,15 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
 
 if __name__ == '__main__':
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-08_00:00:00_UTC_to_2018-07-09_19:52:00_EST.pickle'
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-06_01:22:00_UTC_to_2018-07-23_22:07:00_UTC.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-23_22:08:00_UTC_to_2018-07-25_01:47:00_UTC.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_2epochs1532511197.609725.h5'
 
-    date_from = '2018-07-06 01:22:00 UTC'
-    date_to = '2018-07-23 22:07:00 UTC'
+    date_from = '2018-07-24 10:17:00 UTC'
+    date_to = '2018-07-25 01:47:00 UTC'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-05 20:29:00 EST'
     bitinfo_list = ['eth']
