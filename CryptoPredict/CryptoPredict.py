@@ -1443,6 +1443,7 @@ class NaiveTradingBot(BaseTradingBot):
             self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
     def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices, buy_inds, sell_inds, pred_buy_inds, pred_sell_inds):
+        #TODO completely rewrite this
         #The two lines below create x axis labels
         full_prediction_times = [dt.strftime('%H:%M') for dt in self.minute_prediction.index]
         full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
@@ -2052,7 +2053,7 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_2epochs1532511197.609725.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                                     api_key='redacted',
