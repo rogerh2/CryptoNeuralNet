@@ -54,7 +54,8 @@ def findoptimaltradestrategy(data, show_plots=False, min_price_jump = 1):
     else:
         return sell_bool, buy_bool
 
-def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output, show_plots=True): #Cannot be copie pasted, this is a test
+def findoptimaltradestrategystochastic(prediction, data, offset, show_plots=True): #Cannot be copie pasted, this is a test
+    #offset refers to how many minutes back in time can be checked for creating a fit
     #TODO add shift size to prediction to determine offset for trade
     buy_array = np.zeros(len(data))
     sell_array = np.zeros(len(data))
@@ -154,21 +155,24 @@ def findoptimaltradestrategystochastic(prediction, data, offset, absolute_output
     buy_bool = [bool(x) for x in buy_array]
     sell_bool = [bool(x) for x in sell_array]
     if show_plots:
-        market_returns = 100 * (absolute_output[-1] - absolute_output[30]) / absolute_output[30]
-        returns, value_over_time = find_trade_strategy_value(buy_bool, sell_bool, absolute_output, return_value_over_time=True)
-        plt.plot(all_times[sell_bool], absolute_output[sell_bool], 'rx')
-        plt.plot(all_times[buy_bool], absolute_output[buy_bool], 'gx')
-        plt.plot(absolute_output)
+        market_returns = 100 * (data[-1] - data[30]) / data[30]
+        returns, value_over_time = find_trade_strategy_value(buy_bool, sell_bool, data, return_value_over_time=True)
+        plt.plot(all_times[sell_bool], data[sell_bool], 'rx')
+        plt.plot(all_times[buy_bool], data[buy_bool], 'gx')
+        plt.plot(data)
         plt.title('Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market')
 
         plt.figure()
         plt.plot(value_over_time, label='Strategy')
-        plt.plot(100*absolute_output/(absolute_output[1]), label='Market')
+        plt.plot(100 * data / (data[1]), label='Market')
         plt.title('Precentage Returns Strategy and Market')
         plt.ylabel('% Return')
         plt.legend()
 
         plt.show()
+
+    else:
+        return sell_bool, buy_bool
 
 if __name__ == '__main__':
     pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-24_10:17:00_UTC_to_2018-07-24_22:17:00_UTC.pickle'
@@ -190,10 +194,8 @@ if __name__ == '__main__':
     cp.test_model(did_train=False)
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     data = test_output[::, 0]
-    zerod_output = data - np.mean(test_output[::, 0])
-    zerod_output = zerod_output.reshape(1, len(zerod_output))
-    zerod_output = zerod_output.T
-    findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, data, show_plots=True)
+
+    findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
 
     price = saved_table.ETH_high.values
     findoptimaltradestrategy(price, show_plots=True)

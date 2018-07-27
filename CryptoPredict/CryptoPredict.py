@@ -139,12 +139,11 @@ def find_optimal_trade_strategy_stochastic(prediction, data, offset=40, predicti
         err_arr = np.array([])
         off_arr = err_arr
         coeff_arr = err_arr
-        prediction_array = err_arr
         err_judgement_arr = err_arr #this array will contain the residual from the prior datum
         fuzzzy_counter = 0
 
         for N in range(10, offset):
-            if i >= prediction_length:
+            if i >= (prediction_length):
                 past_predictions = prediction[(ind-N):(ind)]
                 past_data = data[(data_ind-N):(data_ind)]
             else:
@@ -160,7 +159,12 @@ def find_optimal_trade_strategy_stochastic(prediction, data, offset=40, predicti
             off_arr = np.append(off_arr, current_off)
             coeff_arr = np.append(coeff_arr, current_coeff)
 
-            err_judgement_arr = np.append(err_judgement_arr, np.abs(prediction[ind-1] - current_off - current_coeff*data[ind-1]) +  current_err) # current_err/np.sqrt(N)) #
+            if i >= (prediction_length):
+                err_judgement_arr = np.append(err_judgement_arr, np.abs(prediction[ind-1] - current_off - current_coeff*data[data_ind-1]) +  current_err) # current_err/np.sqrt(N)) #
+            else:
+                err_judgement_arr = np.append(err_judgement_arr, np.abs(
+                    prediction[ind - 1] - current_off - current_coeff * data[
+                        N - 1]) + current_err)  # current_err/np.sqrt(N)) #
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
         fit_coeff = 1/coeff_arr[err_ind]
@@ -1442,6 +1446,25 @@ class NaiveTradingBot(BaseTradingBot):
             self.api_base = 'https://api.gdax.com'
             self.auth_client = gdax.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
+    def prepare_data_for_plotting(self, corrected_full_minute_prediction, full_minute_prices, trade_inds):
+
+        future_trade_inds = np.nonzero(trade_inds[-self.minute_length::])[0] - 30
+        all_trade_inds = np.nonzero(trade_inds)[0]
+
+        if len(trade_inds) == 0:
+            values = np.array([0])
+            inds = values
+        else:
+            inds = all_trade_inds
+            future_trade_values = corrected_full_minute_prediction[future_trade_inds]
+            if len(future_trade_values) == 0:
+                trade_price_values = full_minute_prices[all_trade_inds]
+            else:
+                trade_price_values = full_minute_prices[all_trade_inds[0:-len(future_trade_values)]]
+            values = np.concatenate((trade_price_values, future_trade_values))
+
+        return inds, values
+
     def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices, buy_inds, sell_inds, pred_buy_inds, pred_sell_inds):
         #TODO completely rewrite this
         #The two lines below create x axis labels
@@ -1459,8 +1482,8 @@ class NaiveTradingBot(BaseTradingBot):
         max_price = np.max(full_minute_prices)
         max_pred = np.max(full_minute_prediction + new_prediction_mean)
 
-        ymin = np.min(np.array([min_price, min_pred]))
-        ymax = np.max(np.array([max_price, max_pred]))
+        ymin = 0.99*np.min(np.array([min_price, min_pred]))
+        ymax = 1.01*np.max(np.array([max_price, max_pred]))
 
         #This creates the x axis and ticks
         x_pred = range(off_set, len(full_minute_prediction) + off_set)
@@ -1517,9 +1540,8 @@ class NaiveTradingBot(BaseTradingBot):
         plt.draw()
         plt.pause(0.1)
 
-    def is_jump_in_minute_price_prediction(self, jump_sign): #, confidence_length=1):
-        #confidence_length is how many minutes the jump must hold for -1
-        #jump_sign should be +-1, -1 for negative jumps and +1 for positive
+    def is_peak_in_minute_price_prediction(self, jump_sign, show_plots=True):
+        #jump_sign should be +-1, +1 for valleys (which will rise) and -1 for mountains (which will fall)
         if jump_sign == 1:
             move_type = 'buy'
             peak_type = 'low peak'
@@ -1529,77 +1551,26 @@ class NaiveTradingBot(BaseTradingBot):
 
         full_minute_prediction = self.minute_prediction.values[::, 0]
         full_minute_prices = self.minute_price.values[::, 0]
-        window_size = 25
-        shift_size = 0
-        current_minute_prediction = full_minute_prediction[-(self.minute_length+1)::] #This is the prediction for the future
-
-        neighborhood_prices = full_minute_prices[-window_size::]
-        all_test_predictions = full_minute_prediction[-(self.minute_length + shift_size + window_size):-(self.minute_length-window_size)]
-
-        conf = np.array([]) #average of residuals
-        offsets = conf #the offset
-
-        #TODO determine if shift is necessary with stochastic strategy finder
-        # if shift_size > 0:
-        #     for ind in range(0, 2*shift_size): #This and the following if statement find the offset that best fits the data
-        #         test_predictions = all_test_predictions[(ind):(window_size+ind)]
-        #         current_fit = np.polyfit(neighborhood_prices, test_predictions, 1, full=True)
-        #         current_err = current_fit[1]
-        #         mean_prediction = np.mean(test_predictions)
-        #         sqaured_predictions = [(test_prediction-mean_prediction)**2 for test_prediction in test_predictions]
-        #         rmse = np.sum(sqaured_predictions)
-        #
-        #         if (rmse > 1.1*current_err):
-        #             conf = np.append(conf, [current_err])
-        #             offsets = np.append(offsets, [ind-shift_size])
-        # else:
-        #     test_predictions = all_test_predictions[0:window_size]
-        #     current_fit = np.polyfit(neighborhood_prices, test_predictions, 1, full=True)
-        #     current_err = current_fit[1]
-        #     mean_prediction = np.mean(test_predictions)
-        #     sqaured_predictions = [(test_prediction - mean_prediction) ** 2 for test_prediction in test_predictions]
-        #     rmse = np.sum(sqaured_predictions)
-        #
-        #     if (rmse > 1.1 * current_err):
-        #         conf = np.array([0, 1, 1])
-        #         offsets = np.array([0, 0, 0])
-        #
-        # if len(offsets) > 0:
-        #     off_ind = -int(offsets[np.argmin(conf)])
-        #
-        # else:
-        #     print('low confidence')
-        #     self.plot_prediction(0, full_minute_prediction, full_minute_prices, np.array([0]), np.array([0]), np.array([0]), np.array([0]))
-        #     return False, None
-
-
-        #neighborhood_predictions = all_test_predictions[(window_size-1)::]
 
         off_ind = 0
-        neighborhood_predictions = full_minute_prediction[-(self.minute_length+1+off_ind)::]
-        full_prediction_frame = pd.DataFrame(data=full_minute_prediction)
         sell_column, buy_column = find_optimal_trade_strategy_stochastic(full_minute_prediction, full_minute_prices)#find_optimal_trade_strategy(full_prediction_frame.values, min_price_jump=1.25)
         full_sell_inds = np.nonzero(sell_column)[0]
         full_buy_inds = np.nonzero(buy_column)[0]
 
         #TODO Set the current decision to be the same as the last decision would have been if the last decision was missed
 
-        sell_inds = np.nonzero(sell_column[-(self.minute_length+off_ind)::])[0]
-        buy_inds = np.nonzero(buy_column[-(self.minute_length+off_ind)::])[0]
+        sell_inds = np.nonzero(sell_column[-(self.minute_length+off_ind-1)::])[0]
+        buy_inds = np.nonzero(buy_column[-(self.minute_length+off_ind-1)::])[0]
         if ((len(buy_inds) == 0) & (len(sell_inds) == 0)):
-            self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, np.array([0]),
+            if show_plots:
+                self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, np.array([0]),
                                  np.array([0]))
             print('no trades')
             return False, None
-        elif len(buy_inds) == 0:
-            buy_inds = np.array([3])
 
-        self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, buy_inds, sell_inds)
+        if show_plots:
+            self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, buy_inds, sell_inds)
 
-        max_prediction = np.max(neighborhood_predictions)
-        min_prediction = np.min(neighborhood_predictions)
-        full_width = max_prediction-min_prediction
-        current_prediction = neighborhood_predictions[0]
         if jump_sign == -1 & (len(sell_inds) > 0):
             pred_ind = sell_inds[0]
         elif jump_sign == 1 & (len(buy_inds) > 0):
@@ -1608,11 +1579,11 @@ class NaiveTradingBot(BaseTradingBot):
             print('no ' + move_type + 's')
             return False, None
 
-        mean_diff = np.mean(np.abs(np.diff(neighborhood_predictions)))
+
         prior_sell_inds = np.nonzero(sell_column[0:-(self.minute_length + off_ind)])[0]
         prior_buy_inds = np.nonzero(buy_column[0:-(self.minute_length + off_ind)])[0]
 
-        if (pred_ind < 2):
+        if (pred_ind < 1):
             print(peak_type)
             return True, pred_ind
         elif (len(prior_sell_inds) > 0) & (len(prior_buy_inds) > 0):
@@ -1651,9 +1622,9 @@ class NaiveTradingBot(BaseTradingBot):
         return  usd_wallet, crypto_wallet
 
     def trade_logic(self): #, order_dict, last_order_dict):
-        buy_bool, buy_ind = self.is_jump_in_minute_price_prediction(1)
+        buy_bool, buy_ind = self.is_peak_in_minute_price_prediction(1)
 
-        sell_bool, sell_ind = self.is_jump_in_minute_price_prediction(-1)
+        sell_bool, sell_ind = self.is_peak_in_minute_price_prediction(-1)
 
         if buy_bool & sell_bool: #If an up and down jump is approaching this lets you know which to perform first
             buy_bool = buy_ind < sell_ind
