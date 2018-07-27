@@ -22,7 +22,7 @@ class TestDataSet(unittest.TestCase):
         self.assertEqual(len(self.data_obj.final_table.index), 25)
 
     def test_dataset_creates_correct_predictions(self):
-        self.assertEqual(self.data_obj.fin_table['ETH_open'][7], self.data_obj.output_array[1])
+        self.assertEqual(self.data_obj.fin_table['ETH_high'][7], self.data_obj.output_array[1])
 
     def test_create_buysell_prediction_columns(self):
         date_from = "2018-05-13 00:00:00 EST"
