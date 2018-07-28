@@ -41,18 +41,17 @@ class TestOptimalTradeStrategy(unittest.TestCase):
         sell_bool, buy_bool = findoptimaltradestrategystochastic(prediction[(start_ind - 60):(stop_ind + 60), 0],
                                                                  test_output[(start_ind - 60):(stop_ind + 60), 0], 40,
                                                                  show_plots=False)
-        bot_sell_bool = np.zeros(stop_ind - start_ind)
+        bot_sell_bool = np.zeros(len(prediction))
 
         for i in range(start_ind, stop_ind):
-            strategy_obj = OptimalTradeStrategy(self.prediction[(i-330):(i+30), 0], self.test_output[(i-330):i, 0])
+            strategy_obj = OptimalTradeStrategy(prediction[(i-330):(i+30), 0], test_output[(i-330):i, 0])
             strategy_obj.find_optimal_trade_strategy()
 
-            if strategy_obj.sell_array[-2] == 1:
-                bot_sell_bool[i - start_ind] = 1
+            bot_sell_bool[i] = strategy_obj.sell_array[-1]
 
         plt.figure()
         plt.plot(test_output[start_ind:stop_ind])
-        plt.plot(np.nonzero(bot_sell_bool)[0], test_output[start_ind:stop_ind][np.nonzero(bot_sell_bool)[0]], 'rx')
+        plt.plot(np.nonzero(bot_sell_bool[start_ind:stop_ind])[0], test_output[start_ind:stop_ind][np.nonzero(bot_sell_bool[start_ind:stop_ind])[0]], 'rx')
         plt.title('Simulated Live Bot Sells')
         plt.figure()
 
@@ -66,8 +65,7 @@ class TestOptimalTradeStrategy(unittest.TestCase):
 
         bot_sell_bool = bot_sell_bool > 0
 
-        self.assertEqual(np.sum(sell_bool[60:-60]), np.sum(bot_sell_bool))
-        np.testing.assert_array_equal(sell_bool[60:-60], bot_sell_bool)
+        np.testing.assert_array_equal(sell_bool[60:-60], bot_sell_bool[start_ind:stop_ind])
 
 
 if __name__ == '__main__':
