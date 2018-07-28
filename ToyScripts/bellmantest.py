@@ -326,7 +326,7 @@ class OptimalTradeStrategy:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-24_10:17:00_UTC_to_2018-07-24_22:17:00_UTC.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-23_22:08:00_UTC_to_2018-07-28_00:35:00_UTC.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-23_22:07:00_EST.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
@@ -334,8 +334,8 @@ if __name__ == '__main__':
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
-    date_from = '2018-07-24 10:17:00 UTC'
-    date_to = '2018-07-24 22:17:00 UTC'
+    date_from = '2018-07-23 22:08:00 UTC'
+    date_to = '2018-07-28 00:35:00 UTC'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-23 22:07:00 EST'
     bitinfo_list = ['eth']
@@ -346,7 +346,7 @@ if __name__ == '__main__':
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     data = test_output[::, 0]
 
-    #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
+    findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
     strategy_obj = OptimalTradeStrategy(prediction[0:-17, 0], test_output[0:-47, 0])
     strategy_obj.find_optimal_trade_strategy(show_plots=True )
 

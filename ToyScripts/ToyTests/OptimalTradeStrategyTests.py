@@ -5,11 +5,13 @@ import pickle
 import numpy as np
 import pandas as pd
 from ToyScripts.bellmantest import findoptimaltradestrategystochastic
+import matplotlib.pyplot as plt
 
 
 class TestOptimalTradeStrategy(unittest.TestCase):
 
     def setUp(self):
+        plt.ion()
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
         minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
@@ -33,7 +35,7 @@ class TestOptimalTradeStrategy(unittest.TestCase):
     def test_returns_same_sellbool_as_backtest(self):
         prediction = self.prediction
         test_output = self.test_output
-        start_ind = 500
+        start_ind = 550
         stop_ind = 600
 
         sell_bool, buy_bool = findoptimaltradestrategystochastic(prediction[(start_ind - 60):(stop_ind + 60), 0],
@@ -42,11 +44,25 @@ class TestOptimalTradeStrategy(unittest.TestCase):
         bot_sell_bool = np.zeros(stop_ind - start_ind)
 
         for i in range(start_ind, stop_ind):
-            strategy_obj = OptimalTradeStrategy(self.prediction[(i-330):i, 0], self.test_output[(i-330):i, 0])
+            strategy_obj = OptimalTradeStrategy(self.prediction[(i-330):(i+30), 0], self.test_output[(i-330):i, 0])
             strategy_obj.find_optimal_trade_strategy()
 
-            if strategy_obj.sell_array[-1] == 1:
+            if strategy_obj.sell_array[-2] == 1:
                 bot_sell_bool[i - start_ind] = 1
+
+        plt.figure()
+        plt.plot(test_output[start_ind:stop_ind])
+        plt.plot(np.nonzero(bot_sell_bool)[0], test_output[start_ind:stop_ind][np.nonzero(bot_sell_bool)[0]], 'rx')
+        plt.title('Simulated Live Bot Sells')
+        plt.figure()
+
+        plt.plot(test_output[start_ind:stop_ind])
+        plt.plot(np.nonzero(sell_bool[60:-60])[0], test_output[start_ind:stop_ind][np.nonzero(sell_bool[60:-60])[0]],
+                 'rx')
+        plt.title('Backtested Bot Sells')
+        plt.show()
+        plt.pause(30)
+
 
         bot_sell_bool = bot_sell_bool > 0
 
