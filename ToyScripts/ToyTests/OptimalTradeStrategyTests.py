@@ -35,12 +35,13 @@ class TestOptimalTradeStrategy(unittest.TestCase):
     def test_returns_same_sellbool_as_backtest(self):
         prediction = self.prediction
         test_output = self.test_output
-        start_ind = 550
+        start_ind = 500
         stop_ind = 600
 
-        sell_bool, buy_bool = findoptimaltradestrategystochastic(prediction[(start_ind - 60):(stop_ind + 60), 0],
-                                                                 test_output[(start_ind - 60):(stop_ind + 60), 0], 40,
-                                                                 show_plots=False)
+        strategy_obj_backtest = OptimalTradeStrategy(prediction[(start_ind - 60):(stop_ind + 90), 0], test_output[(start_ind - 60):(stop_ind + 60), 0])
+        strategy_obj_backtest.find_optimal_trade_strategy()
+        sell_bool = strategy_obj_backtest.sell_array
+
         bot_sell_bool = np.zeros(len(prediction))
 
         for i in range(start_ind, stop_ind):
@@ -65,7 +66,7 @@ class TestOptimalTradeStrategy(unittest.TestCase):
 
         bot_sell_bool = bot_sell_bool > 0
 
-        np.testing.assert_array_equal(sell_bool[60:-60], bot_sell_bool[start_ind:stop_ind])
+        np.testing.assert_array_equal(sell_bool[60:-61], bot_sell_bool[start_ind:stop_ind])
 
 
 if __name__ == '__main__':

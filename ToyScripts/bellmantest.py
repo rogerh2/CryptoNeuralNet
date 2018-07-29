@@ -184,7 +184,7 @@ class OptimalTradeStrategy:
         self.data_len = len(data)
 
     def find_fit_info(self, ind):
-
+        #This method searches the past data to determine what value should be used for the error
         prediction = self.prediction
         data = self.data
         offset = self.offset
@@ -252,9 +252,9 @@ class OptimalTradeStrategy:
         # data = data - np.min(data)
         # data = data/np.max(data)
 
-        for i in range(0, data_len - offset):
+        for i in range(offset, data_len):
             print(str(round(100 * i / (data_len - offset), 2)) + '% done')
-            ind = data_len - i
+            ind = i+1
             fuzzzy_counter = 0
 
             # for N in range(10, offset):
@@ -283,7 +283,6 @@ class OptimalTradeStrategy:
 
             if price_is_rising is None:
                 price_is_rising = not bool_price_test
-                #TODO filter bad next_inflection_inds
 
             next_inflection_ind = self.find_next_inflection_ind(prediction, ind, err, fuzziness, not price_is_rising)
 
@@ -295,6 +294,7 @@ class OptimalTradeStrategy:
             else:
                 next_inflection_price = np.mean(fit_coeff * prediction[(next_inflection_ind - fuzziness):(
                 next_inflection_ind + fuzziness)] + fit_offset)
+
             upper_inflec = next_inflection_price + err
             lower_inflec = next_inflection_price - err
             if bool_price_test != price_is_rising:  # != acts as an xor gate
@@ -302,13 +302,13 @@ class OptimalTradeStrategy:
                     ln_diff = (np.log(upper_price) - np.log(lower_price)) / const_diff
                     sq_diff = ((upper_inflec) ** 2 - (lower_inflec) ** 2) / (2 * const_diff)
                     check_val = sq_diff * ln_diff - 1
+                    # TODO find expected value from discrete integral over resiuals
                     # The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
                     # for both the buy and sell prices based on past errors
                     # both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
-                    if (check_val > 0) and (fit_coeff > 0):  # (const_diff/(current_price)):
+                    if (check_val > 0) and (fit_coeff > 0):
                         buy_array[ind] = 1
 
-                    #next_inflection_ind = ind
                 else:
                     ln_diff = (np.log(upper_inflec) - np.log(lower_inflec)) / const_diff
                     sq_diff = ((upper_price) ** 2 - (lower_price) ** 2) / (2 * const_diff)
@@ -316,12 +316,10 @@ class OptimalTradeStrategy:
 
                     print(str(check_val))
 
-                    if (check_val > 0) and (fit_coeff > 0):  # (const_diff/(next_inflection_price)):
+                    if (check_val > 0) and (fit_coeff > 0):
                         sell_array[ind] = 1
 
-                    #next_inflection_ind = ind
-
-                price_is_rising = bool_price_test
+            price_is_rising = bool_price_test
 
         print(str(fuzzzy_counter))
 
@@ -332,12 +330,11 @@ class OptimalTradeStrategy:
             sell_bool = self.sell_array
             buy_bool = self.buy_array
             market_returns = 100 * (data[-1] - data[30]) / data[30]
-            returns, value_over_time = find_trade_strategy_value(buy_bool[0:-1], sell_bool[0:-1], data, return_value_over_time=True)
+            returns, value_over_time = find_trade_strategy_value(buy_bool[1:-1], sell_bool[1:-1], data[0:-1], return_value_over_time=True)
             plt.plot(all_times[sell_bool[0:-1]], data[sell_bool[0:-1]], 'rx')
             plt.plot(all_times[buy_bool[0:-1]], data[buy_bool[0:-1]], 'gx')
             plt.plot(data)
-            plt.title(
-                'Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market')
+            plt.title( 'Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market' )
 
             plt.figure()
             plt.plot(value_over_time, label='Strategy')
@@ -352,7 +349,7 @@ class OptimalTradeStrategy:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-23_22:08:00_EST_to_2018-07-28_20:40:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-07-23_22:08:00_EST_to_2018-07-29_08:30:00_EST.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-23_22:07:00_EST.pickle'
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
@@ -360,8 +357,8 @@ if __name__ == '__main__':
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
-    date_from = '2018-07-23 22:08:00 EST'
-    date_to = '2018-07-28 20:40:00 EST'
+    date_from = '2018-07-23 22:08:00 UTC'
+    date_to = '2018-07-29 08:30:00 EST'
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-23 22:07:00 EST'
     bitinfo_list = ['eth']
@@ -373,8 +370,8 @@ if __name__ == '__main__':
     data = test_output[::, 0]
 
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
-    strategy_obj = OptimalTradeStrategy(prediction[::, 0], test_output[::, 0])
-    # strategy_obj = OptimalTradeStrategy(prediction[220:606, 0], test_output[220:576, 0])
+    strategy_obj = OptimalTradeStrategy(prediction[::, 0], test_output[0:-30, 0])
+    #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
     strategy_obj.find_optimal_trade_strategy(show_plots=True )
 
     #price = saved_table.ETH_high.values
