@@ -248,6 +248,180 @@ def clean_data(data):
 
     return  new_data
 
+class OptimalTradeStrategy:
+
+    offset = 40
+    prediction_len = 30
+
+    def __init__(self, prediction, data):
+        self.data = data
+        self.prediction = prediction
+        self.buy_array = np.zeros(len(data)+1)
+        self.sell_array = np.zeros(len(data)+1)
+        self.data_len = len(data)
+
+    def find_fit_info(self, ind):
+        #This method searches the past data to determine what value should be used for the error
+        prediction = self.prediction
+        data = self.data
+        offset = self.offset
+        err_arr = np.array([])
+        off_arr = err_arr
+        coeff_arr = err_arr
+        err_judgement_arr = err_arr  # this array will contain the residual from the prior datum
+
+        for N in range(10, offset):
+            past_predictions = prediction[(ind - N):(ind)]
+            past_data = data[(ind - N):(ind)]
+
+            # Find error
+            current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
+            current_coeff = current_fit[0][0]
+            current_off = current_fit[0][1]
+            current_err = 2 * np.sqrt(current_fit[1] / (N - 1))
+            err_arr = np.append(err_arr, current_err)
+            off_arr = np.append(off_arr, current_off)
+            coeff_arr = np.append(coeff_arr, current_coeff)
+
+            err_judgement_arr = np.append(err_judgement_arr, np.abs(
+                prediction[ind - 1] - current_off - current_coeff * data[
+                    ind - 1]) + current_err)  # current_err/np.sqrt(N)) #
+
+        err_ind = np.argmin(np.abs(err_judgement_arr))
+        fit_coeff = 1 / coeff_arr[err_ind]
+
+        err = err_arr[err_ind] * fit_coeff
+        fit_offset = -off_arr[err_ind] * fit_coeff
+        const_diff = 2 * err
+        fuzziness = int((err_ind + 10) / 2)  # TODO make more logical fuzziness
+
+        return err, fit_coeff, fit_offset, const_diff, fuzziness
+
+    def find_next_inflection_ind(self, data, ind, err, fuzziness, is_high_peak):
+        for i in range(ind+1, len(data)-1):
+            last_datum = data[i-1]
+            current_datum = data[i]
+            next_datum = data[i+1]
+            last_check = current_datum > last_datum
+            next_check = current_datum > next_datum
+
+            if (last_check == next_check) and (next_check == is_high_peak):
+                if np.abs((current_datum - np.mean(data[(i-fuzziness):(i+fuzziness)]))) < 2*np.std(data[(i-fuzziness):(i+fuzziness)]):
+                    return i
+
+        return (len(data) - 1)
+
+    def find_optimal_trade_strategy(self, show_plots = False):  # Cannot be copie pasted, this is a test
+        # offset refers to how many minutes back in time can be checked for creating a fit
+        # TODO add shift size to prediction to determine offset for trade
+        buy_array = self.buy_array
+        sell_array = self.sell_array
+        data_len = self.data_len
+        prediction = self.prediction
+        data = self.data
+        offset = self.offset
+        price_is_rising = None
+
+        # zerod_prediction = prediction - np.min(prediction)
+        # scaled_prediction = zerod_prediction/np.max(zerod_prediction)
+        # prediction = np.max(data)*scaled_prediction + np.mean(data)
+
+        # data = data - np.min(data)
+        # data = data/np.max(data)
+
+        for i in range(offset, data_len):
+            print(str(round(100 * i / (data_len - offset), 2)) + '% done')
+            ind = i+1
+            fuzzzy_counter = 0
+
+            # for N in range(10, offset):
+            #     past_predictions = prediction[(ind - N):(ind)]
+            #     past_data = data[(ind - N):(ind)]
+            #
+            #     # Find error
+            #     current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
+            #     current_coeff = current_fit[0][0]
+            #     current_off = current_fit[0][1]
+            #     current_err = 2 * np.sqrt(current_fit[1] / (N - 1))
+            #     err_arr = np.append(err_arr, current_err)
+            #     off_arr = np.append(off_arr, current_off)
+            #     coeff_arr = np.append(coeff_arr, current_coeff)
+            #
+            #     err_judgement_arr = np.append(err_judgement_arr, np.abs(prediction[ind - 1] - current_off - current_coeff * data[ind - 1]) + current_err)  # current_err/np.sqrt(N)) #
+
+            err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
+
+
+            current_price = np.mean(fit_coeff * prediction[(ind - fuzziness):(ind + fuzziness)] + fit_offset)
+            prior_price = np.mean(fit_coeff * prediction[(ind - fuzziness - 1):(ind + fuzziness - 1)] + fit_offset)
+            bool_price_test = current_price > prior_price
+            upper_price = current_price + err
+            lower_price = current_price - err
+
+            if price_is_rising is None:
+                price_is_rising = not bool_price_test
+
+            next_inflection_ind = self.find_next_inflection_ind(prediction, ind, err, fuzziness, not price_is_rising)
+
+            if (fuzziness + next_inflection_ind - ind) > 30:  # This factors in the limited precitions available live
+                fuzziness = 30 - (next_inflection_ind - ind)
+                next_inflection_price = np.mean(fit_coeff * prediction[(next_inflection_ind - fuzziness):(
+                next_inflection_ind + fuzziness)] + fit_offset)
+                fuzzzy_counter += 1
+            else:
+                next_inflection_price = np.mean(fit_coeff * prediction[(next_inflection_ind - fuzziness):(
+                next_inflection_ind + fuzziness)] + fit_offset)
+
+            upper_inflec = next_inflection_price + err
+            lower_inflec = next_inflection_price - err
+            if bool_price_test != price_is_rising:  # != acts as an xor gate
+                if price_is_rising:
+                    ln_diff = (np.log(upper_price) - np.log(lower_price)) / const_diff
+                    sq_diff = ((upper_inflec) ** 2 - (lower_inflec) ** 2) / (2 * const_diff)
+                    check_val = sq_diff * ln_diff - 1
+                    # TODO find expected value from discrete integral over resiuals
+                    # The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
+                    # for both the buy and sell prices based on past errors
+                    # both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
+                    if (check_val > 0) and (fit_coeff > 0):
+                        buy_array[ind] = 1
+
+                else:
+                    ln_diff = (np.log(upper_inflec) - np.log(lower_inflec)) / const_diff
+                    sq_diff = ((upper_price) ** 2 - (lower_price) ** 2) / (2 * const_diff)
+                    check_val = sq_diff * ln_diff - 1
+
+                    print(str(check_val))
+
+                    if (check_val > 0) and (fit_coeff > 0):
+                        sell_array[ind] = 1
+
+            price_is_rising = bool_price_test
+
+        print(str(fuzzzy_counter))
+
+        self.buy_array = np.array([bool(x) for x in buy_array])
+        self.sell_array = np.array([bool(x) for x in sell_array])
+        if show_plots:
+            all_times = np.arange(0, len(data))
+            sell_bool = self.sell_array
+            buy_bool = self.buy_array
+            market_returns = 100 * (data[-1] - data[30]) / data[30]
+            returns, value_over_time = find_trade_strategy_value(buy_bool[1:-1], sell_bool[1:-1], data[0:-1], return_value_over_time=True)
+            plt.plot(all_times[sell_bool[0:-1]], data[sell_bool[0:-1]], 'rx')
+            plt.plot(all_times[buy_bool[0:-1]], data[buy_bool[0:-1]], 'gx')
+            plt.plot(data)
+            plt.title( 'Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market' )
+
+            plt.figure()
+            plt.plot(value_over_time, label='Strategy')
+            plt.plot(100 * data / (data[1]), label='Market')
+            plt.title('Precentage Returns Strategy and Market')
+            plt.ylabel('% Return')
+            plt.legend()
+
+            plt.show()
+
 #TODO get rid of create_single_prediction_column
 def create_single_prediction_column(price_data_frame, n, show_plots=False):
     #This finds the optimal trading strategy
@@ -971,11 +1145,7 @@ class CoinPriceModel:
 
             plt.show()
         else:
-            #N = 3
-            #x = np.convolve(zerod_prediction, np.ones((N,)) / N)[N - 1::]
 
-            zerod_prediction = zerod_prediction.reshape(1, len(zerod_prediction))
-            zerod_prediction = zerod_prediction.T
             return prediction, test_output
 
     def create_standard_dates(self):
@@ -1020,7 +1190,6 @@ class CoinPriceModel:
         scaled_price = zerod_price/np.max(zerod_price)
         scaled_prediction = (prediction[::,0] - np.min(prediction))/np.max(prediction - np.min(prediction))
         zerod_prediction = scaled_prediction + scaled_price[-1] - scaled_prediction[-self.prediction_length-1]
-        zerod_prediction = clean_data(zerod_prediction)
         columstr = 'Predicted ' + time_units
         prediction_table = pd.DataFrame({columstr: prediction[::,0]}, index=test_data.final_table.index + delta)
         price_table = pd.DataFrame({'Current': price_array},index=test_data.final_table.index)
@@ -1466,7 +1635,7 @@ class NaiveTradingBot(BaseTradingBot):
         return inds, values
 
     def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices, buy_inds, sell_inds, pred_buy_inds, pred_sell_inds):
-        #TODO completely rewrite this
+        #TODO completely rewrite this to utilize the prepare_data_for_plotting method
         #The two lines below create x axis labels
         full_prediction_times = [dt.strftime('%H:%M') for dt in self.minute_prediction.index]
         full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
@@ -1553,14 +1722,18 @@ class NaiveTradingBot(BaseTradingBot):
         full_minute_prices = self.minute_price.values[::, 0]
 
         off_ind = 0
-        sell_column, buy_column = find_optimal_trade_strategy_stochastic(full_minute_prediction, full_minute_prices)#find_optimal_trade_strategy(full_prediction_frame.values, min_price_jump=1.25)
+        strategy_obj_backtest = OptimalTradeStrategy(full_minute_prediction, full_minute_prices[30::])
+        strategy_obj_backtest.find_optimal_trade_strategy()
+        sell_column = strategy_obj_backtest.sell_array
+        buy_column = strategy_obj_backtest.buy_array
+
         full_sell_inds = np.nonzero(sell_column)[0]
         full_buy_inds = np.nonzero(buy_column)[0]
 
         #TODO Set the current decision to be the same as the last decision would have been if the last decision was missed
 
-        sell_inds = np.nonzero(sell_column[-(self.minute_length+off_ind-1)::])[0]
-        buy_inds = np.nonzero(buy_column[-(self.minute_length+off_ind-1)::])[0]
+        sell_inds = np.nonzero(sell_column)[0]
+        buy_inds = np.nonzero(buy_column)[0]
         if ((len(buy_inds) == 0) & (len(sell_inds) == 0)):
             if show_plots:
                 self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, np.array([0]),
@@ -1572,9 +1745,9 @@ class NaiveTradingBot(BaseTradingBot):
             self.plot_prediction(off_ind, full_minute_prediction, full_minute_prices, full_buy_inds, full_sell_inds, buy_inds, sell_inds)
 
         if jump_sign == -1 & (len(sell_inds) > 0):
-            pred_ind = sell_inds[0]
+            trade_now = sell_column[-1]
         elif jump_sign == 1 & (len(buy_inds) > 0):
-            pred_ind = buy_inds[0]
+            trade_now = buy_column[-1]
         else:
             print('no ' + move_type + 's')
             return False, None
@@ -1583,9 +1756,9 @@ class NaiveTradingBot(BaseTradingBot):
         prior_sell_inds = np.nonzero(sell_column[0:-(self.minute_length + off_ind)])[0]
         prior_buy_inds = np.nonzero(buy_column[0:-(self.minute_length + off_ind)])[0]
 
-        if (pred_ind < 1):
+        if trade_now:
             print(peak_type)
-            return True, pred_ind
+            return True, trade_now
         elif (len(prior_sell_inds) > 0) & (len(prior_buy_inds) > 0):
             if (prior_sell_inds[-1] > prior_buy_inds[-1]) & (jump_sign == -1):
                 print('missed ' + move_type)

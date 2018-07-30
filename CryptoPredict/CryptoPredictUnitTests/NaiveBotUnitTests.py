@@ -1,5 +1,6 @@
 import unittest
 from CryptoPredict.CryptoPredict import NaiveTradingBot, DataSet
+from ToyScripts.bellmantest import OptimalTradeStrategy
 import pickle
 import numpy as np
 import pandas as pd
@@ -8,6 +9,7 @@ import matplotlib.pyplot as plt
 
 
 class NaiveBotUnitTests(unittest.TestCase):
+    #TODO rewrite in to work like OptimalTradeStrategyTests
     def setUp(self):
         plt.ion()
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
@@ -84,72 +86,57 @@ class NaiveBotUnitTests(unittest.TestCase):
         self.assertEqual(len(inds), len(values))
         np.testing.assert_array_equal(values, np.concatenate((prices[trade_inds[0:3]], prediction[trade_inds[3::]-30])))
 
-    def test_is_jump_in_minute_price_prediction_returns_same_buybool_as_backtest(self):
-        prediction, test_output = self.naive_bot.minute_cp.test_model(did_train=False, show_plots=False)
-        start_ind = 100
-        stop_ind = 200
+    def test_jump_in_minute_price_prediction_returns_same_buybool_as_backtest(self):
+        prediction = self.prediction
+        test_output = self.test_output
+        start_ind = 500
+        stop_ind = 600
 
-        sell_bool, buy_bool = findoptimaltradestrategystochastic(prediction[(start_ind-60):(stop_ind+60), 0], test_output[(start_ind-60):(stop_ind+60), 0], 40, show_plots=False)
-        bot_buy_bool = np.zeros(stop_ind-start_ind)
+        strategy_obj_backtest = OptimalTradeStrategy(prediction[(start_ind - 60):(stop_ind + 90), 0],
+                                                     test_output[(start_ind - 60):(stop_ind + 60), 0])
+        strategy_obj_backtest.find_optimal_trade_strategy()
+        buy_bool = strategy_obj_backtest.buy_array
+
+        bot_buy_bool = np.zeros(len(prediction))
 
         for i in range(start_ind, stop_ind):
-            self.naive_bot.minute_prediction = pd.DataFrame(data=prediction[(i-60):(i+30)])
-            self.naive_bot.minute_price = pd.DataFrame(data=test_output[(i-90):(i)])
+            self.naive_bot.minute_prediction = pd.DataFrame(data=prediction[(i - 60):(i + 30)])
+            self.naive_bot.minute_price = pd.DataFrame(data=test_output[(i - 90):(i)])
             jump_bool, jump_ind = self.naive_bot.is_peak_in_minute_price_prediction(1, show_plots=False)
-            if jump_bool and (jump_ind == 0):
-                bot_buy_bool[i - start_ind] = 1
 
-        plt.plot(test_output[start_ind:stop_ind])
-        plt.plot(np.nonzero(bot_buy_bool)[0], test_output[start_ind:stop_ind][np.nonzero(bot_buy_bool)[0]], 'gx')
-        plt.title('Simulated Live Bot Buys')
-        plt.figure()
-
-        plt.plot(test_output[start_ind:stop_ind])
-        plt.plot(np.nonzero(buy_bool[60:-60])[0], test_output[start_ind:stop_ind][np.nonzero(buy_bool[60:-60])[0]], 'gx')
-        plt.title('Backtested Bot Buys')
-        plt.show()
-        plt.pause(2)
+            if jump_ind:
+                if jump_ind < 2:
+                    bot_buy_bool[i] = jump_bool
 
         bot_buy_bool = bot_buy_bool > 0
 
-        self.assertEqual(len(self.naive_bot.minute_price), len(self.naive_bot.minute_prediction))
-        self.assertEqual(len(self.naive_bot.minute_price), 90)
-        self.assertEqual(np.sum(buy_bool[60:-60]), np.sum(bot_buy_bool))
-        np.testing.assert_array_equal(buy_bool[60:-60], bot_buy_bool)
+        np.testing.assert_array_equal(buy_bool[60:-61], bot_buy_bool[start_ind:stop_ind])
 
-    def test_is_jump_in_minute_price_prediction_returns_same_sellbool_as_backtest(self):
-        prediction, test_output = self.naive_bot.minute_cp.test_model(did_train=False, show_plots=False)
-        start_ind = 100
-        stop_ind = 200
+    def test_jump_in_minute_price_prediction_returns_same_sellbool_as_backtest(self):
+        prediction = self.prediction
+        test_output = self.test_output
+        start_ind = 500
+        stop_ind = 600
 
-        sell_bool, buy_bool = findoptimaltradestrategystochastic(prediction[(start_ind-60):(stop_ind+60), 0], test_output[(start_ind-60):(stop_ind+60), 0], 40, show_plots=False)
-        bot_sell_bool = np.zeros(stop_ind-start_ind)
+        strategy_obj_backtest = OptimalTradeStrategy(prediction[(start_ind - 60):(stop_ind + 90), 0],
+                                                     test_output[(start_ind - 60):(stop_ind + 60), 0])
+        strategy_obj_backtest.find_optimal_trade_strategy()
+        sell_bool = strategy_obj_backtest.sell_array
+
+        bot_sell_bool = np.zeros(len(prediction))
 
         for i in range(start_ind, stop_ind):
             self.naive_bot.minute_prediction = pd.DataFrame(data=prediction[(i-60):(i+30)])
             self.naive_bot.minute_price = pd.DataFrame(data=test_output[(i-90):(i)])
             jump_bool, jump_ind = self.naive_bot.is_peak_in_minute_price_prediction(-1, show_plots=False)
-            if jump_bool and (jump_ind == 0):
-                bot_sell_bool[i - start_ind] = 1
 
-        plt.figure()
-        plt.plot(test_output[start_ind:stop_ind])
-        plt.plot(np.nonzero(bot_sell_bool)[0], test_output[start_ind:stop_ind][np.nonzero(bot_sell_bool)[0]], 'rx')
-        plt.title('Simulated Live Bot Sells')
-        plt.figure()
-
-        plt.plot(test_output[start_ind:stop_ind])
-        plt.plot(np.nonzero(sell_bool[60:-60])[0], test_output[start_ind:stop_ind][np.nonzero(sell_bool[60:-60])[0]], 'rx')
-        plt.title('Backtested Bot Sells')
-        plt.show()
-        plt.pause(2)
+            if jump_ind:
+                if jump_ind < 2:
+                    bot_sell_bool[i] = jump_bool
 
         bot_sell_bool = bot_sell_bool > 0
 
-        self.assertEqual(len(self.naive_bot.minute_price), len(self.naive_bot.minute_prediction))
-        self.assertEqual(len(self.naive_bot.minute_price), 90)
-        self.assertEqual(np.sum(sell_bool[60:-60]), np.sum(bot_sell_bool))
-        np.testing.assert_array_equal(sell_bool[60:-60], bot_sell_bool)
+        np.testing.assert_array_equal(sell_bool[60:-61], bot_sell_bool[start_ind:stop_ind])
 
 
 

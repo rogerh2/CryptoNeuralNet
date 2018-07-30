@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 class TestOptimalTradeStrategy(unittest.TestCase):
 
     def setUp(self):
-        plt.ion()
+        # plt.ion()
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
         minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
@@ -45,23 +45,24 @@ class TestOptimalTradeStrategy(unittest.TestCase):
         bot_sell_bool = np.zeros(len(prediction))
 
         for i in range(start_ind, stop_ind):
-            strategy_obj = OptimalTradeStrategy(prediction[(i-330):(i+30), 0], test_output[(i-330):i, 0])
+            strategy_obj = OptimalTradeStrategy(prediction[(i-60):(i+30), 0], test_output[(i-60):i, 0])
             strategy_obj.find_optimal_trade_strategy()
 
             bot_sell_bool[i] = strategy_obj.sell_array[-1]
 
-        plt.figure()
-        plt.plot(test_output[start_ind:stop_ind])
-        plt.plot(np.nonzero(bot_sell_bool[start_ind:stop_ind])[0], test_output[start_ind:stop_ind][np.nonzero(bot_sell_bool[start_ind:stop_ind])[0]], 'rx')
-        plt.title('Simulated Live Bot Sells')
-        plt.figure()
-
-        plt.plot(test_output[start_ind:stop_ind])
-        plt.plot(np.nonzero(sell_bool[60:-60])[0], test_output[start_ind:stop_ind][np.nonzero(sell_bool[60:-60])[0]],
-                 'rx')
-        plt.title('Backtested Bot Sells')
-        plt.show()
-        plt.pause(30)
+        # Uncomment the below and the plt.ion() line in the setUp to see what the strategies do
+        # plt.figure()
+        # plt.plot(test_output[start_ind:stop_ind])
+        # plt.plot(np.nonzero(bot_sell_bool[start_ind:stop_ind])[0], test_output[start_ind:stop_ind][np.nonzero(bot_sell_bool[start_ind:stop_ind])[0]], 'rx')
+        # plt.title('Simulated Live Bot Sells')
+        # plt.figure()
+        #
+        # plt.plot(test_output[start_ind:stop_ind])
+        # plt.plot(np.nonzero(sell_bool[60:-60])[0], test_output[start_ind:stop_ind][np.nonzero(sell_bool[60:-60])[0]],
+        #          'rx')
+        # plt.title('Backtested Bot Sells')
+        # plt.show()
+        # plt.pause(30)
 
 
         bot_sell_bool = bot_sell_bool > 0
