@@ -261,12 +261,13 @@ class OptimalTradeStrategy:
             if sell_now:
                 upper_buy = inflection_price + err
                 lower_buy = inflection_price - err
-                sell_now = False
             else:
                 upper_sell = inflection_price + err
                 lower_sell = inflection_price - err
-                sell_now = True
-            expected_value = expected_value * (1 + self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff))
+            current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
+            if current_expected_return > 0:
+                expected_value = expected_value * (1 + self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff))
+                sell_now = not sell_now
 
         expected_return = expected_value-1
 
@@ -427,7 +428,7 @@ if __name__ == '__main__':
     data = test_output[::, 0]
 
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
-    strategy_obj = OptimalTradeStrategy(prediction[0:54730, 0], test_output[0:54700, 0])
+    strategy_obj = OptimalTradeStrategy(prediction[::, 0], test_output[0:-30, 0])
     #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
     strategy_obj.find_optimal_trade_strategy(saved_inds=saved_inds, show_plots=True )
 
