@@ -130,7 +130,7 @@ class NaiveBotUnitTests(unittest.TestCase):
             self.naive_bot.minute_price = pd.DataFrame(data=test_output[(i-90):(i)])
             jump_bool, jump_ind = self.naive_bot.is_peak_in_minute_price_prediction(-1, show_plots=False)
 
-            if jump_ind:
+            if jump_bool:
                 if jump_ind < 2:
                     bot_sell_bool[i] = jump_bool
 
