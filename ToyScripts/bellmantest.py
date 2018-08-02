@@ -229,7 +229,7 @@ class OptimalTradeStrategy:
             next_check = current_datum > next_datum
 
             if (last_check == next_check) and (next_check == is_high_peak):
-                if np.abs((current_datum - np.mean(data[(i-fuzziness):(i+fuzziness)]))) < 2*np.std(data[(i-fuzziness):(i+fuzziness)]):
+                if np.abs((current_datum - np.mean(data[(i-fuzziness):(i+fuzziness)]))) < 3*np.std(data[(i-fuzziness):(i+fuzziness)]):
                     return i
 
         return (len(data) - 1)
@@ -249,14 +249,16 @@ class OptimalTradeStrategy:
             upper_buy = current_prediction + err
             lower_buy = current_prediction - err
             sell_now = False
+            best_peak = np.argmax(inflection_inds)
         else:
             upper_sell = current_prediction + err
             lower_sell = current_prediction - err
             sell_now = True
+            best_peak = np.argmin(inflection_inds)
 
-        expected_value = 1
+        expected_return_arr = np.array([])
 
-        for i in range(0, len(inflection_inds)):
+        for i in range(0,len(inflection_inds)):
             inflection_price = self.fuzzy_price(fit_coeff, int(inflection_inds[i]), fuzziness, fit_offset)
             if sell_now:
                 upper_buy = inflection_price + err
@@ -264,17 +266,19 @@ class OptimalTradeStrategy:
             else:
                 upper_sell = inflection_price + err
                 lower_sell = inflection_price - err
-            current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
-            if current_expected_return > 0:
-                expected_value = expected_value * (1 + self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff))
-                sell_now = not sell_now
 
-        expected_return = expected_value-1
+            current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
+            expected_return_arr = np.append(expected_return_arr, current_expected_return)
+
+        eval_arr = [x > 0 for x in expected_return_arr]
+
+        if all(eval_arr):
+            expected_return = 1
+        else:
+            expected_return = 0
+
 
         return expected_return
-
-
-
 
     def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False):  # Cannot be copie pasted, this is a test
         # offset refers to how many minutes back in time can be checked for creating a fit
@@ -305,6 +309,21 @@ class OptimalTradeStrategy:
             fuzzzy_counter = 0
 
             if save_inds:
+                # TODO add the ability to
+                # if ind%1440 == 0:
+                #     #In theory this should retrain the model every hour
+                #     to_date = self.minute_cp.create_standard_dates()
+                #     from_delta = timedelta(hours=2)
+                #     from_date = to_date - from_delta
+                #     fmt = '%Y-%m-%d %H:%M:%S %Z'
+                #     training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
+                #                             prediction_length=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
+                #                             prediction_ticker=self.prediction_ticker, time_units='minutes')
+                #     self.minute_cp.data_obj = training_data
+                #
+                #     self.minute_cp.update_model_training()
+
+
                 err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
                 saved_inds[ind, 0] = err
                 saved_inds[ind, 1] = fit_coeff
@@ -318,6 +337,9 @@ class OptimalTradeStrategy:
                 fit_offset = saved_inds[ind, 2]
                 const_diff = saved_inds[ind, 3]
                 fuzziness = int(saved_inds[ind, 4])
+
+            #if fit_coeff < 0:
+            #    continue
 
             current_price = self.fuzzy_price(fit_coeff, ind, fuzziness, fit_offset)
             prior_price = self.fuzzy_price(fit_coeff, ind - 1, fuzziness, fit_offset)
@@ -359,12 +381,12 @@ class OptimalTradeStrategy:
                     # The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
                     # for both the buy and sell prices based on past errors
                     # both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
-                    if (check_val > 0) and (fit_coeff > 0):
+                    if (check_val > 0) & (fit_coeff > 0):
                         buy_array[ind] = 1
 
                 else:
                     print(str(check_val))
-                    if (check_val > 0) and (fit_coeff > 0):
+                    if (check_val > 0) & (fit_coeff > 0):
                         sell_array[ind] = 1
 
             price_is_rising = bool_price_test
@@ -416,7 +438,8 @@ if __name__ == '__main__':
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
     date_from = '2018-06-15 10:20:00 UTC'
-    date_to = '2018-07-30 20:34:00 EST'
+    date_to = '2018-07-30 20:34:00 UTC'
+    start_ind = 0
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-30 20:34:00 EST'
     bitinfo_list = ['eth']
@@ -428,9 +451,9 @@ if __name__ == '__main__':
     data = test_output[::, 0]
 
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
-    strategy_obj = OptimalTradeStrategy(prediction[::, 0], test_output[0:-30, 0])
+    strategy_obj = OptimalTradeStrategy(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
     #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
-    strategy_obj.find_optimal_trade_strategy(saved_inds=saved_inds, show_plots=True )
+    strategy_obj.find_optimal_trade_strategy(saved_inds=saved_inds[start_ind::, ::], show_plots=True )
 
     #price = saved_table.ETH_high.values
     #findoptimaltradestrategy(price, show_plots=True)
