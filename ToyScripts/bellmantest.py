@@ -309,7 +309,7 @@ class OptimalTradeStrategy:
             fuzzzy_counter = 0
 
             if save_inds:
-                # TODO add the ability to
+                # TODO add the ability to increase saved length withut starting over
                 # if ind%1440 == 0:
                 #     #In theory this should retrain the model every hour
                 #     to_date = self.minute_cp.create_standard_dates()
@@ -424,7 +424,7 @@ class OptimalTradeStrategy:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-30_20:34:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-04_13:46:00_EST.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-30_20:34:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/savedTestInds1.pickle'
 
@@ -437,8 +437,8 @@ if __name__ == '__main__':
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
-    date_from = '2018-06-15 10:20:00 UTC'
-    date_to = '2018-07-30 20:34:00 UTC'
+    date_from = '2018-06-15 10:20:00 EST'
+    date_to = '2018-08-04 13:46:00 EST'
     start_ind = 0
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-07-30 20:34:00 EST'
@@ -453,7 +453,7 @@ if __name__ == '__main__':
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
     strategy_obj = OptimalTradeStrategy(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
     #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
-    strategy_obj.find_optimal_trade_strategy(saved_inds=saved_inds[start_ind::, ::], show_plots=True )
+    strategy_obj.find_optimal_trade_strategy(saved_inds=None, show_plots=True )
 
     #price = saved_table.ETH_high.values
     #findoptimaltradestrategy(price, show_plots=True)
