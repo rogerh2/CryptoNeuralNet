@@ -478,9 +478,7 @@ class OptimalTradeStrategy:
         # data = data/np.max(data)
 
         for i in range(offset, data_len):
-            print(str(round(100 * i / (data_len - offset), 2)) + '% done')
             ind = i+1
-            fuzzzy_counter = 0
 
             err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
 
@@ -1664,14 +1662,14 @@ class NaiveTradingBot(BaseTradingBot):
 
         return inds, values
 
-    def plot_prediction(self, off_ind, full_minute_prediction, full_minute_prices, buy_inds, sell_inds, pred_buy_inds, pred_sell_inds):
+    def plot_prediction(self, full_minute_prediction, full_minute_prices, original_buy_inds, original_sell_inds):
         #TODO completely rewrite this to utilize the prepare_data_for_plotting method
         #The two lines below create x axis labels
         full_prediction_times = [dt.strftime('%H:%M') for dt in self.minute_prediction.index]
         full_price_times = [dt.strftime('%H:%M') for dt in self.minute_price.index]
 
         #This section sets offsets for the verticle and horizontal positions of the prediction
-        off_set = off_ind + self.minute_length
+        off_set = self.minute_length
         reverse_offset = len(full_minute_prices) - off_set
         new_prediction_mean = np.mean(full_minute_prices[off_set::]) - np.mean(full_minute_prediction[0:reverse_offset])
 
@@ -1687,29 +1685,14 @@ class NaiveTradingBot(BaseTradingBot):
         #This creates the x axis and ticks
         x_pred = range(off_set, len(full_minute_prediction) + off_set)
         x_price = range(0, len(full_minute_prices))
-        n = int((len(full_minute_prediction) + off_ind + self.minute_length)/5)
-        x = range(0, len(full_minute_prediction) + off_ind + self.minute_length + n, n)
+        n = int((len(full_minute_prediction) + self.minute_length)/5)
+        x = range(0, len(full_minute_prediction) + self.minute_length + n, n)
         all_ticks = full_price_times + full_prediction_times[-(self.minute_length+1)::]
 
-        if len(sell_inds) == 0:
-            sell_pred_values = np.array([0])
-            sell_price_values = np.array([0])
-            sell_values = np.hstack((sell_price_values, sell_pred_values))
-            sell_inds = sell_values
-        else:
-            sell_pred_values = full_minute_prediction[pred_sell_inds + reverse_offset] + new_prediction_mean
-            sell_price_values = full_minute_prices[sell_inds[0:-len(pred_sell_inds)] + off_set]
-            sell_values = np.hstack((sell_price_values, sell_pred_values))
+        buy_inds, buy_values = self.prepare_data_for_plotting(full_minute_prediction, full_minute_prices, original_buy_inds)
+        sell_inds, sell_values = self.prepare_data_for_plotting(full_minute_prediction, full_minute_prices, original_sell_inds)
 
-        if len(buy_inds) == 0:
-            buy_pred_values = np.array([0])
-            buy_price_values = np.array([0])
-            buy_values = np.hstack((buy_price_values, buy_pred_values))
-            buy_inds = buy_values
-        else:
-            buy_pred_values = full_minute_prediction[pred_buy_inds + reverse_offset] + new_prediction_mean
-            buy_price_values = full_minute_prices[buy_inds[0:-len(pred_buy_inds)]+off_set]
-            buy_values = np.hstack((buy_price_values, buy_pred_values))
+
 
         if self.price_ax is None:
             self.price_ax = plt.plot(x_price, full_minute_prices, 'b-')
@@ -1766,12 +1749,12 @@ class NaiveTradingBot(BaseTradingBot):
         buy_inds = np.nonzero(buy_column)[0]
         if ((len(buy_inds) == 0) & (len(sell_inds) == 0)):
             if show_plots:
-                self.plot_prediction(off_ind, prediction, prices, full_buy_inds, full_sell_inds, np.array([0]), np.array([0]))
+                self.plot_prediction(prediction, prices, full_buy_inds, full_sell_inds)
             print('no trades')
             return False, None
 
         if show_plots & (jump_sign == 1): #Saves the graph from needing to plot twice
-            self.plot_prediction(off_ind, prediction, prices, full_buy_inds, full_sell_inds, buy_inds, sell_inds)
+            self.plot_prediction(prediction, prices, full_buy_inds, full_sell_inds)
 
         if jump_sign == -1:
             trade_now = sell_column[-1]
@@ -1969,11 +1952,6 @@ class NaiveTradingBot(BaseTradingBot):
                 self.find_data(is_hourly_prediction_needed=False)
                 should_buy, should_sell = self.trade_logic()
 
-                if should_buy:
-                    hold_eth = True
-                elif should_sell:
-                    hold_eth = False
-
                 #last_order_dict = order_dict
                 last_trade_check = current_time
                 current_trade_time = current_time
@@ -1986,7 +1964,6 @@ class NaiveTradingBot(BaseTradingBot):
                             should_stop_loop = self.trade_limit('sell')
                         time.sleep(1)
                         current_trade_time = datetime.utcnow().timestamp()
-                        whale_watch = False
 
             # elif current_time > (last_training_time + 1*3600):
             #     #In theory this should retrain the model every hour
@@ -2001,73 +1978,73 @@ class NaiveTradingBot(BaseTradingBot):
             #     self.minute_cp.data_obj = training_data
             #
             #     self.minute_cp.update_model_training()
-            else:
-                #TODO ensure bot updates trades after missing inflection
-                time.sleep(1) #avoid timeouts
-                #TODO inspect this error json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
-                order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
-                usd_wallet, crypto_wallet = self.get_wallet_contents()
-                if hold_eth:
-                    balance = np.round(float(crypto_wallet['balance']), 8)
-                    opposite_balance = np.round(float(usd_wallet['balance']), 2) - self.min_usd_balance
-                    trigger = 'buy'
-                    opposite_trigger = 'sell'
-                    opposing_order_type = 'asks'
-                    order_type = 'bids'
-                    opposite_sign = -1
-                else:
-                    balance = np.round(float(usd_wallet['balance']), 2) - self.min_usd_balance
-                    opposite_balance = np.round(float(crypto_wallet['balance']), 8)
-                    trigger = 'sell'
-                    opposite_trigger = 'buy'
-                    opposing_order_type = 'bids'
-                    order_type = 'asks'
-                    opposite_sign = 1
-
-                order_book = order_dict[opposing_order_type]
-                price = round(float(order_book[0][0]), 2)
-                whale_position = self.detect_whale_position(order_book)
-                if whale_position is not None:
-                    whale_price = round(float(order_book[whale_position][0]), 2)
-                else:
-                    whale_position = 20
-
-                opposing_whale = self.detect_opposing_whale(order_dict[order_type])
-
-                if (balance > 0) & (whale_position is not None) & (not opposing_whale):
-                    if whale_position < 9:
-                        trade_price = round(whale_price + opposite_sign*(0.05 - 0.04*(whale_position < 5)), 2)
-                        time.sleep(1)
-                        current_orders = self.auth_client.get_orders()[0]
-                        if len(current_orders) > 0:
-                            current_price = current_orders[0]['price']
-                            current_price = float(current_price)
-                        else:
-                            current_price = 0
-
-                        whale_watch = True
-
-                        if (current_price != trade_price) & (opposite_sign*(price-trade_price)>0):
-                            print('opposing whale')
-                            self.auth_client.cancel_all(product=self.product_id)
-                            self.trade_limit(opposite_trigger, trade_price=trade_price)
-
-                if whale_watch:
-                    if trigger == 'sell':
-                        if (whale_position > 9):
-                            whale_watch = False
-                    else:
-                        if (whale_position > 9):
-                            whale_watch = False
-
-                    current_orders = self.auth_client.get_orders()[0]
-                    if (len(current_orders) > 0) & (whale_position > 9):
-                        self.auth_client.cancel_all(product=self.product_id)
-
-
-                elif (opposite_balance > 0.0099) & (not whale_watch):
-                    print('missed inflection point')
-                    self.trade_limit(trigger)
+            # else:
+            #     #TODO ensure bot updates trades after missing inflection
+            #     time.sleep(1) #avoid timeouts
+            #     #TODO inspect this error json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+            #     order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+            #     usd_wallet, crypto_wallet = self.get_wallet_contents()
+            #     if hold_eth:
+            #         balance = np.round(float(crypto_wallet['balance']), 8)
+            #         opposite_balance = np.round(float(usd_wallet['balance']), 2) - self.min_usd_balance
+            #         trigger = 'buy'
+            #         opposite_trigger = 'sell'
+            #         opposing_order_type = 'asks'
+            #         order_type = 'bids'
+            #         opposite_sign = -1
+            #     else:
+            #         balance = np.round(float(usd_wallet['balance']), 2) - self.min_usd_balance
+            #         opposite_balance = np.round(float(crypto_wallet['balance']), 8)
+            #         trigger = 'sell'
+            #         opposite_trigger = 'buy'
+            #         opposing_order_type = 'bids'
+            #         order_type = 'asks'
+            #         opposite_sign = 1
+            #
+            #     order_book = order_dict[opposing_order_type]
+            #     price = round(float(order_book[0][0]), 2)
+            #     whale_position = self.detect_whale_position(order_book)
+            #     if whale_position is not None:
+            #         whale_price = round(float(order_book[whale_position][0]), 2)
+            #     else:
+            #         whale_position = 20
+            #
+            #     opposing_whale = self.detect_opposing_whale(order_dict[order_type])
+            #
+            #     if (balance > 0) & (whale_position is not None) & (not opposing_whale):
+            #         if whale_position < 9:
+            #             trade_price = round(whale_price + opposite_sign*(0.05 - 0.04*(whale_position < 5)), 2)
+            #             time.sleep(1)
+            #             current_orders = self.auth_client.get_orders()[0]
+            #             if len(current_orders) > 0:
+            #                 current_price = current_orders[0]['price']
+            #                 current_price = float(current_price)
+            #             else:
+            #                 current_price = 0
+            #
+            #             whale_watch = True
+            #
+            #             if (current_price != trade_price) & (opposite_sign*(price-trade_price)>0):
+            #                 print('opposing whale')
+            #                 self.auth_client.cancel_all(product=self.product_id)
+            #                 self.trade_limit(opposite_trigger, trade_price=trade_price)
+            #
+            #     if whale_watch:
+            #         if trigger == 'sell':
+            #             if (whale_position > 9):
+            #                 whale_watch = False
+            #         else:
+            #             if (whale_position > 9):
+            #                 whale_watch = False
+            #
+            #         current_orders = self.auth_client.get_orders()[0]
+            #         if (len(current_orders) > 0) & (whale_position > 9):
+            #             self.auth_client.cancel_all(product=self.product_id)
+            #
+            #
+            #     elif (opposite_balance > 0.0099) & (not whale_watch):
+            #         print('missed inflection point')
+            #         self.trade_limit(trigger)
 
 
             current_time = datetime.utcnow().timestamp()
@@ -2229,9 +2206,9 @@ if __name__ == '__main__':
         minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
-                                    api_key='redacted',
-                                    secret_key='redacted',
-                                    passphrase='redacted', is_sandbox_api=False, minute_len=30)
+                                    api_key='98039321937511de5c66b7f7f8a05170',
+                                    secret_key='QFpXowwWNFjRKCr+K9FSJlaBW/qn8AEuAUydPWuwtIoMvLV0Tr9eEszTuTjTTk+0DDxCoo5oP5ogdoIdKUa2RA==',
+                                    passphrase='hg03xvhw0av', is_sandbox_api=True, minute_len=30)
 
         naive_bot.continuous_monitoring()
 

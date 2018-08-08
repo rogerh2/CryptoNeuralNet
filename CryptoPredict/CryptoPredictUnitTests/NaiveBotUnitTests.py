@@ -44,7 +44,7 @@ class NaiveBotUnitTests(unittest.TestCase):
     def test_prepare_data_for_plotting_handles_no_future_trades(self):
 
         prediction = self.prediction[30:120]
-        prices = self.test_output[0:90]
+        prices = self.test_output[30:90]
 
         trade_arr = np.zeros(120)
         trade_inds = np.array([10, 37, 85])
@@ -59,7 +59,7 @@ class NaiveBotUnitTests(unittest.TestCase):
     def test_prepare_data_for_plotting_handles_no_past_trades(self):
 
         prediction = self.prediction[30:120]
-        prices = self.test_output[0:90]
+        prices = self.test_output[30:90]
 
         trade_arr = np.zeros(120)
         trade_inds = np.array([100, 105, 113])
@@ -74,9 +74,9 @@ class NaiveBotUnitTests(unittest.TestCase):
     def test_prepare_data_for_plotting_handles_past_and_future_trades(self):
 
         prediction = self.prediction[30:120]
-        prices = self.test_output[0:90]
+        prices = self.test_output[30:90]
 
-        trade_arr = np.zeros(120)
+        trade_arr = np.zeros(61)
         trade_inds = np.array([10, 37, 85, 100, 105, 113])
         trade_arr[trade_inds] = 1
         trade_arr = trade_arr > 0
@@ -137,7 +137,6 @@ class NaiveBotUnitTests(unittest.TestCase):
         bot_sell_bool = bot_sell_bool > 0
 
         np.testing.assert_array_equal(sell_bool[60:-61], bot_sell_bool[start_ind:stop_ind])
-
 
 
 
