@@ -2206,9 +2206,9 @@ if __name__ == '__main__':
         minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
-                                    api_key='98039321937511de5c66b7f7f8a05170',
-                                    secret_key='QFpXowwWNFjRKCr+K9FSJlaBW/qn8AEuAUydPWuwtIoMvLV0Tr9eEszTuTjTTk+0DDxCoo5oP5ogdoIdKUa2RA==',
-                                    passphrase='hg03xvhw0av', is_sandbox_api=True, minute_len=30)
+                                    api_key='redacted',
+                                    secret_key='redacted',
+                                    passphrase='redacted', is_sandbox_api=True, minute_len=30)
 
         naive_bot.continuous_monitoring()
 
