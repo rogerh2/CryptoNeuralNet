@@ -293,7 +293,7 @@ class OptimalTradeStrategy:
         if saved_inds is None:
             saved_inds = np.zeros((data_len + 1, 5))
             save_inds = True
-        else:
+        elif len(saved_inds):
             save_inds = False
 
         # zerod_prediction = prediction - np.min(prediction)
@@ -307,6 +307,10 @@ class OptimalTradeStrategy:
             print(str(round(100 * i / (data_len - offset), 2)) + '% done')
             ind = i+1
             fuzzzy_counter = 0
+
+            if ind == len(saved_inds):
+                saved_inds = np.vstack((saved_inds, np.zeros((data_len + 1 - len(saved_inds), 5))))
+                save_inds = True
 
             if save_inds:
                 # TODO add the ability to increase saved length withut starting over
@@ -392,7 +396,7 @@ class OptimalTradeStrategy:
             price_is_rising = bool_price_test
 
         if save_inds:
-            table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/savedTestInds2.pickle'
+            table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/703ModelSavedTestIndsto8042018.pickle'
             with open(table_file_name, 'wb') as file_handle:
                 pickle.dump(saved_inds, file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -424,9 +428,9 @@ class OptimalTradeStrategy:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-04_13:46:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-30_20:34:00_EST.pickle'
-    inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/savedTestInds1.pickle'
+    inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
         saved_table = pickle.load(ds_file)
@@ -435,18 +439,18 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_80neurons_3epochs1532511217.103676.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_2epochs1534230422.515854.h5'
 
+    #date_from = '2018-08-11 08:46:00 EST'
+    #date_to = '2018-08-13 12:39:00 EST'
+    start_ind = 70000
     date_from = '2018-06-15 10:20:00 EST'
-    date_to = '2018-08-04 13:46:00 EST'
-    start_ind = 0
-    #date_from = '2018-06-15 10:20:00 EST'
-    #date_to = '2018-07-30 20:34:00 EST'
+    date_to = '2018-08-11 08:46:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    #cp.test_model(did_train=False)
+    cp.test_model(did_train=False)
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     data = test_output[::, 0]
 
