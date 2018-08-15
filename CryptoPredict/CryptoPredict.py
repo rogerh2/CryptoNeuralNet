@@ -1515,7 +1515,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 145.61 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 143.38 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     price_ax = None
     pred_ax = None
     buy_ax = None
@@ -1834,7 +1834,7 @@ class NaiveTradingBot(BaseTradingBot):
         current_time = datetime.utcnow().timestamp()
         last_check = 0
         last_training_time = 0
-        cutoff_time = current_time + 12*3600
+        cutoff_time = current_time + 96*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         hold_eth = False
         whale_watch = False

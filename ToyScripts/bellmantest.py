@@ -296,13 +296,6 @@ class OptimalTradeStrategy:
         elif len(saved_inds):
             save_inds = False
 
-        # zerod_prediction = prediction - np.min(prediction)
-        # scaled_prediction = zerod_prediction/np.max(zerod_prediction)
-        # prediction = np.max(data)*scaled_prediction + np.mean(data)
-
-        # data = data - np.min(data)
-        # data = data/np.max(data)
-
         for i in range(offset, data_len):
             print(str(round(100 * i / (data_len - offset), 2)) + '% done')
             ind = i+1
@@ -341,9 +334,6 @@ class OptimalTradeStrategy:
                 fit_offset = saved_inds[ind, 2]
                 const_diff = saved_inds[ind, 3]
                 fuzziness = int(saved_inds[ind, 4])
-
-            #if fit_coeff < 0:
-            #    continue
 
             current_price = self.fuzzy_price(fit_coeff, ind, fuzziness, fit_offset)
             prior_price = self.fuzzy_price(fit_coeff, ind - 1, fuzziness, fit_offset)
@@ -428,7 +418,7 @@ class OptimalTradeStrategy:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-08-11_08:46:00_EST_to_2018-08-14_20:12:00_EST.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-07-30_20:34:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
@@ -441,11 +431,11 @@ if __name__ == '__main__':
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_2epochs1534230422.515854.h5'
 
-    #date_from = '2018-08-11 08:46:00 EST'
-    #date_to = '2018-08-13 12:39:00 EST'
-    start_ind = 70000
-    date_from = '2018-06-15 10:20:00 EST'
-    date_to = '2018-08-11 08:46:00 EST'
+    date_from = '2018-08-11 08:46:00 EST'
+    date_to = '2018-08-14 20:12:00 EST'
+    start_ind = 3804
+    #date_from = '2018-06-15 10:20:00 EST'
+    #date_to = '2018-08-11 08:46:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
@@ -453,6 +443,8 @@ if __name__ == '__main__':
     cp.test_model(did_train=False)
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     data = test_output[::, 0]
+
+    #temp_rand_arr = np.random.rand(data.shape[0], 1)[::, 0] #this can be used to test strategy with perfect data (the class needs randomness)
 
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
     strategy_obj = OptimalTradeStrategy(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
