@@ -1515,7 +1515,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 133.84 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 133.68 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     price_ax = None
     pred_ax = None
     buy_ax = None
@@ -1656,10 +1656,10 @@ class NaiveTradingBot(BaseTradingBot):
 
         if jump_sign == -1:
             trade_now = sell_column[-1]
-            prior_inds = np.nonzero(sell_column[0:-(self.minute_length + off_ind)])[0]
+            prior_inds = np.nonzero(sell_column[0:-1])[0]
         elif jump_sign == 1:
             trade_now = buy_column[-1]
-            prior_inds = np.nonzero(buy_column[0:-(self.minute_length + off_ind)])[0]
+            prior_inds = np.nonzero(buy_column[0:-1])[0]
         else:
             print('no ' + move_type + 's')
             return False, None
@@ -1670,7 +1670,8 @@ class NaiveTradingBot(BaseTradingBot):
             return True, trade_now
         elif (len(prior_inds) > 0):
             print('missed ' + move_type)
-            return True, prior_inds[-1]
+            return_ind = len(sell_column) - prior_inds[-1]
+            return True, return_ind
 
         print('no peak')
         return False, None
@@ -1835,6 +1836,8 @@ class NaiveTradingBot(BaseTradingBot):
         #last_price = 0
         #TODO change the starting price to be dynamic again
         self.starting_price = round(float(last_order_dict['asks'][0][0]), 2)
+        print('Begin trading at ' + datetime.strftime(datetime.now(), '%m-%d-%Y %H:%M')
++ ' with current price of $' + str(self.starting_price) + ' per ' + self.prediction_ticker + ' and a minnimum required balance of $' + str(self.min_usd_balance))
         while current_time < cutoff_time:
             #TODO break up tasks in this loop into different methods
             if (current_time > (last_check + 60)):# & (current_time < (last_training_time + 1*3600)):
