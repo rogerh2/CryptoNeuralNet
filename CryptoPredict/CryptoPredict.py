@@ -1756,14 +1756,11 @@ class NaiveTradingBot(BaseTradingBot):
             opposing_order_type = 'bids'
             sign = 1
 
-        # is_opposing_whale = self.detect_opposing_whale(order_dict[opposing_order_type])
-        # if is_opposing_whale:
-        #     return None
-        #TODO fix negative buy price
+
         #the below chooses the best price that will still be at the top of the order book
         trade_price_opp_type = round(float(order_dict[opposing_order_type][0][0]), 2) + 0.01*sign
         trade_price_type = round(float(order_dict[order_type][0][0]), 2) - 0.01*sign
-        trade_price = np.max(sign*np.array([trade_price_opp_type, trade_price_type]))
+        trade_price = np.abs(np.max(sign*np.array([trade_price_opp_type, trade_price_type])))
 
 
         return trade_price
