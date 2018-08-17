@@ -881,6 +881,20 @@ class DataSet:
 
         self.date_to = date_to
 
+    def get_next_data(self, date_to):
+        time_del = timedelta(minutes=1)
+        fmt = '%Y-%m-%d %H:%M:%S %Z'
+        from_datetime = datetime.strptime(self.date_to, fmt) + time_del
+        date_from = datetime.strftime(from_datetime, fmt) + 'EST'
+        old_fin_table = self.fin_table
+        temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
+        next_fin_table = temp_data_obj.fin_table
+        next_fin_table.index = next_fin_table.index + np.max(old_fin_table.index.values) + 1
+
+        self.fin_table = next_fin_table
+
+        self.date_to = date_to
+
 class CoinPriceModel:
 
     model = None
@@ -1102,7 +1116,7 @@ class CoinPriceModel:
                                 prediction_ticker=self.prediction_ticker, time_units=time_units)
         else:
             test_data = self.pred_data_obj
-            test_data.add_data(to_date.strftime(fmt), retain_length=True)
+            test_data.get_next_data(to_date.strftime(fmt))
 
         self.pred_data_obj = test_data
 
@@ -1385,8 +1399,8 @@ class BaseTradingBot:
         x = np.convolve(full_minute_prediction.values[::,0], np.ones((N,)) / N)[N - 1::] #The prediction is too jumpy, this will smooth it
         x_frame = pd.DataFrame(data=x, index=full_minute_prediction.index, columns=full_minute_prediction.columns)
 
-        self.minute_prediction = full_minute_prediction
-        self.minute_price = full_minute_price
+        self.minute_prediction = np.append(self.minute_prediction, full_minute_prediction)
+        self.minute_price = np.append(self.minute_price, full_minute_price)
 
         if is_hourly_prediction_needed:
             full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
