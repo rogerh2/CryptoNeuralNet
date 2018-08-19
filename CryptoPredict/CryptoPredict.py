@@ -884,7 +884,7 @@ class DataSet:
 
     def get_next_data(self, date_to):
         # TODO add ability to change prediction length
-        time_del = timedelta(minutes=1)
+        time_del = timedelta(minutes=1) #Keeps dates from overlapping
         fmt = '%Y-%m-%d %H:%M:%S %Z'
         old_fin_table = self.fin_table
         from_datetime = datetime.strptime(self.date_to, fmt) + time_del

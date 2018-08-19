@@ -202,9 +202,11 @@ class OptimalTradeStrategy:
             current_coeff = current_fit[0][0]
             current_off = current_fit[0][1]
             current_err = 2 * np.sqrt(current_fit[1] / (N - 1))
-            err_arr = np.append(err_arr, current_err)
+
             off_arr = np.append(off_arr, current_off)
             coeff_arr = np.append(coeff_arr, current_coeff)
+            err_arr = np.append(err_arr, current_err)
+
 
             err_judgement_arr = np.append(err_judgement_arr, np.abs(
                 prediction[ind - 1] - current_off - current_coeff * data[
@@ -212,11 +214,31 @@ class OptimalTradeStrategy:
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
         fit_coeff = 1 / coeff_arr[err_ind]
-
         err = err_arr[err_ind] * fit_coeff
         fit_offset = -off_arr[err_ind] * fit_coeff
         const_diff = 2 * err
-        fuzziness = int((err_ind + 10) / 2)  # TODO make more logical fuzziness
+
+        #Find "fuzziness" which is the length of the averaging filter
+        naive_fuzziness = 2*int((err_ind + 10) / 2)  # TODO make more logical fuzziness
+        fuzzy_data = data[(ind-naive_fuzziness):(ind)]
+        fuzzy_err_arr = np.array([])
+
+        for i in range(2, 30):
+            x = np.convolve(prediction, np.ones((i,)) / i)[i - 1::]
+            fuzzy_test_prediction = x[(ind-naive_fuzziness):(ind)]
+            # x = x.reshape(1, len(x))
+            # x = x.T
+            current_fit = np.polyfit(fuzzy_data, fuzzy_test_prediction, 1, full=True)
+            current_fuzzy_err = 2 * np.sqrt(current_fit[1] / (naive_fuzziness - 1))
+            fuzzy_err_arr = np.append(fuzzy_err_arr, current_fuzzy_err)
+
+            current_coeff = current_fit[0][0]
+            current_off = current_fit[0][1]
+            off_arr = np.append(off_arr, current_off)
+            coeff_arr = np.append(coeff_arr, current_coeff)
+
+        err_ind = np.argmin(np.abs(fuzzy_err_arr))
+        fuzziness = int((err_ind + 2))
 
         return err, fit_coeff, fit_offset, const_diff, fuzziness
 
@@ -419,7 +441,7 @@ class OptimalTradeStrategy:
 
 if __name__ == '__main__':
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-17_1:50:00_EST.pickle'
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-08-17_1:50:00_EST_to_2018-08-18_10:09:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-08-11_08:46:00_EST_to_2018-08-16_08:00:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -431,8 +453,8 @@ if __name__ == '__main__':
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1534302516.386919.h5'
 
-    date_from = '2018-08-17 1:50:00 EST'
-    date_to = '2018-08-18 10:09:00 EST'
+    date_from = '2018-08-11 08:46:00 EST'
+    date_to = '2018-08-16 08:00:00 EST'
     start_ind = 0
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-08-17 1:50:00 EST'
