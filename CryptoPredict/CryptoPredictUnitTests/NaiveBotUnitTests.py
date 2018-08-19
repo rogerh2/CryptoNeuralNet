@@ -20,7 +20,7 @@ class NaiveBotUnitTests(unittest.TestCase):
                                     secret_key='redacted',
                                     passphrase='redacted', is_sandbox_api=True, minute_len=30)
 
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-08-11_08:46:00_EST_to_2018-08-14_20:12:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-08-11_08:46:00_EST_to_2018-08-16_08:00:00_EST.pickle'
         date_from = '2018-08-11 08:46:00 EST'
         date_to = '2018-08-14 20:12:00 EST'
         time_units = 'minutes'

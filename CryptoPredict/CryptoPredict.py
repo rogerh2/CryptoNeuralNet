@@ -864,6 +864,7 @@ class DataSet:
         self.final_table=data_frame
 
     def add_data(self, date_to, retain_length=False):
+        # TODO add ability to change prediction length
         time_del = timedelta(minutes=1)
         fmt = '%Y-%m-%d %H:%M:%S %Z'
         from_datetime = datetime.strptime(self.date_to, fmt) + time_del
@@ -882,16 +883,17 @@ class DataSet:
         self.date_to = date_to
 
     def get_next_data(self, date_to):
+        # TODO add ability to change prediction length
         time_del = timedelta(minutes=1)
         fmt = '%Y-%m-%d %H:%M:%S %Z'
+        old_fin_table = self.fin_table
         from_datetime = datetime.strptime(self.date_to, fmt) + time_del
         date_from = datetime.strftime(from_datetime, fmt) + 'EST'
-        old_fin_table = self.fin_table
         temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
         next_fin_table = temp_data_obj.fin_table
         next_fin_table.index = next_fin_table.index + np.max(old_fin_table.index.values) + 1
 
-        self.fin_table = next_fin_table
+        self.fin_table = old_fin_table.append(next_fin_table)
 
         self.date_to = date_to
 
@@ -1096,9 +1098,9 @@ class CoinPriceModel:
         to_date = utc_to_date.astimezone(est)
         return to_date
 
-    def predict(self, time_units='hours', show_plots=True):
+    def predict(self, time_units='hours', show_plots=True, old_prediction=np.array([]), is_first_prediction=True):
         fmt = '%Y-%m-%d %H:%M:%S %Z'
-        to_date = self.create_standard_dates()
+        to_date = datetime.now()
         if time_units == 'minutes':
             delta = timedelta(minutes=self.prediction_length)
             from_delta = timedelta(hours=2)
@@ -1112,26 +1114,27 @@ class CoinPriceModel:
 
         if self.pred_data_obj is None:
             from_date = to_date - from_delta
-            test_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt), prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list,
+            test_data = DataSet(date_from=(from_date.strftime(fmt)+' EST'), date_to=(to_date.strftime(fmt)+' EST'), prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list,
                                 prediction_ticker=self.prediction_ticker, time_units=time_units)
         else:
+            # TODO add ability to change prediction length in case its not one minute
             test_data = self.pred_data_obj
-            test_data.get_next_data(to_date.strftime(fmt))
+            test_data.get_next_data(to_date.strftime(fmt) + ' EST')
 
         self.pred_data_obj = test_data
 
         test_data.create_prediction_arrays()
         prediction_input = test_data.input_array #do not use the create array methods here because the output is not needed
-        prediction = self.model.predict(prediction_input)
+        if is_first_prediction:
+            prediction = self.model.predict(prediction_input)
+        else:
+            prediction = self.model.predict(prediction_input[len(old_prediction)::, ::, ::])
+
         price_array = test_data.output_array
         self.data_obj = test_data
 
-        zerod_price = price_array - np.min(price_array)
-        scaled_price = zerod_price/np.max(zerod_price)
-        scaled_prediction = (prediction[::,0] - np.min(prediction))/np.max(prediction - np.min(prediction))
-        zerod_prediction = scaled_prediction + scaled_price[-1] - scaled_prediction[-self.prediction_length-1]
         columstr = 'Predicted ' + time_units
-        prediction_table = pd.DataFrame({columstr: prediction[::,0]}, index=test_data.final_table.index + delta)
+        prediction_table = pd.DataFrame({columstr: np.append(old_prediction, prediction[::,0])}, index=test_data.final_table.index + delta)
         price_table = pd.DataFrame({'Current': price_array},index=test_data.final_table.index)
 
         if show_plots:
@@ -1391,16 +1394,18 @@ class BaseTradingBot:
         self.hour_length = hourly_len
         self.minute_length = minute_len
         self.prediction_ticker = prediction_ticker.upper()
+        self.minute_prediction = None
+        self.minute_price = None
 
     def find_data(self, is_hourly_prediction_needed = True):
 
-        full_minute_prediction, full_minute_price = self.minute_cp.predict(time_units='minutes', show_plots=False)
-        N = 3
-        x = np.convolve(full_minute_prediction.values[::,0], np.ones((N,)) / N)[N - 1::] #The prediction is too jumpy, this will smooth it
-        x_frame = pd.DataFrame(data=x, index=full_minute_prediction.index, columns=full_minute_prediction.columns)
+        if self.minute_price is None:
+            full_minute_prediction, full_minute_price = self.minute_cp.predict(time_units='minutes', show_plots=False)
+        else:
+            full_minute_prediction, full_minute_price = self.minute_cp.predict(time_units='minutes', show_plots=False, old_prediction=self.minute_prediction.values[::, 0], is_first_prediction=False)
 
-        self.minute_prediction = np.append(self.minute_prediction, full_minute_prediction)
-        self.minute_price = np.append(self.minute_price, full_minute_price)
+        self.minute_prediction = full_minute_prediction
+        self.minute_price = full_minute_price
 
         if is_hourly_prediction_needed:
             full_hourly_prediction, full_hourly_price = self.hourly_cp.predict(time_units='hours', show_plots=False)
@@ -1529,7 +1534,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 133.68 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 133.09 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     price_ax = None
     pred_ax = None
     buy_ax = None
@@ -1539,8 +1544,8 @@ class NaiveTradingBot(BaseTradingBot):
 
     def __init__(self, hourly_model, minute_model, api_key, secret_key, passphrase, hourly_len=6, minute_len=15, prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
-        plt.ion()
-        self.fig = plt.figure("buy")
+        #plt.ion()
+        #self.fig = plt.figure("buy")
         if bitinfo_list is None:
             bitinfo_list = ['eth']
 
@@ -1647,7 +1652,7 @@ class NaiveTradingBot(BaseTradingBot):
         prices = self.minute_price.values[::, 0]
 
         off_ind = 0
-        strategy_obj = OptimalTradeStrategy(prediction, prices[30::])
+        strategy_obj = OptimalTradeStrategy(prediction[-90::], prices[-60::])
         strategy_obj.find_optimal_trade_strategy()
         sell_column = strategy_obj.sell_array
         buy_column = strategy_obj.buy_array
@@ -1722,21 +1727,6 @@ class NaiveTradingBot(BaseTradingBot):
         if buy_bool & sell_bool: #If an up and down jump is approaching this lets you know which to perform first
             buy_bool = buy_ind < sell_ind
             sell_bool = not buy_bool
-
-        #TODO remove if unnecessary
-        # if buy_bool:
-        #     current_price = round(float(order_dict['bids'][0][0]), 2)
-        #     last_price = round(float(last_order_dict['bids'][0][0]), 2)
-        #     current_price_delta = (current_price - last_price)/last_price
-        #     if current_price_delta < -0.003:
-        #         buy_bool = False
-        #
-        # elif sell_bool:
-        #     current_price = round(float(order_dict['asks'][0][0]), 2)
-        #     last_price = round(float(last_order_dict['bids'][0][0]), 2)
-        #     current_price_delta = (current_price - last_price)/last_price
-        #     if current_price_delta > 0.003:
-        #         sell_bool = False
 
         return  buy_bool, sell_bool
 
@@ -1848,7 +1838,6 @@ class NaiveTradingBot(BaseTradingBot):
         hold_eth = False
         whale_watch = False
         #last_price = 0
-        #TODO change the starting price to be dynamic again
         self.starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         print('Begin trading at ' + datetime.strftime(datetime.now(), '%m-%d-%Y %H:%M')
 + ' with current price of $' + str(self.starting_price) + ' per ' + self.prediction_ticker + ' and a minnimum required balance of $' + str(self.min_usd_balance))
@@ -1891,7 +1880,6 @@ class NaiveTradingBot(BaseTradingBot):
             #
             #     self.minute_cp.update_model_training()
             # else:
-            #     #TODO ensure bot updates trades after missing inflection
             #     time.sleep(1) #avoid timeouts
             #     #TODO inspect this error json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
             #     order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
@@ -2085,10 +2073,10 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        #date_from = '2018-06-15 10:20:00 EST'
-        #date_to = '2018-08-11 08:46:00 EST'
-        date_from = '2018-08-11 08:46:00 EST'
-        date_to = '2018-08-14 20:12:00 EST'
+        #date_from = '2018-08-17 1:50:00 EST'
+        #date_to = datetime.now().strftime('%Y-%m-%d %H:%M:%S') + ' EST'
+        date_from = '2018-06-15 10:20:00 EST'
+        date_to = '2018-08-17 1:50:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -2099,16 +2087,16 @@ if __name__ == '__main__':
         neuron_count = 40
         layer_count = 3
         batch_size = 96
-        neuron_grid = [35, 37, 42, 44]
+        neuron_grid = [40]#[35, 37, 42, 44]
         time_block_length = 60
         min_distance_between_trades = 5
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1534302516.386919.h5'
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-08-11_08:46:00_EST_to_2018-08-14_20:12:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-17_1:50:00_EST.pickle'
         test_model_save_bool = True
-        test_model_from_model_path = True
+        test_model_from_model_path = False
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
 
     elif code_block == 3:
