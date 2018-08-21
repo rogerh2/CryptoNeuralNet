@@ -219,7 +219,7 @@ class OptimalTradeStrategy:
         const_diff = 2 * err
 
         #Find "fuzziness" which is the length of the averaging filter
-        naive_fuzziness = 2*int((err_ind + 10) / 2)  # TODO make more logical fuzziness
+        naive_fuzziness = 2*int((err_ind + 10) / 2)
         fuzzy_data = data[(ind-naive_fuzziness):(ind)]
         fuzzy_err_arr = np.array([])
 
@@ -238,7 +238,8 @@ class OptimalTradeStrategy:
             coeff_arr = np.append(coeff_arr, current_coeff)
 
         err_ind = np.argmin(np.abs(fuzzy_err_arr))
-        fuzziness = int((err_ind + 2))
+        #TODO evaluate need to divide by 2 or not
+        fuzziness = int((err_ind + 2)/2)
 
         return err, fit_coeff, fit_offset, const_diff, fuzziness
 
@@ -263,38 +264,62 @@ class OptimalTradeStrategy:
     def find_expected_value_over_single_trade(self, upper_buy, lower_buy, upper_sell, lower_sell, const_diff):
         ln_diff = (np.log(upper_buy) - np.log(lower_buy)) / const_diff
         sq_diff = ((upper_sell) ** 2 - (lower_sell) ** 2) / (2 * const_diff)
-        check_val = sq_diff * ln_diff - 1
+        expec_val = sq_diff * ln_diff - 1
+        check_val = expec_val
         return check_val
 
-    def find_expected_value_over_many_trades(self, current_prediction, err, price_is_rising, const_diff, inflection_inds, fit_coeff, fuzziness, fit_offset):
+    def find_expected_value_over_many_trades(self, current_prediction, err, price_is_rising, const_diff, inflection_inds, fit_coeff, fuzziness, fit_offset, ind):
+
+        if (fuzziness+ind) >= np.max(inflection_inds):
+            return 0
+
+        non_fuzzy_inds_raw = inflection_inds[inflection_inds > (fuzziness + ind)]
+        non_fuzzy_inds = np.array([int(x) for x in non_fuzzy_inds_raw])
+
         if price_is_rising:
             upper_buy = current_prediction + err
             lower_buy = current_prediction - err
             sell_now = False
-            best_peak = np.argmax(inflection_inds)
+            best_peak_ind = non_fuzzy_inds[np.argmax(self.prediction[non_fuzzy_inds])]
+            lower_sell = self.fuzzy_price(fit_coeff, int(best_peak_ind), fuzziness, fit_offset) - err
+            upper_sell = self.fuzzy_price(fit_coeff, int(best_peak_ind), fuzziness, fit_offset) + err
         else:
             upper_sell = current_prediction + err
             lower_sell = current_prediction - err
             sell_now = True
-            best_peak = np.argmin(inflection_inds)
+            best_peak_ind = non_fuzzy_inds[np.argmin(self.prediction[non_fuzzy_inds])]
+            upper_buy = self.fuzzy_price(fit_coeff, int(best_peak_ind), fuzziness, fit_offset) + err
+            lower_buy = self.fuzzy_price(fit_coeff, int(best_peak_ind), fuzziness, fit_offset) - err
 
         expected_return_arr = np.array([])
+        current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell,
+                                                                             lower_sell, const_diff)
+        expected_return_arr = np.append(expected_return_arr, current_expected_return)
 
         for i in range(0,len(inflection_inds)):
+            if inflection_inds[i] > (fuzziness+ind):
+                continue
             inflection_price = self.fuzzy_price(fit_coeff, int(inflection_inds[i]), fuzziness, fit_offset)
+            current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell,
+                                                                                 lower_sell, const_diff)
+            expected_return_arr = np.append(expected_return_arr, current_expected_return)
             if sell_now:
+                upper_sell = lower_sell = inflection_price + err
+                lower_sell = inflection_price - err
+            else:
                 upper_buy = inflection_price + err
                 lower_buy = inflection_price - err
-            else:
-                upper_sell = inflection_price + err
-                lower_sell = inflection_price - err
 
-            current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
-            expected_return_arr = np.append(expected_return_arr, current_expected_return)
+            # current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
+            #expected_return_arr = np.append(expected_return_arr, current_expected_return)
+
+        current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell,
+                                                                             lower_sell, const_diff)
+        expected_return_arr = np.append(expected_return_arr, current_expected_return)
 
         eval_arr = [x > 0 for x in expected_return_arr]
 
-        if all(eval_arr):
+        if (np.argmax(expected_return_arr) == 0) and (expected_return_arr[0] > 0):
             expected_return = 1
         else:
             expected_return = 0
@@ -391,7 +416,7 @@ class OptimalTradeStrategy:
 
             if bool_price_test != price_is_rising:  # != acts as an xor gate
                 check_val = self.find_expected_value_over_many_trades(current_price, err, price_is_rising, const_diff,
-                                                                      inflection_inds, fit_coeff, fuzziness, fit_offset)
+                                                                      inflection_inds, fit_coeff, fuzziness, fit_offset, ind)
                 if price_is_rising:
                     # TODO find expected value from discrete integral over resiuals
                     # The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
