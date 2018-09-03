@@ -264,14 +264,14 @@ class OptimalTradeStrategy:
         #This method searches the past data to determine what value should be used for the error
         prediction = self.prediction
         data = self.data
-        offset = self.offset
         err_arr = np.array([])
         off_arr = err_arr
         coeff_arr = err_arr
         err_judgement_arr = err_arr  # this array will contain the residual from the prior datum
+        N = 15
 
-        for N in range(10, offset):
-            past_predictions = prediction[(ind - N):(ind)]
+        for i in range(-15, 15):
+            past_predictions = prediction[(ind - N - i):(ind-i)]
             past_data = data[(ind - N):(ind)]
 
             # Find error
@@ -293,63 +293,69 @@ class OptimalTradeStrategy:
         err = err_arr[err_ind] * fit_coeff
         fit_offset = -off_arr[err_ind] * fit_coeff
         const_diff = 2 * err
-        fuzziness = int((err_ind + 10) / 2)  # TODO make more logical fuzziness
 
-        return err, fit_coeff, fit_offset, const_diff, fuzziness
+        return err, fit_coeff, fit_offset, const_diff, err_ind
 
-    def find_next_inflection_ind(self, data, ind, fuzziness, is_high_peak):
-        for i in range(ind+1, len(data)-1):
-            last_datum = data[i-1]
-            current_datum = data[i]
-            next_datum = data[i+1]
-            last_check = current_datum > last_datum
-            next_check = current_datum > next_datum
-
-            if (last_check == next_check) and (next_check == is_high_peak):
-                if np.abs((current_datum - np.mean(data[(i-fuzziness):(i+fuzziness)]))) < 3*np.std(data[(i-fuzziness):(i+fuzziness)]):
-                    return i
-
-        return (len(data) - 1)
-
-    def fuzzy_price(self, fit_coeff, ind, fuzziness, fit_offset):
-        price = np.mean(fit_coeff * self.prediction[(ind - fuzziness):(ind + fuzziness)] + fit_offset)
+    def offset_price(self, fit_coeff, ind, offset, fit_offset):
+        price = np.mean(fit_coeff * self.prediction[ind-offset] + fit_offset)
         return price
 
-    def find_expected_value_over_single_trade(self, upper_buy, lower_buy, upper_sell, lower_sell, const_diff):
-        ln_diff = (np.log(upper_buy) - np.log(lower_buy)) / const_diff
-        sq_diff = ((upper_sell) ** 2 - (lower_sell) ** 2) / (2 * const_diff)
+    def find_expected_value_over_single_trade(self, buy, sell, err, const_diff):
+        ln_diff = (np.log(buy+err) - np.log(buy-err)) / const_diff
+        sq_diff = ((sell+err) ** 2 - (sell-err) ** 2) / (2 * const_diff)
         check_val = sq_diff * ln_diff - 1
         return check_val
 
-    def find_expected_value_over_many_trades(self, current_prediction, err, price_is_rising, const_diff, inflection_inds, fit_coeff, fuzziness, fit_offset):
+    def find_best_trade(self, ind, offset, price_is_rising):
         if price_is_rising:
-            upper_buy = current_prediction + err
-            lower_buy = current_prediction - err
-            sell_now = False
-            best_peak = np.argmax(inflection_inds)
+            best_trade = np.argmax(self.prediction[(ind-offset):(ind+self.prediction_len-offset)]) + ind-offset
         else:
-            upper_sell = current_prediction + err
-            lower_sell = current_prediction - err
+            best_trade = np.argmin(self.prediction[(ind-offset):(ind+self.prediction_len-offset)]) + ind-offset
+
+        return best_trade
+
+    def find_expected_value_over_many_trades(self, current_prediction, err, price_is_rising, const_diff, fit_coeff, offset, fit_offset, ind):
+        if price_is_rising:
+            inflection_price = current_prediction
+            buy = inflection_price
+            sell_now = False
+            best_peak_ind = self.find_best_trade(ind, offset, price_is_rising)
+            sell = self.offset_price(fit_coeff, best_peak_ind, offset, fit_offset)
+            check_price = sell
+        else:
+            inflection_price = current_prediction
+            sell = inflection_price
             sell_now = True
-            best_peak = np.argmin(inflection_inds)
+            best_peak_ind = self.find_best_trade(ind, offset, price_is_rising)
+            buy = self.offset_price(fit_coeff, best_peak_ind, offset, fit_offset)
+            check_price = buy
 
         expected_return_arr = np.array([])
 
-        for i in range(0,len(inflection_inds)):
-            inflection_price = self.fuzzy_price(fit_coeff, int(inflection_inds[i]), fuzziness, fit_offset)
-            if sell_now:
-                upper_buy = inflection_price + err
-                lower_buy = inflection_price - err
-            else:
-                upper_sell = inflection_price + err
-                lower_sell = inflection_price - err
+        current_expected_return = self.find_expected_value_over_single_trade(buy, sell, err, const_diff)
+        expected_return_arr = np.append(expected_return_arr, current_expected_return)
 
-            current_expected_return = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
+        for i in range(1, best_peak_ind - ind):
+            current_ind = i + ind
+            current_inflection = self.offset_price(fit_coeff, current_ind, offset, fit_offset)
+            next_inflection = self.offset_price(fit_coeff, current_ind+1, offset, fit_offset)
+
+            inflection_price = self.offset_price(fit_coeff, current_ind, offset, fit_offset)
+            if sell_now:
+                if (current_inflection > inflection_price) == (current_inflection > next_inflection):
+                    inflection_price = current_inflection
+                sell = inflection_price
+            else:
+                if (current_inflection < inflection_price) == (current_inflection < next_inflection):
+                    inflection_price = current_inflection
+                buy = inflection_price
+
+            current_expected_return = self.find_expected_value_over_single_trade(buy, sell, err, const_diff)
             expected_return_arr = np.append(expected_return_arr, current_expected_return)
 
         eval_arr = [x > 0 for x in expected_return_arr]
 
-        if all(eval_arr):
+        if (np.argmax(expected_return_arr) == 0):
             expected_return = 1
         else:
             expected_return = 0
@@ -357,80 +363,83 @@ class OptimalTradeStrategy:
 
         return expected_return
 
-    def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False):  # Cannot be copie pasted, this is a test
+    def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
         # offset refers to how many minutes back in time can be checked for creating a fit
         # TODO add shift size to prediction to determine offset for trade
         buy_array = self.buy_array
         sell_array = self.sell_array
         data_len = self.data_len
-        prediction = self.prediction
+        data = self.data
         offset = self.offset
         price_is_rising = None
-        if saved_inds is None:
-            saved_inds = np.zeros((data_len + 1, 5))
-            save_inds = True
-        elif len(saved_inds):
-            save_inds = False
+        buy_now = False
+        sell_now = False
 
         for i in range(offset, data_len):
-            print(str(round(100 * i / (data_len - offset), 2)) + '% done')
             ind = i+1
+            fuzzzy_counter = 0
 
-            if ind == len(saved_inds):
-                saved_inds = np.vstack((saved_inds, np.zeros((data_len + 1 - len(saved_inds), 5))))
-                save_inds = True
+            err, fit_coeff, fit_offset, const_diff, offset = self.find_fit_info(ind)
 
-            err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
-
-            current_price = self.fuzzy_price(fit_coeff, ind, fuzziness, fit_offset)
-            prior_price = self.fuzzy_price(fit_coeff, ind - 1, fuzziness, fit_offset)
+            current_price = self.offset_price(fit_coeff, ind, offset, fit_offset)
+            prior_price = self.offset_price(fit_coeff, ind - 1, offset, fit_offset)
             bool_price_test = current_price > prior_price
+
             if price_is_rising is None:
                 price_is_rising = not bool_price_test
 
-            inflection_inds = np.array([])
-
-            current_price_is_rising = not price_is_rising
-            inflection_ind = ind
-
-            while (fuzziness + inflection_ind - ind) < 30:
-                current_price_is_rising = not current_price_is_rising
-                inflection_ind = self.find_next_inflection_ind(prediction, inflection_ind, fuzziness, current_price_is_rising)
-                if (fuzziness + inflection_ind - ind) < 30:
-                    inflection_inds = np.append(inflection_inds, inflection_ind)
-
-            if len(inflection_inds) == 0:
-                continue
-
             if bool_price_test != price_is_rising:  # != acts as an xor gate
-                check_val = self.find_expected_value_over_many_trades(current_price, err, price_is_rising, const_diff,
-                                                                      inflection_inds, fit_coeff, fuzziness, fit_offset)
+                check_val = self.find_expected_value_over_many_trades(current_price, err, price_is_rising, const_diff, fit_coeff, offset, fit_offset, ind)
                 if price_is_rising:
                     # TODO run big test without allowing negative coefficients
                     # The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
                     # for both the buy and sell prices based on past errors
                     # both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
                     if (check_val > 0) & (fit_coeff > 0):
-                        buy_array[ind] = 1
+                        buy_now = True
                     elif (check_val > 0) & (fit_coeff < 0):
-                        sell_array[ind] = 1
+                        sell_now = True
 
                 else:
+                    print(str(check_val))
                     if (check_val > 0) & (fit_coeff > 0):
-                        sell_array[ind] = 1
+                        sell_now = True
                     elif (check_val > 0) & (fit_coeff < 0):
-                        buy_array[ind] = 1
+                        buy_now = True
+
+            if buy_now:
+                buy_array[ind] = 1
+                buy_now = False
+            elif sell_now:
+                sell_array[ind] = 1
+                sell_now = False
 
 
             price_is_rising = bool_price_test
 
-        if save_inds:
-            table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/703ModelSavedTestIndsto8042018.pickle'
-            with open(table_file_name, 'wb') as file_handle:
-                pickle.dump(saved_inds, file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+        print(str(fuzzzy_counter))
 
         self.buy_array = np.array([bool(x) for x in buy_array])
         self.sell_array = np.array([bool(x) for x in sell_array])
+        if show_plots:
+            all_times = np.arange(0, len(data))
+            sell_bool = self.sell_array
+            buy_bool = self.buy_array
+            market_returns = 100 * (data[-1] - data[30]) / data[30]
+            returns, value_over_time = find_trade_strategy_value(buy_bool[1:-1], sell_bool[1:-1], data[0:-1], return_value_over_time=True)
+            plt.plot(all_times[sell_bool[0:-1]], data[sell_bool[0:-1]], 'rx')
+            plt.plot(all_times[buy_bool[0:-1]], data[buy_bool[0:-1]], 'gx')
+            plt.plot(data)
+            plt.title( 'Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market' )
+
+            plt.figure()
+            plt.plot(value_over_time, label='Strategy')
+            plt.plot(100 * data / (data[1]), label='Market')
+            plt.title('Precentage Returns Strategy and Market')
+            plt.ylabel('% Return')
+            plt.legend()
+
+            plt.show()
 
 class CryptoCompare:
 
@@ -1550,7 +1559,7 @@ class NaiveTradingBot(BaseTradingBot):
     current_state = 'hold'
     buy_history = []
     sell_history = []
-    min_usd_balance = 132.312 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
+    min_usd_balance = 130.74 #Make sure the bot does not trade away all my money, will remove limiter once it has proven itself
     price_ax = None
     pred_ax = None
     buy_ax = None
@@ -1690,10 +1699,10 @@ class NaiveTradingBot(BaseTradingBot):
             self.plot_prediction(prediction, prices, full_buy_inds, full_sell_inds)
 
         if jump_sign == -1:
-            trade_now = sell_column[-1]
+            trade_now = sell_column[-2]
             prior_inds = np.nonzero(sell_column[0:-1])[0]
         elif jump_sign == 1:
-            trade_now = buy_column[-1]
+            trade_now = buy_column[-2]
             prior_inds = np.nonzero(buy_column[0:-1])[0]
         else:
             print('no ' + move_type + 's')
@@ -1705,7 +1714,7 @@ class NaiveTradingBot(BaseTradingBot):
             return True, trade_now
         elif (len(prior_inds) > 0):
             print('missed ' + move_type)
-            return_ind = len(sell_column) - prior_inds[-1]
+            return_ind = len(sell_column) - prior_inds[-1] + 1
             return True, return_ind
 
         print('no peak')
@@ -1882,19 +1891,19 @@ class NaiveTradingBot(BaseTradingBot):
                         time.sleep(1)
                         current_trade_time = datetime.now().timestamp()
 
-            # elif current_time > (last_training_time + 1*3600):
-            #     #In theory this should retrain the model every hour
-            #     last_training_time = current_time
-            #     to_date = self.minute_cp.create_standard_dates()
-            #     from_delta = timedelta(hours=2)
-            #     from_date = to_date - from_delta
-            #     fmt = '%Y-%m-%d %H:%M:%S %Z'
-            #     training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
-            #                             prediction_length=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
-            #                             prediction_ticker=self.prediction_ticker, time_units='minutes')
-            #     self.minute_cp.data_obj = training_data
-            #
-            #     self.minute_cp.update_model_training()
+            elif current_time > (last_training_time + 2*3600):
+                #In theory this should retrain the model every hour
+                last_training_time = current_time
+                to_date = self.minute_cp.create_standard_dates()
+                from_delta = timedelta(hours=2)
+                from_date = to_date - from_delta
+                fmt = '%Y-%m-%d %H:%M:%S %Z'
+                training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
+                                        prediction_length=self.minute_cp.prediction_length, bitinfo_list=self.minute_cp.bitinfo_list,
+                                        prediction_ticker=self.prediction_ticker, time_units='minutes')
+                self.minute_cp.data_obj = training_data
+
+                self.minute_cp.update_model_training()
             # else:
             #     time.sleep(1) #avoid timeouts
             #     #TODO inspect this error json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
@@ -2044,7 +2053,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 2
+    code_block = 3
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -2091,8 +2100,8 @@ if __name__ == '__main__':
 
         #date_from = '2018-08-20 19:22:00 EST'
         #date_to = datetime.now().strftime('%Y-%m-%d %H:%M:%S') + ' EST'
-        date_from = '2018-06-15 10:20:00 EST'
-        date_to = '2018-08-27 20:00:00 EST'
+        date_from = '2018-09-02 09:42:00 EST'
+        date_to = '2018-09-02 13:20:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -2101,16 +2110,17 @@ if __name__ == '__main__':
         activ_func = 'relu'
         isleakyrelu = True
         neuron_count = 37
-        layer_count = 3
+        layer_count = 10
         batch_size = 96
-        neuron_grid = [35, 37, 40, 42, 44, 70, 90]
+        old_neuron_grid = [35, 37, 40, 42, 44, 70, 90]
+        neuron_grid = old_neuron_grid#[x*2 for x in old_neuron_grid]
         time_block_length = 60
         min_distance_between_trades = 5
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_2epochs1535089100.806944.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1535811155.092577.h5'
         model_type = 'price' #Don't change this
-        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-27_20:00:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-01_08:04:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = False
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
@@ -2119,7 +2129,7 @@ if __name__ == '__main__':
         #TODO add easier way to redact sensitive info
 
         hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_2epochs1535089100.806944.h5'
+        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1535811155.092577.h5'
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
                                     api_key='redacted',
