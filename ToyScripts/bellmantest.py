@@ -493,15 +493,14 @@ class OptimalTradeStrategyV2:
         return best_trade
 
     def find_expected_value_over_many_trades(self, current_prediction, err, price_is_rising, const_diff, fit_coeff, offset, fit_offset, ind):
+        inflection_price = self.offset_price(fit_coeff, ind, offset, fit_offset)
         if price_is_rising:
-            inflection_price = current_prediction
             buy = inflection_price
             sell_now = False
             best_peak_ind = self.find_best_trade(ind, offset, price_is_rising)
             sell = self.offset_price(fit_coeff, best_peak_ind, offset, fit_offset)
             check_price = sell
         else:
-            inflection_price = current_prediction
             sell = inflection_price
             sell_now = True
             best_peak_ind = self.find_best_trade(ind, offset, price_is_rising)
@@ -708,7 +707,7 @@ class OptimalTradeStrategyV3:
         coeff_arr = err_arr
         err_judgement_arr = err_arr  # this array will contain the residual from the prior datum
 
-        for N in range(2, max_fuzz):
+        for N in range(3, max_fuzz):
             past_predictions = prediction[(ind - N - offset):(ind - offset)]
             past_data = data[(ind - N):(ind)]
 
@@ -722,7 +721,7 @@ class OptimalTradeStrategyV3:
             coeff_arr = np.append(coeff_arr, current_coeff)
 
             err_judgement_arr = np.append(err_judgement_arr, np.abs(
-                prediction[ind - 1] - current_off - current_coeff * data[
+                prediction[ind - 1 - offset] - current_off - current_coeff * data[
                     ind - 1]) + current_err)  # current_err/np.sqrt(N)) #
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
@@ -760,7 +759,7 @@ class OptimalTradeStrategyV3:
             coeff_arr = np.append(coeff_arr, current_coeff)
 
             err_judgement_arr = np.append(err_judgement_arr, np.abs(
-                prediction[ind - 1] - current_off - current_coeff * data[
+                prediction[ind - 1 - i] - current_off - current_coeff * data[
                     ind - 1]) + current_err)  # current_err/np.sqrt(N)) #
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
@@ -777,19 +776,21 @@ class OptimalTradeStrategyV3:
         window_len = 1
         offset = 0
 
-        while (i<inf_loop_protection) & (stop_check > 0.005):
+        while (i<inf_loop_protection) & (stop_check > 0.0005):
             #This loop iteratively finds the best transformations for the fit
             i += 1
             offset_new = self.find_best_offset(ind, window_len)
             err_new, fit_coeff_new, fit_offset_new, const_diff_new, window_len_new = self.find_avg_window_length(ind, offset)
 
-            if err > err_new:
+            if (err > np.abs(err_new)) or (i==1):
                 offset = offset_new
-                err = err_new
+                err = np.abs(err_new)
                 fit_coeff = fit_coeff_new
-                fit_offset = fit_coeff_new
+                fit_offset = fit_offset_new
                 const_diff = const_diff_new
                 window_len = window_len_new
+            else:
+                break
 
             stop_check = err/ref_price
 
@@ -832,15 +833,23 @@ class OptimalTradeStrategyV3:
 
         if price_is_rising:
             buy = inflection_price
-            sell_now = False
+            sell_now = True
             best_peak_ind = np.argmax(prices)
             sell = np.max(prices)
+            ref_prices = prices[0:best_peak_ind+1]
+            if np.argmin(ref_prices) != 0:
+                return 0
+
             check_price = sell
         else:
             sell = inflection_price
-            sell_now = True
+            sell_now = False
             best_peak_ind = np.argmin(prices)
             buy = np.min(prices)
+            ref_prices = prices[0:best_peak_ind+1]
+            if np.argmax(ref_prices) != 0:
+                return 0
+
             check_price = buy
 
         expected_return_arr = np.array([])
@@ -848,21 +857,23 @@ class OptimalTradeStrategyV3:
         current_expected_return = self.find_expected_value_over_single_trade(buy, sell, err, const_diff)
         expected_return_arr = np.append(expected_return_arr, current_expected_return)
 
-        for i in range(1, best_peak_ind):
+        for i in range(best_peak_ind, len(prices)):
             current_inflection = prices[i]
-            next_inflection = prices[i+1]
+            #next_inflection = prices[i+1]
 
             if sell_now:
-                if (current_inflection > inflection_price) == (current_inflection > next_inflection):
-                    inflection_price = current_inflection
-                else:
-                    continue
+                # if (current_inflection > inflection_price) == (current_inflection > next_inflection):
+                #     inflection_price = current_inflection
+                # else:
+                #     continue
+                inflection_price = current_inflection
                 sell = inflection_price
             else:
-                if (current_inflection < inflection_price) == (current_inflection < next_inflection):
-                    inflection_price = current_inflection
-                else:
-                    continue
+                # if (current_inflection < inflection_price) == (current_inflection < next_inflection):
+                #     inflection_price = current_inflection
+                # else:
+                #     continue
+                inflection_price = current_inflection
                 buy = inflection_price
 
             current_expected_return = self.find_expected_value_over_single_trade(buy, sell, err, const_diff)
@@ -870,7 +881,7 @@ class OptimalTradeStrategyV3:
 
         eval_arr = [x > 0 for x in expected_return_arr]
 
-        if (np.argmax(expected_return_arr) == 0):
+        if np.sum(expected_return_arr) > 0:#(np.argmax(expected_return_arr) == 0) & (np.max(expected_return_arr) > 0):
             expected_return = 1
         else:
             expected_return = 0
@@ -943,6 +954,8 @@ class OptimalTradeStrategyV3:
                     self.prediction[ind::] = prediction[(ind)::, 0]
 
                 err, fit_coeff, fit_offset, const_diff, window_len, offset = self.find_fit_info(ind)
+                if fit_coeff < 0:
+                    continue
                 saved_inds[ind, 0] = err
                 saved_inds[ind, 1] = fit_coeff
                 saved_inds[ind, 2] = fit_offset
@@ -957,7 +970,7 @@ class OptimalTradeStrategyV3:
                 offset = int(saved_inds[ind, 4])
 
             current_price = self.offset_price(fit_coeff, ind, offset, window_len, fit_offset)
-            prior_price = self.offset_price(fit_coeff, ind, offset, window_len, fit_offset)
+            prior_price = self.offset_price(fit_coeff, ind-1, offset, window_len, fit_offset)
             bool_price_test = current_price > prior_price
 
             if price_is_rising is None:
@@ -1026,7 +1039,7 @@ class OptimalTradeStrategyV3:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-02_09:42:00_EST_to_2018-09-03_08:50:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-02_09:42:00_EST_to_2018-09-04_01:54:00_EST.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-01_14:31:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
@@ -1037,10 +1050,10 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Updated_Models/ETHmodel_30minutes_reluact_adamopt_mean_absolute_percentage_errorloss1535896841.115379.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1534302516.386919.h5'
 
     date_from = '2018-09-02 09:42:00 EST'
-    date_to = '2018-09-03 08:50:00 EST'
+    date_to = '2018-09-04 01:54:00 EST'
     start_ind = 0
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-09-01 14:31:00 EST'
@@ -1048,7 +1061,7 @@ if __name__ == '__main__':
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    #cp.test_model(did_train=False)
+    cp.test_model(did_train=False)
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     data = test_output[::, 0]
 
