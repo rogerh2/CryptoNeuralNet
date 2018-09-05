@@ -311,21 +311,39 @@ class OptimalTradeStrategy:
             if save_inds:
                 # TODO add the ability to increase saved length withut starting over
                 if (ind%121 == 0) & (fin_table is not None):
-                    #In theory this should retrain the model over predetermined intervals
-                    to_date = fin_table.date[ind-1].to_pydatetime()
+                    # In theory this should retrain the model over predetermined intervals
+                    to_date = fin_table.date[ind - 1].to_pydatetime()
                     from_delta = timedelta(hours=2)
                     from_date = to_date - from_delta
                     test_dates = pd.date_range(from_date, to_date, freq='1min')
                     from_ind = ind - len(test_dates)
                     fmt = '%Y-%m-%d %H:%M:%S'
+
                     training_fin_table = fin_table[from_ind:ind]
                     training_fin_table.index = np.arange(0, len(training_fin_table))
-                    training_data = DataSet(date_from=from_date.strftime(fmt) + ' EST', date_to=to_date.strftime(fmt) + ' EST',
-                                            prediction_length=minute_cp.prediction_length, bitinfo_list=minute_cp.bitinfo_list,
+                    training_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                            date_to=to_date.strftime(fmt) + ' EST',
+                                            prediction_length=minute_cp.prediction_length,
+                                            bitinfo_list=minute_cp.bitinfo_list,
                                             prediction_ticker='ETH', time_units='minutes', fin_table=training_fin_table)
                     minute_cp.data_obj = training_data
 
                     minute_cp.update_model_training()
+
+                    from_date = to_date
+                    to_date = fin_table.date[len(fin_table.date.values) - 1].to_pydatetime()
+                    test_fin_table = fin_table
+                    test_fin_table.index = np.arange(0, len(test_fin_table))
+                    test_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                        date_to=to_date.strftime(fmt) + ' EST',
+                                        prediction_length=minute_cp.prediction_length,
+                                        bitinfo_list=minute_cp.bitinfo_list,
+                                        prediction_ticker='ETH', time_units='minutes', fin_table=test_fin_table)
+                    minute_cp.data_obj = test_data
+
+                    prediction, test_output = minute_cp.test_model(did_train=False, show_plots=False)
+                    # TODO Check to make sure no access to future data!
+                    self.prediction[ind::] = prediction[(ind)::, 0]
 
 
                 err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
@@ -1039,7 +1057,7 @@ class OptimalTradeStrategyV3:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-02_09:42:00_EST_to_2018-09-04_01:54:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-02_09:42:00_EST_to_2018-09-04_20:30:00_EST.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-01_14:31:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
@@ -1050,10 +1068,10 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1534302516.386919.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1535811155.092577.h5'
 
     date_from = '2018-09-02 09:42:00 EST'
-    date_to = '2018-09-04 01:54:00 EST'
+    date_to = '2018-09-04 20:30:00 EST'
     start_ind = 0
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-09-01 14:31:00 EST'
@@ -1070,7 +1088,7 @@ if __name__ == '__main__':
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
     fin_table = saved_table[start_ind::]
     fin_table.index = np.arange(len(fin_table))
-    strategy_obj = OptimalTradeStrategyV3(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
+    strategy_obj = OptimalTradeStrategy(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
     #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
     strategy_obj.find_optimal_trade_strategy(saved_inds=None, show_plots=True, fin_table=fin_table, minute_cp=cp )
 
