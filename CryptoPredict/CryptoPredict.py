@@ -14,6 +14,7 @@ import base64
 import hashlib
 import hmac
 import gdax
+import sys
 from textblob import TextBlob as txb
 from keras.models import Sequential
 from keras.layers import Activation, Dense
@@ -2100,8 +2101,8 @@ if __name__ == '__main__':
 
         #date_from = '2018-08-20 19:22:00 EST'
         #date_to = datetime.now().strftime('%Y-%m-%d %H:%M:%S') + ' EST'
-        date_from = '2018-09-02 09:42:00 EST'
-        date_to = '2018-09-02 13:20:00 EST'
+        date_from = '2018-09-06 17:02:00 EST'
+        date_to = '2018-09-06 21:02:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -2120,21 +2121,35 @@ if __name__ == '__main__':
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-01_08:04:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-02_09:42:00_EST_to_2018-09-02_13:20:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = False
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
 
     elif code_block == 3:
-        #TODO add easier way to redact sensitive info
 
-        hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
-        minute_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1535811155.092577.h5'
+        if len(sys.argv) > 2:
+            minute_path = sys.argv[1]
+            api_input = sys.argv[2]
+            secret_input = sys.argv[3]
+            passphrase_input = sys.argv[4]
+            sandbox_bool = bool(sys.argv[5])
+            hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
+
+        else:
+
+            hour_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/Legacy/ETHmodel_6hours_leakyreluact_adamopt_mean_absolute_percentage_errorloss_62epochs_30neuron1527097308.228338.h5'
+            minute_path = input('What is the model path?')
+            api_input = input('What is the api key?')
+            secret_input = input('What is the secret key?')
+            passphrase_input = input('What is the passphrase?')
+            sandbox_bool = input('Is this for a sandbox?')
+
 
         naive_bot = NaiveTradingBot(hourly_model=hour_path, minute_model=minute_path,
-                                    api_key='redacted',
-                                    secret_key='redacted',
-                                    passphrase='redacted', is_sandbox_api=False, minute_len=30)
+                                    api_key=api_input,
+                                    secret_key=secret_input,
+                                    passphrase=passphrase_input, is_sandbox_api=sandbox_bool, minute_len=30)
 
         naive_bot.continuous_monitoring()
 
