@@ -2054,7 +2054,7 @@ def run_neural_net(date_from, date_to, prediction_length, epochs, prediction_tic
 #TODO replace cryptocompare with gdax
 if __name__ == '__main__':
 
-    code_block = 3
+    code_block = 2
     # 1 for test recent code
     # 2 run_neural_net
     # 3 BaseTradingBot
@@ -2121,7 +2121,7 @@ if __name__ == '__main__':
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-02_09:42:00_EST_to_2018-09-02_13:20:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-08_07:42:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = False
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)
