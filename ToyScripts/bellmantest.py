@@ -1057,7 +1057,7 @@ class OptimalTradeStrategyV3:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-02_09:42:00_EST_to_2018-09-04_20:30:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-08_07:42:00_EST_to_2018-09-10_19:40:00_EST.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-01_14:31:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
@@ -1068,10 +1068,10 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_2epochs1535811155.092577.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/1536602237.232589minutes_30currency_ETH'
 
-    date_from = '2018-09-02 09:42:00 EST'
-    date_to = '2018-09-04 20:30:00 EST'
+    date_from = '2018-09-08 07:42:00 EST'
+    date_to = '2018-09-10 19:40:00 EST'
     start_ind = 0
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-09-01 14:31:00 EST'

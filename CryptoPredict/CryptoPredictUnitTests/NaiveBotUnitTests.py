@@ -1,6 +1,6 @@
 import unittest
 from CryptoPredict.CryptoPredict import NaiveTradingBot, DataSet
-from ToyScripts.bellmantest import OptimalTradeStrategyV2
+from ToyScripts.bellmantest import OptimalTradeStrategy
 import pickle
 import numpy as np
 import pandas as pd
@@ -93,7 +93,7 @@ class NaiveBotUnitTests(unittest.TestCase):
         stop_ind = 1068 + 3804
         backtest_padding = 30
 
-        strategy_obj_backtest = OptimalTradeStrategyV2(prediction[(start_ind - backtest_padding):(stop_ind + backtest_padding + 30), 0],
+        strategy_obj_backtest = OptimalTradeStrategy(prediction[(start_ind - backtest_padding):(stop_ind + backtest_padding + 30), 0],
                                                      test_output[(start_ind - backtest_padding):(stop_ind + backtest_padding), 0])
         strategy_obj_backtest.find_optimal_trade_strategy()
         buy_bool = strategy_obj_backtest.buy_array
@@ -120,7 +120,7 @@ class NaiveBotUnitTests(unittest.TestCase):
         stop_ind = 1068 + 3804
         backtest_padding = 30
 
-        strategy_obj_backtest = OptimalTradeStrategyV2(prediction[(start_ind - backtest_padding):(stop_ind + backtest_padding + 30), 0],
+        strategy_obj_backtest = OptimalTradeStrategy(prediction[(start_ind - backtest_padding):(stop_ind + backtest_padding + 30), 0],
                                                      test_output[(start_ind - backtest_padding):(stop_ind + backtest_padding), 0])
         strategy_obj_backtest.find_optimal_trade_strategy()
         sell_bool = strategy_obj_backtest.sell_array
