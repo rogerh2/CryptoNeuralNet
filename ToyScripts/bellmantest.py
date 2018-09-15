@@ -1053,11 +1053,110 @@ class OptimalTradeStrategyV3:
 
             plt.show()
 
+class OptimalTradeStrategyV4:
+
+    offset = 40
+    prediction_len = 30
+
+    def __init__(self, prediction, data):
+        self.data = data
+        self.prediction = prediction
+        self.buy_array = np.zeros(len(data)+1)
+        self.sell_array = np.zeros(len(data)+1)
+        self.data_len = len(data)
+
+    def find_fit_info(self, ind):
+        #This method searches the past data to determine what value should be used for the error
+        prediction = self.prediction
+        data = self.data
+        offset = self.offset
+        err_arr = np.array([])
+        off_arr = err_arr
+        coeff_arr = err_arr
+        err_judgement_arr = err_arr  # this array will contain the residual from the prior datum
+
+        for N in range(10, offset):
+            past_predictions = prediction[(ind - N):(ind)]
+            past_data = data[(ind - N):(ind)]
+
+            # Find error
+            current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
+            current_coeff = current_fit[0][0]
+            current_off = current_fit[0][1]
+            current_err = 2 * np.sqrt(current_fit[1] / (N - 1))
+            err_arr = np.append(err_arr, current_err)
+            off_arr = np.append(off_arr, current_off)
+            coeff_arr = np.append(coeff_arr, current_coeff)
+
+            err_judgement_arr = np.append(err_judgement_arr, np.abs(
+                prediction[ind - 1] - current_off - current_coeff * data[
+                    ind - 1]) + current_err)  # current_err/np.sqrt(N)) #
+
+        err_ind = np.argmin(np.abs(err_judgement_arr))
+        fit_coeff = 1 / coeff_arr[err_ind]
+
+        err = err_arr[err_ind] * fit_coeff
+        fit_offset = -off_arr[err_ind] * fit_coeff
+        const_diff = 2 * err
+        fuzziness = int((err_ind + 10) / 2)  # TODO make more logical fuzziness
+
+        return err, fit_coeff, fit_offset, const_diff, fuzziness
+
+    def fuzzy_price(self, fit_coeff, ind, fuzziness, fit_offset):
+        price = np.mean(fit_coeff * self.prediction[(ind - fuzziness):(ind + fuzziness)] + fit_offset)
+        return price
+
+    def point_value_func(self, upper_buy, lower_buy, upper_sell, lower_sell, const_diff):
+        ln_diff = (np.log(upper_buy) - np.log(lower_buy)) / const_diff
+        sq_diff = ((upper_sell) ** 2 - (lower_sell) ** 2) / (2 * const_diff)
+        check_val = sq_diff * ln_diff - 1
+        return check_val
+
+    #def value_func(self, current_prediction, err, price_is_rising, const_diff, fit_coeff, fuzziness, fit_offset):
+
+    def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
+        # offset refers to how many minutes back in time can be checked for creating a fit
+        # TODO add shift size to prediction to determine offset for trade
+        buy_array = self.buy_array
+        sell_array = self.sell_array
+        data_len = self.data_len
+        prediction = self.prediction
+        data = self.data
+        offset = self.offset
+        hodl = False
+
+        for i in range(offset, data_len):
+            print(str(round(100 * (i - offset) / (data_len - offset), 2)) + '% done')
+            ind = i+1
+
+
+        self.buy_array = np.array([bool(x) for x in buy_array])
+        self.sell_array = np.array([bool(x) for x in sell_array])
+        if show_plots:
+            all_times = np.arange(0, len(data))
+            sell_bool = self.sell_array
+            buy_bool = self.buy_array
+            market_returns = 100 * (data[-1] - data[30]) / data[30]
+            returns, value_over_time = find_trade_strategy_value(buy_bool[1:-1], sell_bool[1:-1], data[0:-1], return_value_over_time=True)
+            plt.plot(all_times[sell_bool[0:-1]], data[sell_bool[0:-1]], 'rx')
+            plt.plot(all_times[buy_bool[0:-1]], data[buy_bool[0:-1]], 'gx')
+            plt.plot(data)
+            plt.title( 'Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market' )
+
+            plt.figure()
+            plt.plot(value_over_time, label='Strategy')
+            plt.plot(100 * data / (data[1]), label='Market')
+            plt.title('Precentage Returns Strategy and Market')
+            plt.ylabel('% Return')
+            plt.legend()
+
+            plt.show()
+
 
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-08_07:42:00_EST_to_2018-09-10_19:40:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-08_07:42:00_EST_to_2018-09-13_00:00:00_EST.pickle'
     #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-01_14:31:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
@@ -1068,11 +1167,11 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/1536602237.232589minutes_30currency_ETH'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/AWS_model.h5'
 
     date_from = '2018-09-08 07:42:00 EST'
-    date_to = '2018-09-10 19:40:00 EST'
-    start_ind = 0
+    date_to = '2018-09-13 00:00:00 EST'
+    start_ind = -0
     #date_from = '2018-06-15 10:20:00 EST'
     #date_to = '2018-09-01 14:31:00 EST'
     bitinfo_list = ['eth']
@@ -1088,7 +1187,7 @@ if __name__ == '__main__':
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
     fin_table = saved_table[start_ind::]
     fin_table.index = np.arange(len(fin_table))
-    strategy_obj = OptimalTradeStrategy(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
+    strategy_obj = OptimalTradeStrategyV3(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
     #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
     strategy_obj.find_optimal_trade_strategy(saved_inds=None, show_plots=True, fin_table=fin_table, minute_cp=cp )
 

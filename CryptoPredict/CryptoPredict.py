@@ -1891,10 +1891,12 @@ class NaiveTradingBot(BaseTradingBot):
                 if (trade_price > (current_price)):
                     self.auth_client.cancel_all(product=self.product_id)
 
-            if (usd_available > 10.0) & ((trade_price > (current_price)) or ignore_best_trade):
+            if (usd_available > 10) & ((trade_price > (current_price)) or ignore_best_trade):
                 #for off_set in [0, 1, 3, 5, 7]: #The for loop here and in sell spread out the asking price for a better chance of part of the order being taken
-                self.auth_client.buy(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after=cancel_time, post_only=True, trade_size=trade_size)
-                print('buy')
+                trade_str = "{:0.2f}".format(trade_price)
+                size_str = "{:0.2f}".format(trade_size)
+                self.auth_client.buy(price=trade_str, size=size_str, product_id=self.product_id, time_in_force='GTT', cancel_after=cancel_time, post_only=True, trade_size=trade_size)
+                print('buy at $' + trade_str)
                 print(str(datetime.now().timestamp()))
             elif len(current_orders) == 0:
                 return True
@@ -1917,8 +1919,9 @@ class NaiveTradingBot(BaseTradingBot):
                     self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id,
                                           time_in_force='GTT', cancel_after='day', post_only=True, trade_size=trade_size)
                 elif (trade_price < (current_price)) or ignore_best_trade:
-                    self.auth_client.sell(price=str(trade_price), size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after=cancel_time, post_only=True, trade_size=trade_size)
-                    print('sell')
+                    trade_str = "{:0.2f}".format(trade_price)
+                    self.auth_client.sell(price=trade_str, size=str(trade_size), product_id=self.product_id, time_in_force='GTT', cancel_after=cancel_time, post_only=True, trade_size=trade_size)
+                    print('sell at $' + trade_str)
                     print(str(datetime.now().timestamp()))
             elif len(current_orders) == 0:
                 return True
