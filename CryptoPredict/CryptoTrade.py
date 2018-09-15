@@ -23,10 +23,10 @@ class SpreadTradeBot:
         self.product_id = prediction_ticker.upper() + '-USD'
 
         if is_sandbox_api:
-            self.api_base = 'https://public.sandbox.pro.coinbase.com/'
+            self.api_base = 'https://api-public.sandbox.pro.coinbase.com'
             self.auth_client = cbpro.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
         else:
-            self.api_base = 'https://api-public.sandbox.pro.coinbase.com'
+            self.api_base = 'https://api.pro.coinbase.com'
             self.auth_client = cbpro.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
     def predict(self):
@@ -130,7 +130,7 @@ class SpreadTradeBot:
         min_future_price = expected_future_price - err
         max_future_price = expected_future_price + err
 
-        return min_future_price, max_future_price, current_price
+        return min_future_price, max_future_price
 
     def get_wallet_contents(self):
         # TODO get rid of cringeworthy repitition
@@ -148,30 +148,64 @@ class SpreadTradeBot:
 
         return usd_wallet, crypto_wallet
 
-    def price_loop(self, prices, max_price, min_price, trade_sign):
-        #TODO fix this description
-        #TODO write unit test
-        # Price loop finds trade prices for trades made against the expected move (hence risky_trade_prices is for the
-        # dangerous trades
-        trade_prices = diff_arr = np.array([])
+    def find_dict_info(self, dict):
+        prices = np.array([round(float(x[0]), 2) for x in dict])
+        return prices
 
-        for i in range(1, len(prices)):
-            price = prices[i]
-            prior_price = prices[i - 1]
-            bid_diff = abs(price - prior_price)
-            diff_arr = np.append(diff_arr, bid_diff)
-            if (trade_sign*price > trade_sign*max_price):
-                break
+    def price_loop(self, dict, max_price, min_price, num_trades):
+        # trade_sign is -1 for buy and +1 for sell
+        # Price loop finds trade prices for spreads based on predicted value
 
-        #TODO have this loop return prices on order book for spread trade
+        # trade_prices = diff_arr = np.array([])
+        prices = self.find_dict_info(dict)
+
+        #This ensures all prices are on the order book
+        min_allowable_price = np.min(prices)
+        max_allowable_price = np.max(prices)
+
+        if min_price < min_allowable_price:
+            min_price = min_allowable_price
+        elif max_allowable_price < max_price:
+            max_price = max_allowable_price
+
+        price_step = np.round((max_price-min_price)/num_trades, 2)
+
+        trade_prices = np.arange(min_price, max_price, price_step)
+
+        # prices = self.find_dict_info(dict)
+        # j = 0
+        #
+        # for i in range(1, len(prices)):
+        #     if (price < min_price):
+        #         if trade_sign == -1:
+        #             break
+        #         else:
+        #             continue
+        #     elif(price > max_price):
+        #         if trade_sign == 1:
+        #             break
+        #         else:
+        #             continue
+        #
+        #     price = prices[i]
+        #     prior_price = prices[i - 1]
+        #     bid_diff = abs(price - prior_price)
+        #     if trade_sign*price > naive_trade_prices[j]:
+        #         j += 1
+
+        return  trade_prices
+
+    def cancel_out_of_bounds_orders(self, max_price, min_price):
+        order_generator = self.auth_client.get_orders(self.product_id)
+        order_list = list(order_generator)
 
     def find_spread_prices(self, current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
-        min_future_price, max_future_price, current_price = self.find_spread_bounds(current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type)
-
+        min_future_price, max_future_price = self.find_spread_bounds(current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type)
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
 
-        #find the the largest gaps in the order book
+        #find wallet value
+        usd_wallet, crypto_wallet = self.get_wallet_contents()
 
 
         #Spread the price evenly between the largest gaps (if no gaps then spread evenly over 1 cent intervals
