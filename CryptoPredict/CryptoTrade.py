@@ -3,6 +3,7 @@ import cbpro
 import numpy as np
 
 class SpreadTradeBot:
+    min_usd_balance = 107.90  # Make sure the bot does not trade away all my money
 
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=15,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -146,7 +147,10 @@ class SpreadTradeBot:
             self.usd_id = usd_wallet['id']
             self.crypto_id = crypto_wallet['id']
 
-        return usd_wallet, crypto_wallet
+        usd_available = np.round(float(usd_wallet['available']) - self.min_usd_balance, 2)
+        crypto_available = np.round(float(crypto_wallet['available']), 8) - 1e-8
+
+        return usd_available, crypto_available
 
     def find_dict_info(self, dict):
         prices = np.array([round(float(x[0]), 2) for x in dict])
@@ -195,17 +199,32 @@ class SpreadTradeBot:
 
         return  trade_prices
 
-    def cancel_out_of_bounds_orders(self, max_price, min_price):
+    def cancel_out_of_bounds_orders(self, limit_price, order_type):
         order_generator = self.auth_client.get_orders(self.product_id)
         order_list = list(order_generator)
+        if order_type == "buy":
+            sign = -1
+        else:
+            sign = 1
+        for i in range(0, len(order_list)):
+            order = order_list[i]
+            if (order["side"] == order_type) & (sign*float(order["price"]) > sign*limit_price):
+                self.auth_client.cancel_order(order["id"])
 
-    def find_spread_prices(self, current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type):
+    def place_limit_orders(self, current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
         min_future_price, max_future_price = self.find_spread_bounds(current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type)
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+        if order_type == 'buy':
+            self.cancel_out_of_bounds_orders(min_future_price, order_type)
+        else:
+            self.cancel_out_of_bounds_orders(max_future_price, order_type)
 
         #find wallet value
-        usd_wallet, crypto_wallet = self.get_wallet_contents()
+        usd_available, crypto_available = self.get_wallet_contents()
+
+        spread_price = usd_available/10
+
 
 
         #Spread the price evenly between the largest gaps (if no gaps then spread evenly over 1 cent intervals
