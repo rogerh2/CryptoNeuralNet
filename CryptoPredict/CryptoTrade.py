@@ -153,12 +153,15 @@ class SpreadTradeBot:
         return usd_available, crypto_available
 
     def find_dict_info(self, dict):
+        # dict is the order dict for a single side (either asks or bids)
+
         prices = np.array([round(float(x[0]), 2) for x in dict])
         return prices
 
     def price_loop(self, dict, max_price, min_price, num_trades):
         # trade_sign is -1 for buy and +1 for sell
         # Price loop finds trade prices for spreads based on predicted value
+        # dict is the order dict for the side in question (either asks or bids)
 
         # trade_prices = diff_arr = np.array([])
         prices = self.find_dict_info(dict)
@@ -211,20 +214,60 @@ class SpreadTradeBot:
             if (order["side"] == order_type) & (sign*float(order["price"]) > sign*limit_price):
                 self.auth_client.cancel_order(order["id"])
 
-    def place_limit_orders(self, current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type):
+    def find_trade_size_and_number(self, err, available, current_price, side):
+        # This method finds the limit size to choose as well as the number of orders, it tries to keep orders to under
+        # $5000  (hopefully this will be a problem soon!) and at least 4 cent spacing between orders
+
+        past_limit_size = 0
+        if side == 'buy':
+            trade_size = 10
+            max_size = 5000
+            round_off = 2
+
+        elif side == 'sell':
+            trade_size = 0.05
+            max_size = 5000/current_price #While the limit prices will change this, it only needs to be approximate
+            round_off = 8
+
+        price_incriment = 0.5*trade_size
+
+        while abs(trade_size-past_limit_size) > 0.0000001:
+            past_limit_size = trade_size
+            num_orders = int(available/trade_size)
+            if num_orders == 0:
+                print('not enough funds available')
+                return 0, 0
+
+            trade_size = available/num_orders
+
+            if num_orders > int(0.5*err*100):
+                trade_size = trade_size + price_incriment
+
+            if trade_size > max_size:
+                trade_size = max_size
+
+            if num_orders * trade_size > available:
+                num_orders = num_orders - 1
+
+        trade_size = round(trade_size, round_off) - 1*10**(-round_off)
+
+
+        return trade_size, num_orders
+
+    def place_limit_orders(self, current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type, available):
         #get min, max, and current price and order_book
         min_future_price, max_future_price = self.find_spread_bounds(current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type)
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+        current_price = float(order_dict['asks'][0][0])
         if order_type == 'buy':
+            dict_type = 'bids'
             self.cancel_out_of_bounds_orders(min_future_price, order_type)
         else:
+            dict_type = 'asks'
             self.cancel_out_of_bounds_orders(max_future_price, order_type)
 
-        #find wallet value
-        usd_available, crypto_available = self.get_wallet_contents()
+        trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)
 
-        spread_price = usd_available/10
-
-
+        limit_prices = self.price_loop(order_dict[dict_type], max_future_price, min_future_price, num_orders)
 
         #Spread the price evenly between the largest gaps (if no gaps then spread evenly over 1 cent intervals

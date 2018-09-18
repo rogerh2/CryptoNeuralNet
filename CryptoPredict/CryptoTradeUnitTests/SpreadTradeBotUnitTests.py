@@ -55,6 +55,72 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
 
         np.testing.assert_array_equal(ask_array, test_ask_array)
 
+    def test_does_find_trade_size_and_number_return_correct_values_when_given_small_amount_to_buy(self):
+        # This test ensures the find_trade_size_and_number method returns sizes that allow most of the available balance
+        # to be used when given a size that can be easily used with the minnimum price ($10) and spread
+        err = 0.4
+        available = 73.49
+        current_price = 200
+        size, num_orders = self.spread_bot.find_trade_size_and_number(err, available, current_price, 'buy')
+
+        self.assertEqual(num_orders, 7)
+        self.assertEqual(size, 10.49)
+
+    def test_does_find_trade_size_and_number_return_correct_values_when_given_large_amount_to_buy(self):
+        # This test ensures the find_trade_size_and_number method returns sizes that allow most of the available balance
+        # to be used when given a size that can be used with more than the minnimum price ($10) and spread
+        err = 0.4
+        available = 803.49
+        current_price = 200
+        size, num_orders = self.spread_bot.find_trade_size_and_number(err, available, current_price, 'buy')
+
+        self.assertEqual(num_orders, 18)
+        self.assertEqual(size, 44.63)
+
+    def test_does_find_trade_size_and_number_return_correct_values_when_given_too_much_to_buy(self):
+        # This test ensures the find_trade_size_and_number method returns sizes that do not go over the max price when
+        # given too much to buy ($5000) and spread
+        err = 0.4
+        available = 101000
+        current_price = 200
+        size, num_orders = self.spread_bot.find_trade_size_and_number(err, available, current_price, 'buy')
+
+        self.assertEqual(num_orders, 20)
+        self.assertEqual(size, 4999.99)
+
+    def test_does_find_trade_size_and_number_return_correct_values_when_given_small_amount_to_sell(self):
+        # This test ensures the find_trade_size_and_number method returns sizes that allow most of the available balance
+        # to be used when given a size that can be easily used with the minnimum price (E 0.05) and spread
+        err = 0.4
+        available = 0.14596839
+        current_price = 200
+        size, num_orders = self.spread_bot.find_trade_size_and_number(err, available, current_price, 'sell')
+
+        self.assertEqual(num_orders, 2)
+        self.assertEqual(size, 0.07298419)
+
+    def test_does_find_trade_size_and_number_return_correct_values_when_given_large_amount_to_sell(self):
+        # This test ensures the find_trade_size_and_number method returns sizes that allow most of the available balance
+        # to be used when given a size that can be used with more than the minnimum price (E 0.05) and spread
+        err = 0.4
+        available = 2.14789241
+        current_price = 200
+        size, num_orders = self.spread_bot.find_trade_size_and_number(err, available, current_price, 'sell')
+
+        self.assertEqual(num_orders, 16)
+        self.assertAlmostEqual(size, 0.13424327, 7)
+
+    def test_does_find_trade_size_and_number_return_correct_values_when_given_too_much_to_sell(self):
+        # This test ensures the find_trade_size_and_number method returns sizes that do not go over the max price when
+        # given too much Ethereum to sell (E1 * $5000/$200 in this case) and spread
+        err = 0.4
+        available = 27.98986221
+        current_price = 200
+        size, num_orders = self.spread_bot.find_trade_size_and_number(err, available, current_price, 'sell')
+
+        self.assertEqual(num_orders, 20)
+        self.assertAlmostEqual(size, 1.3994931, 7)
+
 
 if __name__ == '__main__':
     unittest.main()

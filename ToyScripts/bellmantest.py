@@ -1178,7 +1178,7 @@ if __name__ == '__main__':
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    cp.test_model(did_train=False)
+    #cp.test_model(did_train=False)
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     data = test_output[::, 0]
 
@@ -1187,7 +1187,7 @@ if __name__ == '__main__':
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
     fin_table = saved_table[start_ind::]
     fin_table.index = np.arange(len(fin_table))
-    strategy_obj = OptimalTradeStrategyV3(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
+    strategy_obj = OptimalTradeStrategy(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
     #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
     strategy_obj.find_optimal_trade_strategy(saved_inds=None, show_plots=True, fin_table=fin_table, minute_cp=cp )
 
