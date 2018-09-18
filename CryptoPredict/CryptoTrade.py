@@ -1,9 +1,12 @@
 from CryptoPredict.CryptoPredict import CoinPriceModel
 import cbpro
 import numpy as np
+from datetime import datetime
+from time import sleep
 
 class SpreadTradeBot:
     min_usd_balance = 107.90  # Make sure the bot does not trade away all my money
+    offset = 40
 
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=15,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -38,12 +41,13 @@ class SpreadTradeBot:
             full_minute_prediction, full_minute_price = self.cp.predict(time_units='minutes', show_plots=False, old_prediction=self.prediction.values[::, 0], is_first_prediction=False)
 
         self.prediction = full_minute_prediction
-        self.price = full_minute_price
+        self.price = full_minute_price[30::]
 
-    def find_fit_info(self, ind):
+    def find_fit_info(self):
         #This method searches the past data to determine what value should be used for the error
         prediction = self.prediction
-        data = self.data
+        data = self.price
+        ind = len(data) # I only care about the info for the current time
         offset = self.offset
         err_arr = np.array([])
         off_arr = err_arr
@@ -87,8 +91,10 @@ class SpreadTradeBot:
         check_val = sq_diff * ln_diff
         return check_val
 
-    def find_expected_value(self, current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset):
-        if price_is_rising:
+    def find_expected_value(self, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
+        current_prediction = self.prediction[-self.minute_length]
+
+        if is_buy:
             upper_buy = current_prediction + err
             lower_buy = current_prediction - err
             sell_now = False
@@ -100,8 +106,8 @@ class SpreadTradeBot:
 
         expected_return_arr = np.array([])
 
-        for i in range(0, len(future_inds)):
-            price = self.fuzzy_price(fit_coeff, int(future_inds[i]), fuzziness, fit_offset)
+        for i in range(-self.minute_length, len(self.prediction)):
+            price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
             if sell_now:
                 upper_buy = price + err
                 lower_buy = price - err
@@ -116,22 +122,29 @@ class SpreadTradeBot:
 
         return expected_return, err
 
-    def find_spread_bounds(self, current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type):
+    def find_spread_bounds(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
 
+        if order_type == 'buy':
+            dict_type = 'bids'
+            is_buy = True
+        else:
+            dict_type = 'asks'
+            is_buy = False
+
         #Finds the expected return
-        expected_return, err = self.find_expected_value(current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset)
+        expected_return, err = self.find_expected_value(err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset)
         if expected_return < 0:
-            return None
+            return None, None
 
 
-        current_price = order_dict[order_type][0][0]
+        current_price = order_dict[dict_type][0][0]
 
         expected_future_price = expected_return*current_price
         min_future_price = expected_future_price - err
         max_future_price = expected_future_price + err
 
-        return min_future_price, max_future_price
+        return min_future_price, max_future_price, current_price
 
     def get_wallet_contents(self):
         # TODO get rid of cringeworthy repitition
@@ -254,15 +267,17 @@ class SpreadTradeBot:
 
         return trade_size, num_orders
 
-    def place_limit_orders(self, current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type, available):
+    def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, available):
         #get min, max, and current price and order_book
-        min_future_price, max_future_price = self.find_spread_bounds(current_prediction, err, price_is_rising, const_diff, future_inds, fit_coeff, fuzziness, fit_offset, order_type)
+        min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type)
+        if min_future_price is None:
+            msg = 'Currently no value is expected from ' + order_type + 'ing now'
+            return msg
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
-        current_price = float(order_dict['asks'][0][0])
         if order_type == 'buy':
             dict_type = 'bids'
             self.cancel_out_of_bounds_orders(min_future_price, order_type)
-        else:
+        elif order_type == 'sell':
             dict_type = 'asks'
             self.cancel_out_of_bounds_orders(max_future_price, order_type)
 
@@ -270,4 +285,64 @@ class SpreadTradeBot:
 
         limit_prices = self.price_loop(order_dict[dict_type], max_future_price, min_future_price, num_orders)
 
-        #Spread the price evenly between the largest gaps (if no gaps then spread evenly over 1 cent intervals
+        if len(limit_prices) == 0:
+            msg = 'No satisfactory limit ' + order_type + 's' + ' found'
+            return msg
+
+        #This places the limit orders
+        for i in len(limit_prices):
+            price = limit_prices[i]
+            self.auth_client.place_limit_order(self.product_id, order_type, price, trade_size, time_in_force='GTT', cancel_after='hour', post_only=True)
+            #TODO print info
+
+        msg = 'Successful' + order_type + '!'
+        return msg
+
+
+    def trade_loop(self):
+        # This method keeps the bot running continuously
+        current_time = datetime.now().timestamp()
+        last_check = 0
+        last_training_time = 0
+        last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+        starting_price = round(float(last_order_dict['asks'][0][0]), 2)
+        usd_available, crypto_available = self.get_wallet_contents()
+
+        # This message is shown at the beginning for juding the bot's performance down the line
+        print('Begin trading at ' + datetime.strftime(datetime.now(), '%m-%d-%Y %H:%M')
+              + ' with current price of $' + str(
+            starting_price) + ' per ' + self.prediction_ticker + ', available funds of $' + str(usd_available) + ' and a minnimum required balance of $' + str(
+            self.min_usd_balance) + '. Currently ' + str(crypto_available) + self.prediction_ticker + ' is being held')
+        sleep(1)
+
+        while usd_available > 0:
+            err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
+            usd_available, crypto_available = self.get_wallet_contents()
+            buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', usd_available)
+            sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell', crypto_available)
+            print(buy_msg)
+            print(sell_msg)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
