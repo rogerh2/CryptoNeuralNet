@@ -1,8 +1,11 @@
 from CryptoPredict.CryptoPredict import CoinPriceModel
+from CryptoPredict.CryptoPredict import DataSet
 import cbpro
 import numpy as np
 from datetime import datetime
+from datetime import timedelta
 from time import sleep
+import sys
 
 class SpreadTradeBot:
     min_usd_balance = 107.90  # Make sure the bot does not trade away all my money
@@ -271,7 +274,7 @@ class SpreadTradeBot:
         #get min, max, and current price and order_book
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type)
         if min_future_price is None:
-            msg = 'Currently no value is expected from ' + order_type + 'ing now'
+            msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
             return msg
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         if order_type == 'buy':
@@ -293,11 +296,10 @@ class SpreadTradeBot:
         for i in len(limit_prices):
             price = limit_prices[i]
             self.auth_client.place_limit_order(self.product_id, order_type, price, trade_size, time_in_force='GTT', cancel_after='hour', post_only=True)
-            #TODO print info
+            print('Placed limit ' + order_type + ' for ' + str(trade_size) + ' ' + self.prediction_ticker + ' at $' + str(price) + ' per')
 
-        msg = 'Successful' + order_type + '!'
+        msg = 'Done placing ' + order_type + 's'
         return msg
-
 
     def trade_loop(self):
         # This method keeps the bot running continuously
@@ -315,18 +317,57 @@ class SpreadTradeBot:
             self.min_usd_balance) + '. Currently ' + str(crypto_available) + self.prediction_ticker + ' is being held')
         sleep(1)
 
-        while usd_available > 0:
-            err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
-            usd_available, crypto_available = self.get_wallet_contents()
-            buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', usd_available)
-            sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell', crypto_available)
-            print(buy_msg)
-            print(sell_msg)
+        while 0 > usd_available:
+            if (current_time > (last_check + 1)) & (current_time < (last_training_time + 2 * 3600)):
+                err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
+                usd_available, crypto_available = self.get_wallet_contents()
+                buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', usd_available)
+                sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell', crypto_available)
+                print(buy_msg)
+                print(sell_msg)
+            elif current_time > (last_training_time + 2*3600):
+                #In theory this should retrain the model every hour
+                last_training_time = current_time
+                to_date = self.cp.create_standard_dates()
+                from_delta = timedelta(hours=2)
+                from_date = to_date - from_delta
+                fmt = '%Y-%m-%d %H:%M:%S %Z'
+                training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
+                                        prediction_length=self.cp.prediction_length, bitinfo_list=self.cp.bitinfo_list,
+                                        prediction_ticker=self.prediction_ticker, time_units='minutes')
+                self.cp.data_obj = training_data
+
+                self.cp.update_model_training()
+                self.cp.model.save(str(current_time) + 'minutes_' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker)
+
+
+
+            current_time = datetime.now().timestamp()
 
 
 
 
+if __name__ == '__main__':
+    if len(sys.argv) > 2:
+        minute_path = sys.argv[1]
+        api_input = sys.argv[2]
+        secret_input = sys.argv[3]
+        passphrase_input = sys.argv[4]
+        sandbox_bool = bool(sys.argv[5])
 
+    else:
+        minute_path = input('What is the model path?')
+        api_input = input('What is the api key?')
+        secret_input = input('What is the secret key?')
+        passphrase_input = input('What is the passphrase?')
+        sandbox_bool = input('Is this for a sandbox?')
+
+    naive_bot = SpreadTradeBot(minute_model=minute_path,
+                                api_key=api_input,
+                                secret_key=secret_input,
+                                passphrase=passphrase_input, is_sandbox_api=sandbox_bool, minute_len=30)
+
+    naive_bot.trade_loop()
 
 
 
