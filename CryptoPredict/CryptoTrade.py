@@ -1,6 +1,9 @@
 import sys
-from CryptoPredict.CryptoPredict import CoinPriceModel
-from CryptoPredict.CryptoPredict import DataSet
+# sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
+# use the below for AWS
+sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict import CoinPriceModel
+from CryptoPredict import DataSet
 import cbpro
 import numpy as np
 from datetime import datetime
@@ -97,7 +100,7 @@ class SpreadTradeBot:
         return check_val
 
     def find_expected_value(self, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
-        current_prediction = self.prediction[-self.minute_length]
+        current_prediction = self.fuzzy_price(fit_coeff, -len(self.prediction), fuzziness, fit_offset)
 
         if is_buy:
             upper_buy = current_prediction + err
@@ -111,7 +114,7 @@ class SpreadTradeBot:
 
         expected_return_arr = np.array([])
 
-        for i in range(-self.minute_length, len(self.prediction)):
+        for i in range(len(self.prediction)-self.minute_length+1, len(self.prediction)):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
             if sell_now:
                 upper_buy = price + err
@@ -131,21 +134,22 @@ class SpreadTradeBot:
         sleep(1)
 
         if order_type == 'buy':
-            dict_type = 'bids'
-            is_buy = True
-        else:
             dict_type = 'asks'
+            is_buy = True
+            trade_sign = 1
+        else:
+            dict_type = 'bids'
             is_buy = False
+            trade_sign = -1
 
         #Finds the expected return
         expected_return, err = self.find_expected_value(err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset)
-        if expected_return < 0:
-            return None, None
+        if (expected_return < 1) or (fit_coeff < 0):
+            return None, None, None
 
+        current_price = float(order_dict[dict_type][0][0])
 
-        current_price = order_dict[dict_type][0][0]
-
-        expected_future_price = expected_return*current_price
+        expected_future_price = current_price*(expected_return**trade_sign)
         min_future_price = expected_future_price - err
         max_future_price = expected_future_price + err
 
@@ -229,11 +233,12 @@ class SpreadTradeBot:
             sign = -1
         else:
             sign = 1
-        for i in range(0, len(order_list)):
-            order = order_list[i]
-            if (order["side"] == order_type) & (sign*float(order["price"]) > sign*limit_price):
-                self.auth_client.cancel_order(order["id"])
-                sleep(1)
+        if len(order_list) > 0:
+            for i in range(0, len(order_list)):
+                order = order_list[i]
+                if (order["side"] == order_type) & (sign*float(order["price"]) > sign*limit_price):
+                    self.auth_client.cancel_order(order["id"])
+                    sleep(1)
 
     def find_trade_size_and_number(self, err, available, current_price, side):
         # This method finds the limit size to choose as well as the number of orders, it tries to keep orders to under
@@ -277,18 +282,20 @@ class SpreadTradeBot:
 
     def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, available):
         #get min, max, and current price and order_book
-        order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+        order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         sleep(1)
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
         if min_future_price is None:
             msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
             return msg
         if order_type == 'buy':
-            dict_type = 'bids'
-            self.cancel_out_of_bounds_orders(min_future_price, order_type)
-        elif order_type == 'sell':
             dict_type = 'asks'
             self.cancel_out_of_bounds_orders(max_future_price, order_type)
+            order_type = 'sell'
+        elif order_type == 'sell':
+            dict_type = 'bids'
+            self.cancel_out_of_bounds_orders(min_future_price, order_type)
+            order_type = 'buy'
 
         trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)
 
@@ -299,8 +306,7 @@ class SpreadTradeBot:
             return msg
 
         #This places the limit orders
-        for i in len(limit_prices):
-            price = limit_prices[i]
+        for price in limit_prices:
             self.auth_client.place_limit_order(self.product_id, order_type, price, trade_size, time_in_force='GTT', cancel_after='hour', post_only=True)
             sleep(0.4)
             print('Placed limit ' + order_type + ' for ' + str(trade_size) + ' ' + self.prediction_ticker + ' at $' + str(price) + ' per')
@@ -313,7 +319,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_training_time = 0
-        last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+        last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         usd_available, crypto_available = self.get_wallet_contents()
 
@@ -368,7 +374,7 @@ if __name__ == '__main__':
         api_input = input('What is the api key?')
         secret_input = input('What is the secret key?')
         passphrase_input = input('What is the passphrase?')
-        sandbox_bool = input('Is this for a sandbox?')
+        sandbox_bool = bool(int(input('Is this for a sandbox?')))
 
     print(minute_path)
     print(api_input)
