@@ -1,3 +1,4 @@
+import sys
 from CryptoPredict.CryptoPredict import CoinPriceModel
 from CryptoPredict.CryptoPredict import DataSet
 import cbpro
@@ -5,11 +6,12 @@ import numpy as np
 from datetime import datetime
 from datetime import timedelta
 from time import sleep
-import sys
 
 class SpreadTradeBot:
-    min_usd_balance = 107.90  # Make sure the bot does not trade away all my money
+    min_usd_balance = 100.37  # Make sure the bot does not trade away all my money
     offset = 40
+    usd_id = None
+    crypto_id = None
 
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=15,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -36,15 +38,15 @@ class SpreadTradeBot:
             self.api_base = 'https://api.pro.coinbase.com'
             self.auth_client = cbpro.AuthenticatedClient(api_key, secret_key, passphrase, api_url=self.api_base)
 
-    def predict(self):
+    def spread_bot_predict(self):
 
         if self.price is None:
             full_minute_prediction, full_minute_price = self.cp.predict(time_units='minutes', show_plots=False)
         else:
-            full_minute_prediction, full_minute_price = self.cp.predict(time_units='minutes', show_plots=False, old_prediction=self.prediction.values[::, 0], is_first_prediction=False)
+            full_minute_prediction, full_minute_price = self.cp.predict(time_units='minutes', show_plots=False, old_prediction=self.prediction, is_first_prediction=False)
 
-        self.prediction = full_minute_prediction
-        self.price = full_minute_price[30::]
+        self.prediction = full_minute_prediction.values[::, 0]
+        self.price = full_minute_price.values[30::, 0]
 
     def find_fit_info(self):
         #This method searches the past data to determine what value should be used for the error
@@ -125,8 +127,8 @@ class SpreadTradeBot:
 
         return expected_return, err
 
-    def find_spread_bounds(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
-        order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+    def find_spread_bounds(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict):
+        sleep(1)
 
         if order_type == 'buy':
             dict_type = 'bids'
@@ -153,6 +155,7 @@ class SpreadTradeBot:
         # TODO get rid of cringeworthy repitition
 
         data = self.auth_client.get_accounts()
+        sleep(1)
         USD_ind = [acc["currency"] == 'USD' for acc in data]
         usd_wallet = data[USD_ind.index(True)]
 
@@ -220,6 +223,7 @@ class SpreadTradeBot:
 
     def cancel_out_of_bounds_orders(self, limit_price, order_type):
         order_generator = self.auth_client.get_orders(self.product_id)
+        sleep(1)
         order_list = list(order_generator)
         if order_type == "buy":
             sign = -1
@@ -229,6 +233,7 @@ class SpreadTradeBot:
             order = order_list[i]
             if (order["side"] == order_type) & (sign*float(order["price"]) > sign*limit_price):
                 self.auth_client.cancel_order(order["id"])
+                sleep(1)
 
     def find_trade_size_and_number(self, err, available, current_price, side):
         # This method finds the limit size to choose as well as the number of orders, it tries to keep orders to under
@@ -272,11 +277,12 @@ class SpreadTradeBot:
 
     def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, available):
         #get min, max, and current price and order_book
-        min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type)
+        order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
+        sleep(1)
+        min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
         if min_future_price is None:
             msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
             return msg
-        order_dict = self.auth_client.get_product_order_book(self.product_id, level=1)
         if order_type == 'buy':
             dict_type = 'bids'
             self.cancel_out_of_bounds_orders(min_future_price, order_type)
@@ -296,6 +302,7 @@ class SpreadTradeBot:
         for i in len(limit_prices):
             price = limit_prices[i]
             self.auth_client.place_limit_order(self.product_id, order_type, price, trade_size, time_in_force='GTT', cancel_after='hour', post_only=True)
+            sleep(0.4)
             print('Placed limit ' + order_type + ' for ' + str(trade_size) + ' ' + self.prediction_ticker + ' at $' + str(price) + ' per')
 
         msg = 'Done placing ' + order_type + 's'
@@ -317,8 +324,9 @@ class SpreadTradeBot:
             self.min_usd_balance) + '. Currently ' + str(crypto_available) + self.prediction_ticker + ' is being held')
         sleep(1)
 
-        while 0 > usd_available:
-            if (current_time > (last_check + 1)) & (current_time < (last_training_time + 2 * 3600)):
+        while 0 < usd_available:
+            if (current_time > (last_check + 60)) & (current_time < (last_training_time + 2 * 3600)):
+                self.spread_bot_predict()
                 err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
                 usd_available, crypto_available = self.get_wallet_contents()
                 buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', usd_available)
@@ -353,7 +361,7 @@ if __name__ == '__main__':
         api_input = sys.argv[2]
         secret_input = sys.argv[3]
         passphrase_input = sys.argv[4]
-        sandbox_bool = bool(sys.argv[5])
+        sandbox_bool = bool(int(sys.argv[5]))
 
     else:
         minute_path = input('What is the model path?')
@@ -361,6 +369,12 @@ if __name__ == '__main__':
         secret_input = input('What is the secret key?')
         passphrase_input = input('What is the passphrase?')
         sandbox_bool = input('Is this for a sandbox?')
+
+    print(minute_path)
+    print(api_input)
+    print(secret_input)
+    print(passphrase_input)
+    print(sandbox_bool)
 
     naive_bot = SpreadTradeBot(minute_model=minute_path,
                                 api_key=api_input,

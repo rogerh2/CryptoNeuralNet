@@ -1156,8 +1156,7 @@ class OptimalTradeStrategyV4:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-08_07:42:00_EST_to_2018-09-13_00:00:00_EST.pickle'
-    #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-01_14:31:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-18_22:23:00_EST_to_2018-09-19_01:43:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -1167,18 +1166,19 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/AWS_model.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_3epochs1537335513.780814.h5'
 
-    date_from = '2018-09-08 07:42:00 EST'
-    date_to = '2018-09-13 00:00:00 EST'
-    start_ind = -0
+    date_from = '2018-09-18 22:23:00 EST'
+    date_to = '2018-09-19 01:43:00 EST'
+    #TODO fix problem causing error to be thrown with negtative indeces
+    start_ind = 0
     #date_from = '2018-06-15 10:20:00 EST'
-    #date_to = '2018-09-01 14:31:00 EST'
+    #date_to = '2018-09-18 22:23:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    #cp.test_model(did_train=False)
+    cp.test_model(did_train=False)
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     data = test_output[::, 0]
 
