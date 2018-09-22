@@ -96,8 +96,8 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
         current_price = 200
         size, num_orders = self.spread_bot.find_trade_size_and_number(err, available, current_price, 'sell')
 
-        self.assertEqual(num_orders, 2)
-        self.assertEqual(size, 0.07298419)
+        self.assertEqual(num_orders, 13)
+        self.assertEqual(size, 0.01122833)
 
     def test_does_find_trade_size_and_number_return_correct_values_when_given_large_amount_to_sell(self):
         # This test ensures the find_trade_size_and_number method returns sizes that allow most of the available balance
@@ -107,8 +107,8 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
         current_price = 200
         size, num_orders = self.spread_bot.find_trade_size_and_number(err, available, current_price, 'sell')
 
-        self.assertEqual(num_orders, 16)
-        self.assertAlmostEqual(size, 0.13424327, 7)
+        self.assertEqual(num_orders, 20)
+        self.assertAlmostEqual(size, 0.10739462, 7)
 
     def test_does_find_trade_size_and_number_return_correct_values_when_given_too_much_to_sell(self):
         # This test ensures the find_trade_size_and_number method returns sizes that do not go over the max price when

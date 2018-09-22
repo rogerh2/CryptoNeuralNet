@@ -260,7 +260,7 @@ class SpreadTradeBot:
             round_off = 2
 
         elif side == 'sell':
-            trade_size = 0.05
+            trade_size = 0.01
             max_size = 5000/current_price #While the limit prices will change this, it only needs to be approximate
             round_off = 8
 
@@ -327,7 +327,7 @@ class SpreadTradeBot:
                 order_type = 'sell'
                 available = crypto_available
                 price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
-                if available < 0.05:
+                if available < 0.01:
                     msg = 'waiting on outstanding orders'
                     return msg
         if hodl:
@@ -377,37 +377,62 @@ class SpreadTradeBot:
             starting_price) + ' per ' + self.prediction_ticker + ', available funds of $' + str(usd_available) + ' and a minnimum required balance of $' + str(
             self.min_usd_balance) + '. Currently ' + str(crypto_available) + self.prediction_ticker + ' is being held')
         sleep(1)
+        err_counter = 0
 
         while -50 < usd_available:
             if (current_time > (last_check + 15)) & (current_time < (last_training_time + 2 * 3600)):
-                last_check = current_time
-                if (current_time > (last_scrape + 65)):
-                    self.spread_bot_predict()
-                    last_scrape = current_time
-                err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
-                usd_available, crypto_available = self.get_wallet_contents()
-                buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy')
-                sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
-                print(buy_msg)
-                print(sell_msg)
-            elif current_time > (last_training_time + 2*3600):
-                #In theory this should retrain the model every hour
-                last_training_time = current_time
-                to_date = self.cp.create_standard_dates()
-                from_delta = timedelta(hours=2)
-                from_date = to_date - from_delta
-                fmt = '%Y-%m-%d %H:%M:%S %Z'
-                training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
-                                        prediction_length=self.cp.prediction_length, bitinfo_list=self.cp.bitinfo_list,
-                                        prediction_ticker=self.prediction_ticker, time_units='minutes')
-                self.cp.data_obj = training_data
+                try:
+                    err_counter = 0
+                    last_check = current_time
+                    if (current_time > (last_scrape + 65)):
+                        self.spread_bot_predict()
+                        last_scrape = current_time
+                except Exception as e:
+                    last_check = current_time + 5*60
+                    err_counter += 1
+                    print('failed to find new data due to error: ' + str(e))
+                    print('number of consecutive errors: ' + str(err_counter))
 
-                self.cp.update_model_training()
-                self.cp.model.save('most_recent' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker)
+                try:
+                    err_counter = 0
+                    err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
+                    usd_available, crypto_available = self.get_wallet_contents()
+                    buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy')
+                    sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
+                    print(buy_msg)
+                    print(sell_msg)
+                except Exception as e:
+                    last_check = current_time + 5 * 60
+                    err_counter += 1
+                    print('failed to trade due to error: ' + str(e))
+                    print('number of consecutive errors: ' + str(err_counter))
+            elif current_time > (last_training_time + 2*3600):
+                try:
+                    err_counter = 0
+                    #In theory this should retrain the model every hour
+                    last_training_time = current_time
+                    to_date = self.cp.create_standard_dates()
+                    from_delta = timedelta(hours=2)
+                    from_date = to_date - from_delta
+                    fmt = '%Y-%m-%d %H:%M:%S %Z'
+                    training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
+                                            prediction_length=self.cp.prediction_length, bitinfo_list=self.cp.bitinfo_list,
+                                            prediction_ticker=self.prediction_ticker, time_units='minutes')
+                    self.cp.data_obj = training_data
+
+                    self.cp.update_model_training()
+                    self.cp.model.save('most_recent' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker)
+                except Exception as e:
+                    last_training_time = current_time + 5*60
+                    err_counter += 1
+                    print('failed to update training due to error: ' + str(e))
+                    print('number of consecutive errors: ' + str(err_counter))
 
 
 
             current_time = datetime.now().timestamp()
+
+        print('fin')
 
 
 
