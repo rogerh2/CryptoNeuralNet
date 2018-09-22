@@ -2119,11 +2119,11 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = '2018-09-18 22:23:00 EST'
+        #date_from = '2018-09-18 22:23:00 EST'
         #date_to = '2018-09-09 13:46:00 EST'
-        date_to = datetime.now().strftime('%Y-%m-%d %H:%M:') + '00 EST'
-        #date_from = '2018-06-15 10:20:00 EST'
-        #date_to = '2018-09-18 22:23:00 EST'
+        #date_to = datetime.now().strftime('%Y-%m-%d %H:%M:') + '00 EST'
+        date_from = '2018-06-15 10:20:00 EST'
+        date_to = '2018-09-21 18:58:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -2132,17 +2132,17 @@ if __name__ == '__main__':
         activ_func = 'relu'
         isleakyrelu = True
         neuron_count = 37
-        layer_count = 5
+        layer_count = 3
         batch_size = 96
-        old_neuron_grid = [100, 200, 300, 400, 1000]#[35, 37, 40, 42, 44, 70, 90]
+        old_neuron_grid = [37, 70, 90, 300]#[100, 200, 300, 400, 1000]#
         neuron_grid = old_neuron_grid#[x*2 for x in old_neuron_grid]
         time_block_length = 60
         min_distance_between_trades = 5
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/AWS_model.h5'
         model_type = 'price' #Don't change this
-        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-18_22:23:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-21_18:58:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = False
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)

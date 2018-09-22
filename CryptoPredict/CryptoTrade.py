@@ -1,14 +1,28 @@
 import sys
-# sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
+#sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
 sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
 from CryptoPredict import CoinPriceModel
 from CryptoPredict import DataSet
 import cbpro
 import numpy as np
+import scipy.stats
 from datetime import datetime
 from datetime import timedelta
 from time import sleep
+
+def mean_confidence_interval(data, confidence=0.95):
+    a = data
+    n = len(a)
+    m, se = np.mean(a), scipy.stats.sem(a)
+    h = se * scipy.stats.t.ppf((1 + confidence) / 2., n-1)
+    return m, m-h, m+h
+
+def num2str(num, digits):
+    fmt_str = "{:0." + str(digits) + "f}"
+    num_str = fmt_str.format(num)
+
+    return num_str
 
 class SpreadTradeBot:
     min_usd_balance = 100.37  # Make sure the bot does not trade away all my money
@@ -100,33 +114,27 @@ class SpreadTradeBot:
         return check_val
 
     def find_expected_value(self, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
-        current_prediction = self.fuzzy_price(fit_coeff, -len(self.prediction), fuzziness, fit_offset)
+        current_prediction = self.fuzzy_price(fit_coeff, len(self.prediction)-self.minute_length, fuzziness, fit_offset)
 
         if is_buy:
-            upper_buy = current_prediction + err
-            lower_buy = current_prediction - err
-            sell_now = False
+            trade_sign = -1
         else:
-            upper_sell = current_prediction + err
-            lower_sell = current_prediction - err
-            sell_now = True
+            trade_sign = 1
 
 
-        expected_return_arr = np.array([])
+        price_arr = np.array([])
 
-        for i in range(len(self.prediction)-self.minute_length+1, len(self.prediction)):
+        for i in range(len(self.prediction)-self.minute_length+1, len(self.prediction)-fuzziness):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
-            if sell_now:
-                upper_buy = price + err
-                lower_buy = price - err
-            else:
-                upper_sell = price + err
-                lower_sell = price - err
+            price_arr = np.append(price_arr, price)
 
-            current_expected_return = self.find_point_expected_value(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
-            expected_return_arr = np.append(expected_return_arr, current_expected_return)
+        expected_price_err = np.std(price_arr)
+        expected_price = np.mean(price_arr) + trade_sign*expected_price_err
 
-        expected_return = np.mean(expected_return_arr)
+        if not is_buy:
+            expected_return = expected_price / current_prediction
+        else:
+            expected_return =  current_prediction / expected_price
 
         return expected_return, err
 
@@ -144,7 +152,7 @@ class SpreadTradeBot:
 
         #Finds the expected return
         expected_return, err = self.find_expected_value(err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset)
-        if (expected_return < 1) or (fit_coeff < 0):
+        if (expected_return < 1) or (fit_coeff < 0) or (np.isnan(expected_return)):
             return None, None, None
 
         current_price = float(order_dict[dict_type][0][0])
@@ -152,6 +160,7 @@ class SpreadTradeBot:
         expected_future_price = current_price*(expected_return**trade_sign)
         min_future_price = expected_future_price - err
         max_future_price = expected_future_price + err
+        print('expected return from ' + order_type + 'ing is ' + str(expected_return) + '% at $' + str(expected_future_price) + 'per')
 
         return min_future_price, max_future_price, current_price
 
@@ -171,7 +180,7 @@ class SpreadTradeBot:
             self.crypto_id = crypto_wallet['id']
 
         usd_available = np.round(float(usd_wallet['available']) - self.min_usd_balance, 2)
-        crypto_available = np.round(float(crypto_wallet['available']), 8) - 1e-8
+        crypto_available = np.round(float(crypto_wallet['available']), 8)
 
         return usd_available, crypto_available
 
@@ -280,7 +289,7 @@ class SpreadTradeBot:
 
         return trade_size, num_orders
 
-    def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, available):
+    def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         sleep(1)
@@ -288,14 +297,47 @@ class SpreadTradeBot:
         if min_future_price is None:
             msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
             return msg
+
+        hodl = False
+
+        #This determines whether to buy or sell
         if order_type == 'buy':
             dict_type = 'asks'
-            self.cancel_out_of_bounds_orders(max_future_price, order_type)
             order_type = 'sell'
+            self.cancel_out_of_bounds_orders(max_future_price, order_type)
+            usd_available, available = self.get_wallet_contents()
+            if available < 0.05:
+                sign = -1
+                hodl = True
+                order_type = 'buy'
+                price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
+                available = usd_available/price
+                if available < 10:
+                    msg = 'waiting on outstanding orders'
+                    return msg
+
         elif order_type == 'sell':
             dict_type = 'bids'
-            self.cancel_out_of_bounds_orders(min_future_price, order_type)
             order_type = 'buy'
+            self.cancel_out_of_bounds_orders(min_future_price, order_type)
+            available, crypto_available = self.get_wallet_contents()
+            if available < 10:
+                sign = 1
+                hodl = True
+                order_type = 'sell'
+                available = crypto_available
+                price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
+                if available < 0.05:
+                    msg = 'waiting on outstanding orders'
+                    return msg
+        if hodl:
+            price_str = num2str(price, 2)
+            size_str = num2str(available, 8)
+            self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT',
+                                               cancel_after='min', post_only=True)
+            msg = order_type + 'ing at $' + str(price) + 'due to lack of funds'
+            return msg
+
 
         trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)
 
@@ -307,7 +349,12 @@ class SpreadTradeBot:
 
         #This places the limit orders
         for price in limit_prices:
-            self.auth_client.place_limit_order(self.product_id, order_type, price, trade_size, time_in_force='GTT', cancel_after='hour', post_only=True)
+            if order_type == 'buy':
+                size_str = num2str(trade_size/price, 8)
+            else:
+                size_str = num2str(trade_size, 8)
+            price_str = num2str(price, 2)
+            self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT', cancel_after='hour', post_only=True)
             sleep(0.4)
             print('Placed limit ' + order_type + ' for ' + str(trade_size) + ' ' + self.prediction_ticker + ' at $' + str(price) + ' per')
 
@@ -318,6 +365,7 @@ class SpreadTradeBot:
         # This method keeps the bot running continuously
         current_time = datetime.now().timestamp()
         last_check = 0
+        last_scrape = 0
         last_training_time = 0
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
@@ -330,13 +378,16 @@ class SpreadTradeBot:
             self.min_usd_balance) + '. Currently ' + str(crypto_available) + self.prediction_ticker + ' is being held')
         sleep(1)
 
-        while 0 < usd_available:
-            if (current_time > (last_check + 60)) & (current_time < (last_training_time + 2 * 3600)):
-                self.spread_bot_predict()
+        while -50 < usd_available:
+            if (current_time > (last_check + 15)) & (current_time < (last_training_time + 2 * 3600)):
+                last_check = current_time
+                if (current_time > (last_scrape + 65)):
+                    self.spread_bot_predict()
+                    last_scrape = current_time
                 err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
                 usd_available, crypto_available = self.get_wallet_contents()
-                buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', usd_available)
-                sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell', crypto_available)
+                buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy')
+                sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
                 print(buy_msg)
                 print(sell_msg)
             elif current_time > (last_training_time + 2*3600):
@@ -352,7 +403,7 @@ class SpreadTradeBot:
                 self.cp.data_obj = training_data
 
                 self.cp.update_model_training()
-                self.cp.model.save(str(current_time) + 'minutes_' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker)
+                self.cp.model.save('most_recent' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker)
 
 
 
