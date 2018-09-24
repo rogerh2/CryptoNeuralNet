@@ -30,13 +30,15 @@ class SpreadTradeBot:
     usd_id = None
     crypto_id = None
 
-    def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=15,
+    def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=30,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
         temp = "2018-05-05 00:00:00 EST"
 
         if bitinfo_list is None:
-            bitinfo_list = ['eth']
+            self.bitinfo_list = ['eth']
+        else:
+            self.bitinfo_list = bitinfo_list
 
         self.cp = CoinPriceModel(temp, temp, days=minute_len, prediction_ticker=prediction_ticker,
                                  bitinfo_list=bitinfo_list, time_units='minutes', model_path=minute_model, need_data_obj=False)
@@ -47,6 +49,7 @@ class SpreadTradeBot:
         self.price = None
 
         self.product_id = prediction_ticker.upper() + '-USD'
+        self.save_str = 'most_recent' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker
 
         if is_sandbox_api:
             self.api_base = 'https://api-public.sandbox.pro.coinbase.com'
@@ -96,7 +99,7 @@ class SpreadTradeBot:
         err_ind = np.argmin(np.abs(err_judgement_arr))
         fit_coeff = 1 / coeff_arr[err_ind]
 
-        err = err_arr[err_ind] * fit_coeff
+        err = np.abs(err_arr[err_ind] * fit_coeff) # The error must always be positive
         fit_offset = -off_arr[err_ind] * fit_coeff
         const_diff = 2 * err
         fuzziness = int((err_ind + 10) / 2)  # TODO make more logical fuzziness
@@ -152,7 +155,7 @@ class SpreadTradeBot:
 
         #Finds the expected return
         expected_return, err = self.find_expected_value(err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset)
-        if (expected_return < 1) or (fit_coeff < 0) or (np.isnan(expected_return)):
+        if (expected_return < 1) or (np.isnan(expected_return)):
             return None, None, None
 
         current_price = float(order_dict[dict_type][0][0])
@@ -242,6 +245,11 @@ class SpreadTradeBot:
             sign = -1
         else:
             sign = 1
+
+        if limit_price is None:
+            sign = 1
+            limit_price = 0
+
         if len(order_list) > 0:
             for i in range(0, len(order_list)):
                 order = order_list[i]
@@ -296,6 +304,7 @@ class SpreadTradeBot:
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
         if min_future_price is None:
             msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
+            self.cancel_out_of_bounds_orders(None, order_type)
             return msg
 
         hodl = False
@@ -421,7 +430,14 @@ class SpreadTradeBot:
                     self.cp.data_obj = training_data
 
                     self.cp.update_model_training()
-                    self.cp.model.save('most_recent' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker)
+                    self.cp.model.save(self.save_str)
+
+                    # Reinitialize CoinPriceModel
+                    temp = "2018-05-05 00:00:00 EST"
+                    self.cp = CoinPriceModel(temp, temp, days=self.minute_length, prediction_ticker=self.prediction_ticker,
+                                 bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=self.save_str, need_data_obj=False)
+                    self.prediction = None
+                    self.price = None
                 except Exception as e:
                     last_training_time = current_time + 5*60
                     err_counter += 1
@@ -431,6 +447,9 @@ class SpreadTradeBot:
 
 
             current_time = datetime.now().timestamp()
+            if err_counter > 10:
+                print('Process aborted due to too many exceptions')
+                break
 
         print('fin')
 
