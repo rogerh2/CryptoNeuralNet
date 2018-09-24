@@ -49,7 +49,7 @@ class SpreadTradeBot:
         self.price = None
 
         self.product_id = prediction_ticker.upper() + '-USD'
-        self.save_str = 'most_recent' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker
+        self.save_str = 'most_recent' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker + '.h5'
 
         if is_sandbox_api:
             self.api_base = 'https://api-public.sandbox.pro.coinbase.com'
@@ -315,12 +315,12 @@ class SpreadTradeBot:
             order_type = 'sell'
             self.cancel_out_of_bounds_orders(max_future_price, order_type)
             usd_available, available = self.get_wallet_contents()
-            if available < 0.05:
+            if available < 0.01:
                 sign = -1
                 hodl = True
                 order_type = 'buy'
                 price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
-                available = usd_available/price
+                available = usd_available
                 if available < 10:
                     msg = 'waiting on outstanding orders'
                     return msg
