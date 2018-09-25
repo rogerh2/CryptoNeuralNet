@@ -1,5 +1,5 @@
 import sys
-#sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
+# sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
 sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
 from CryptoPredict import CoinPriceModel
@@ -25,10 +25,11 @@ def num2str(num, digits):
     return num_str
 
 class SpreadTradeBot:
-    min_usd_balance = 100.37  # Make sure the bot does not trade away all my money
+    min_usd_balance = 100  # Make sure the bot does not trade away all my money
     offset = 40
     usd_id = None
     crypto_id = None
+    trade_ids = {'buy':'', 'sell':''}
 
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=30,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -41,7 +42,7 @@ class SpreadTradeBot:
             self.bitinfo_list = bitinfo_list
 
         self.cp = CoinPriceModel(temp, temp, days=minute_len, prediction_ticker=prediction_ticker,
-                                 bitinfo_list=bitinfo_list, time_units='minutes', model_path=minute_model, need_data_obj=False)
+                                 bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=minute_model, need_data_obj=False)
 
         self.minute_length = minute_len
         self.prediction_ticker = prediction_ticker.upper()
@@ -237,24 +238,23 @@ class SpreadTradeBot:
 
         return  trade_prices
 
-    def cancel_out_of_bounds_orders(self, limit_price, order_type):
+    def cancel_out_of_bounds_orders(self, upper_limit_price, lower_limit_price, order_type):
         order_generator = self.auth_client.get_orders(self.product_id)
         sleep(1)
         order_list = list(order_generator)
-        if order_type == "buy":
-            sign = -1
-        else:
-            sign = 1
 
-        if limit_price is None:
-            sign = 1
-            limit_price = 0
+        if upper_limit_price is None:
+            upper_limit_price = -1.1
+            lower_limit_price = 100000.1
 
         if len(order_list) > 0:
             for i in range(0, len(order_list)):
                 order = order_list[i]
-                if (order["side"] == order_type) & (sign*float(order["price"]) > sign*limit_price):
-                    self.auth_client.cancel_order(order["id"])
+                if (order["side"] == order_type) & ((float(order["price"]) > upper_limit_price) or (float(order["price"]) < lower_limit_price)):
+                    order_id = order["id"]
+                    if order_id == self.trade_ids[order_type]:
+                        continue
+                    self.auth_client.cancel_order(order_id)
                     sleep(1)
 
     def find_trade_size_and_number(self, err, available, current_price, side):
@@ -303,8 +303,13 @@ class SpreadTradeBot:
         sleep(1)
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
         if min_future_price is None:
+            if order_type == 'buy':
+                cancel_type = 'sell'
+            else:
+                cancel_type = 'buy'
+
+            self.cancel_out_of_bounds_orders(max_future_price, min_future_price, cancel_type)
             msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
-            self.cancel_out_of_bounds_orders(None, order_type)
             return msg
 
         hodl = False
@@ -313,38 +318,39 @@ class SpreadTradeBot:
         if order_type == 'buy':
             dict_type = 'asks'
             order_type = 'sell'
-            self.cancel_out_of_bounds_orders(max_future_price, order_type)
+            self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             usd_available, available = self.get_wallet_contents()
             if available < 0.01:
                 sign = -1
                 hodl = True
                 order_type = 'buy'
                 price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
-                available = usd_available
-                if available < 10:
+                available = 20/price
+                if usd_available < available:
                     msg = 'waiting on outstanding orders'
                     return msg
 
         elif order_type == 'sell':
             dict_type = 'bids'
             order_type = 'buy'
-            self.cancel_out_of_bounds_orders(min_future_price, order_type)
+            self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             available, crypto_available = self.get_wallet_contents()
             if available < 10:
                 sign = 1
                 hodl = True
                 order_type = 'sell'
-                available = crypto_available
                 price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
-                if available < 0.01:
+                available = 20/price
+                if crypto_available < available:
                     msg = 'waiting on outstanding orders'
                     return msg
         if hodl:
             price_str = num2str(price, 2)
             size_str = num2str(available, 8)
-            self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT',
+            order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT',
                                                cancel_after='min', post_only=True)
-            msg = order_type + 'ing at $' + str(price) + 'due to lack of funds'
+            self.trade_ids[order_type] = order['id']
+            msg = order_type + 'ing at $' + price_str + 'due to lack of funds'
             return msg
 
 
@@ -365,7 +371,7 @@ class SpreadTradeBot:
             price_str = num2str(price, 2)
             self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT', cancel_after='hour', post_only=True)
             sleep(0.4)
-            print('Placed limit ' + order_type + ' for ' + str(trade_size) + ' ' + self.prediction_ticker + ' at $' + str(price) + ' per')
+            print('Placed limit ' + order_type + ' for ' + size_str + ' ' + self.prediction_ticker + ' at $' + price_str + ' per')
 
         msg = 'Done placing ' + order_type + 's'
         return msg
@@ -375,7 +381,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = 0
+        last_training_time = current_time - 1.25*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         usd_available, crypto_available = self.get_wallet_contents()
@@ -389,7 +395,7 @@ class SpreadTradeBot:
         err_counter = 0
 
         while -50 < usd_available:
-            if (current_time > (last_check + 15)) & (current_time < (last_training_time + 2 * 3600)):
+            if (current_time > (last_check + 60)) & (current_time < (last_training_time + 2 * 3600)):
                 try:
                     err_counter = 0
                     last_check = current_time
@@ -418,14 +424,14 @@ class SpreadTradeBot:
             elif current_time > (last_training_time + 2*3600):
                 try:
                     err_counter = 0
-                    #In theory this should retrain the model every hour
+                    # In theory this should retrain the model every hour
                     last_training_time = current_time
                     to_date = self.cp.create_standard_dates()
                     from_delta = timedelta(hours=2)
                     from_date = to_date - from_delta
                     fmt = '%Y-%m-%d %H:%M:%S %Z'
                     training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
-                                            prediction_length=self.cp.prediction_length, bitinfo_list=self.cp.bitinfo_list,
+                                            prediction_length=self.cp.prediction_length, bitinfo_list=self.bitinfo_list,
                                             prediction_ticker=self.prediction_ticker, time_units='minutes')
                     self.cp.data_obj = training_data
 
