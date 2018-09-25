@@ -318,13 +318,13 @@ class SpreadTradeBot:
         if order_type == 'buy':
             dict_type = 'asks'
             order_type = 'sell'
+            sign = 1
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             usd_available, available = self.get_wallet_contents()
-            if available < 0.01:
-                sign = -1
+            price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
+            if (available < 0.01) & (min_future_price > (price + err)):
                 hodl = True
                 order_type = 'buy'
-                price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
                 available = 20/price
                 if usd_available < available:
                     msg = 'waiting on outstanding orders'
@@ -335,11 +335,11 @@ class SpreadTradeBot:
             order_type = 'buy'
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             available, crypto_available = self.get_wallet_contents()
-            if available < 10:
-                sign = 1
+            sign = 1
+            price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
+            if (available < 10) & (max_future_price < (price + err)):
                 hodl = True
                 order_type = 'sell'
-                price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
                 available = 20/price
                 if crypto_available < available:
                     msg = 'waiting on outstanding orders'
@@ -381,7 +381,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time - 1.25*3600
+        last_training_time = current_time - 2*3600 + 8*60
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         usd_available, crypto_available = self.get_wallet_contents()
