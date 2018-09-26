@@ -1,9 +1,9 @@
 import sys
 # sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
-sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict import CoinPriceModel
-from CryptoPredict import DataSet
+#sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict.CryptoPredict import CoinPriceModel
+from CryptoPredict.CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
@@ -194,7 +194,7 @@ class SpreadTradeBot:
         prices = np.array([round(float(x[0]), 2) for x in dict])
         return prices
 
-    def price_loop(self, dict, max_price, min_price, num_trades):
+    def price_loop(self, dict, max_price, min_price, num_trades, order_type):
         # trade_sign is -1 for buy and +1 for sell
         # Price loop finds trade prices for spreads based on predicted value
         # dict is the order dict for the side in question (either asks or bids)
@@ -206,9 +206,9 @@ class SpreadTradeBot:
         min_allowable_price = np.min(prices)
         max_allowable_price = np.max(prices)
 
-        if min_price < min_allowable_price:
+        if (min_price < min_allowable_price) & (order_type == 'sell'):
             min_price = min_allowable_price
-        elif max_allowable_price < max_price:
+        elif (max_price > max_allowable_price) & (order_type == 'buy'):
             max_price = max_allowable_price
 
         price_step = np.round((max_price-min_price)/num_trades, 2)
@@ -360,7 +360,7 @@ class SpreadTradeBot:
 
         trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)
 
-        limit_prices = self.price_loop(order_dict[dict_type], max_future_price, min_future_price, num_orders)
+        limit_prices = self.price_loop(order_dict[dict_type], max_future_price, min_future_price, num_orders, order_type)
 
         if len(limit_prices) == 0:
             msg = 'No satisfactory limit ' + order_type + 's' + ' found'

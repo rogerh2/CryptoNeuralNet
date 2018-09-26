@@ -37,7 +37,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
 
         test_bid_array = np.arange(min_price, max_price, price_step)
 
-        bid_array = self.spread_bot.price_loop(prices, max_price, min_price, num_bids)
+        bid_array = self.spread_bot.price_loop(prices, max_price, min_price, num_bids, 'buy')
 
         np.testing.assert_array_equal(bid_array, test_bid_array)
 
@@ -51,7 +51,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
 
         test_ask_array = np.arange(226.88, max_price, price_step)
 
-        ask_array = self.spread_bot.price_loop(prices, max_price, min_price, num_bids)
+        ask_array = self.spread_bot.price_loop(prices, max_price, min_price, num_bids, 'sell')
 
         np.testing.assert_array_equal(ask_array, test_ask_array)
 
