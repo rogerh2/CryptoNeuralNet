@@ -1,9 +1,9 @@
 import sys
 # sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
-#sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict.CryptoPredict import CoinPriceModel
-from CryptoPredict.CryptoPredict import DataSet
+sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict import CoinPriceModel
+from CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
@@ -30,6 +30,7 @@ class SpreadTradeBot:
     usd_id = None
     crypto_id = None
     trade_ids = {'buy':'', 'sell':''}
+    trade_prices = {'buy':'', 'sell':''}
 
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=30,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -143,7 +144,6 @@ class SpreadTradeBot:
         return expected_return, err
 
     def find_spread_bounds(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict):
-        sleep(1)
 
         if order_type == 'buy':
             dict_type = 'asks'
@@ -168,11 +168,13 @@ class SpreadTradeBot:
 
         return min_future_price, max_future_price, current_price
 
+    #TODO write function to allocate funds for buys and sells in get_wallet_contents based on current orders and desired orders
+
     def get_wallet_contents(self):
         # TODO get rid of cringeworthy repitition
 
         data = self.auth_client.get_accounts()
-        sleep(1)
+        sleep(0.4)
         USD_ind = [acc["currency"] == 'USD' for acc in data]
         usd_wallet = data[USD_ind.index(True)]
 
@@ -240,7 +242,7 @@ class SpreadTradeBot:
 
     def cancel_out_of_bounds_orders(self, upper_limit_price, lower_limit_price, order_type):
         order_generator = self.auth_client.get_orders(self.product_id)
-        sleep(1)
+        sleep(0.4)
         order_list = list(order_generator)
 
         if upper_limit_price is None:
@@ -255,7 +257,7 @@ class SpreadTradeBot:
                     if order_id == self.trade_ids[order_type]:
                         continue
                     self.auth_client.cancel_order(order_id)
-                    sleep(1)
+                    sleep(0.4)
 
     def find_trade_size_and_number(self, err, available, current_price, side):
         # This method finds the limit size to choose as well as the number of orders, it tries to keep orders to under
@@ -301,10 +303,22 @@ class SpreadTradeBot:
 
         return trade_size, num_orders
 
+    def cancel_old_hodl_order(self, order_type, price):
+        if self.trade_ids[order_type] != '':
+            hodl_id = self.trade_ids[order_type]
+            hodl_order = self.auth_client.get_order(hodl_id)
+            if (hodl_order['status'] != 'done') & (self.trade_prices[order_type] != price):
+                self.auth_client.cancel_order(hodl_id)
+                self.trade_ids[order_type] = ''
+
+        msg = 'waiting on outstanding orders'
+
+        return msg
+
     def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
-        sleep(1)
+        sleep(0.4)
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
         if min_future_price is None:
             if order_type == 'buy':
@@ -329,9 +343,9 @@ class SpreadTradeBot:
             if (available < 0.01) & (min_future_price > (price + err)):
                 hodl = True
                 order_type = 'buy'
-                available = 20/price
+                available = 10.5/price
                 if usd_available < available:
-                    msg = 'waiting on outstanding orders'
+                    msg = self.cancel_old_hodl_order(order_type, price)
                     return msg
 
         elif order_type == 'sell':
@@ -344,9 +358,9 @@ class SpreadTradeBot:
             if (available < 10) & (max_future_price < (price + err)):
                 hodl = True
                 order_type = 'sell'
-                available = 20/price
+                available = 10.5/price
                 if crypto_available < available:
-                    msg = 'waiting on outstanding orders'
+                    msg = self.cancel_old_hodl_order(order_type, price)
                     return msg
         if hodl:
             price_str = num2str(price, 2)
@@ -354,6 +368,7 @@ class SpreadTradeBot:
             order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT',
                                                cancel_after='min', post_only=True)
             self.trade_ids[order_type] = order['id']
+            self.trade_prices[order_type] = np.round(float(order['price']), 2)
             msg = order_type + 'ing at $' + price_str + 'due to lack of funds'
             return msg
 
@@ -399,7 +414,7 @@ class SpreadTradeBot:
         err_counter = 0
 
         while -50 < usd_available:
-            if (current_time > (last_check + 15)) & (current_time < (last_training_time + 2 * 3600)):
+            if (current_time > (last_check + 2.5)) & (current_time < (last_training_time + 2 * 3600)):
                 try:
                     err_counter = 0
                     last_check = current_time
