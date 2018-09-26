@@ -132,7 +132,7 @@ class SpreadTradeBot:
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
             price_arr = np.append(price_arr, price)
 
-        expected_price_err = np.std(price_arr)
+        expected_price_err = 3*np.std(price_arr)
         expected_price = np.mean(price_arr) + trade_sign*expected_price_err
 
         if not is_buy:
@@ -262,6 +262,7 @@ class SpreadTradeBot:
         # $5000  (hopefully this will be a problem soon!) and at least 4 cent spacing between orders
 
         past_limit_size = 0
+        past_num_orders = 0
         if side == 'buy':
             trade_size = 10
             max_size = 5000
@@ -272,10 +273,13 @@ class SpreadTradeBot:
             max_size = 5000/current_price #While the limit prices will change this, it only needs to be approximate
             round_off = 8
 
-        price_incriment = 0.5*trade_size
+        num_orders = int(available / trade_size)
 
-        while abs(trade_size-past_limit_size) > 0.0000001:
+        size_incriment = 0.5*trade_size
+
+        while (abs(trade_size-past_limit_size) > 0.0000001) & (abs(num_orders-past_num_orders) > 0):
             past_limit_size = trade_size
+            past_num_orders = num_orders
             num_orders = int(available/trade_size)
             if num_orders == 0:
                 print('not enough funds available')
@@ -284,7 +288,7 @@ class SpreadTradeBot:
             trade_size = available/num_orders
 
             if num_orders > int(0.5*err*100):
-                trade_size = trade_size + price_incriment
+                trade_size = trade_size + size_incriment
 
             if trade_size > max_size:
                 trade_size = max_size
@@ -318,7 +322,7 @@ class SpreadTradeBot:
         if order_type == 'buy':
             dict_type = 'asks'
             order_type = 'sell'
-            sign = 1
+            sign = -1
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             usd_available, available = self.get_wallet_contents()
             price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
@@ -381,7 +385,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time - 2*3600 + 8*60
+        last_training_time = current_time - 3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         usd_available, crypto_available = self.get_wallet_contents()
@@ -395,7 +399,7 @@ class SpreadTradeBot:
         err_counter = 0
 
         while -50 < usd_available:
-            if (current_time > (last_check + 60)) & (current_time < (last_training_time + 2 * 3600)):
+            if (current_time > (last_check + 15)) & (current_time < (last_training_time + 2 * 3600)):
                 try:
                     err_counter = 0
                     last_check = current_time
