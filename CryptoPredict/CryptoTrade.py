@@ -31,6 +31,7 @@ class SpreadTradeBot:
     crypto_id = None
     trade_ids = {'buy':'', 'sell':''}
     trade_prices = {'buy':'', 'sell':''}
+    trade_logic = {'buy': True, 'sell': True}
 
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=30,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -201,21 +202,25 @@ class SpreadTradeBot:
         # Price loop finds trade prices for spreads based on predicted value
         # dict is the order dict for the side in question (either asks or bids)
 
-        # trade_prices = diff_arr = np.array([])
+        # spread_prices = diff_arr = np.array([])
         prices = self.find_dict_info(dict)
 
-        #This ensures all prices are on the order book
+        #This allows the bot to take advantage of the full spread
         min_allowable_price = np.min(prices)
         max_allowable_price = np.max(prices)
 
-        if (min_price < min_allowable_price) & (order_type == 'sell'):
-            min_price = min_allowable_price
-        elif (max_price > max_allowable_price) & (order_type == 'buy'):
-            max_price = max_allowable_price
+
+        if (order_type == 'sell'):
+            min_spread = np.round((max_price - min_allowable_price) / num_trades, 2)
+            min_price = min_allowable_price + min_spread
+
+        elif (order_type == 'buy'):
+            min_spread = np.round((max_allowable_price - min_price) / num_trades, 2)
+            max_price = max_allowable_price - min_spread
 
         price_step = np.round((max_price-min_price)/num_trades, 2)
 
-        trade_prices = np.arange(min_price, max_price, price_step)
+        spread_prices = np.arange(min_price, max_price, price_step)
 
         # prices = self.find_dict_info(dict)
         # j = 0
@@ -238,7 +243,7 @@ class SpreadTradeBot:
         #     if trade_sign*price > naive_trade_prices[j]:
         #         j += 1
 
-        return  trade_prices
+        return  spread_prices
 
     def cancel_out_of_bounds_orders(self, upper_limit_price, lower_limit_price, order_type):
         order_generator = self.auth_client.get_orders(self.product_id)
@@ -308,6 +313,7 @@ class SpreadTradeBot:
             hodl_id = self.trade_ids[order_type]
             hodl_order = self.auth_client.get_order(hodl_id)
             if (hodl_order['status'] != 'done') & (self.trade_prices[order_type] != price):
+                print('Canceled old hodl order for more fluidity')
                 self.auth_client.cancel_order(hodl_id)
                 self.trade_ids[order_type] = ''
 
@@ -320,7 +326,9 @@ class SpreadTradeBot:
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         sleep(0.4)
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
+
         if min_future_price is None:
+            self.trade_logic[order_type] = False
             if order_type == 'buy':
                 cancel_type = 'sell'
             else:
@@ -332,6 +340,8 @@ class SpreadTradeBot:
 
         hodl = False
 
+        self.trade_logic[order_type] = True
+
         #This determines whether to buy or sell
         if order_type == 'buy':
             dict_type = 'asks'
@@ -340,11 +350,11 @@ class SpreadTradeBot:
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             usd_available, available = self.get_wallet_contents()
             price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
-            if (available < 0.01) & (min_future_price > (price + err)):
+            if not self.trade_logic[order_type]:
                 hodl = True
                 order_type = 'buy'
-                available = 10.5/price
-                if usd_available < available:
+                available = usd_available/price
+                if usd_available < 10:
                     msg = self.cancel_old_hodl_order(order_type, price)
                     return msg
 
@@ -355,11 +365,11 @@ class SpreadTradeBot:
             available, crypto_available = self.get_wallet_contents()
             sign = 1
             price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
-            if (available < 10) & (max_future_price < (price + err)):
+            if not self.trade_logic[order_type]:
                 hodl = True
                 order_type = 'sell'
-                available = 10.5/price
-                if crypto_available < available:
+                available = crypto_available
+                if crypto_available < 0.01:
                     msg = self.cancel_old_hodl_order(order_type, price)
                     return msg
         if hodl:
@@ -400,7 +410,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time - 3600
+        last_training_time = current_time - 0.5*3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         usd_available, crypto_available = self.get_wallet_contents()
@@ -412,9 +422,10 @@ class SpreadTradeBot:
             self.min_usd_balance) + '. Currently ' + str(crypto_available) + self.prediction_ticker + ' is being held')
         sleep(1)
         err_counter = 0
+        check_period = 2.5
 
         while -50 < usd_available:
-            if (current_time > (last_check + 2.5)) & (current_time < (last_training_time + 2 * 3600)):
+            if (current_time > (last_check + check_period)) & (current_time < (last_training_time + 2 * 3600)):
                 try:
                     err_counter = 0
                     last_check = current_time
@@ -435,6 +446,8 @@ class SpreadTradeBot:
                     sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
                     print(buy_msg)
                     print(sell_msg)
+                    if self.trade_logic['buy'] != self.trade_logic['sell']:
+                        check_period = 60
                 except Exception as e:
                     last_check = current_time + 5 * 60
                     err_counter += 1
