@@ -1156,7 +1156,7 @@ class OptimalTradeStrategyV4:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-23_21:46:00_EST_to_2018-09-24_10:41:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-09-27_17:22:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -1166,12 +1166,12 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_300neurons_2epochs1537799241.11031.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/most_recent30currency_ETH.h5'
 
     #date_from = '2018-09-18 22:23:00 EST'
     #date_to = '2018-09-21 18:58:00 EST'
     #TODO fix problem causing error to be thrown with negtative indeces
-    start_ind = 0
+    start_ind = len(saved_table.index - 31*60)
     date_from = '2018-09-23 21:46:00 EST'
     date_to = '2018-09-24 10:41:00 EST'
     bitinfo_list = ['eth']
