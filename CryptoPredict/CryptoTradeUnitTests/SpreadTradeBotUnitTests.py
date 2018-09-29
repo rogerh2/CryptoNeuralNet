@@ -65,6 +65,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
 
         self.assertEqual(num_orders, 7)
         self.assertEqual(size, 10.49)
+        np.testing.assert_almost_equal(available, num_orders*size, 0.01)
 
     def test_does_find_trade_size_and_number_return_correct_values_when_given_large_amount_to_buy(self):
         # This test ensures the find_trade_size_and_number method returns sizes that allow most of the available balance
@@ -76,6 +77,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
 
         self.assertEqual(num_orders, 18)
         self.assertEqual(size, 44.63)
+        np.testing.assert_almost_equal(available, num_orders * size, 0.01)
 
     def test_does_find_trade_size_and_number_return_correct_values_when_given_too_much_to_buy(self):
         # This test ensures the find_trade_size_and_number method returns sizes that do not go over the max price when
@@ -98,6 +100,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
 
         self.assertEqual(num_orders, 14)
         self.assertEqual(size, 0.01042630)
+        np.testing.assert_almost_equal(available, num_orders * size, 0.01)
 
     def test_does_find_trade_size_and_number_return_correct_values_when_given_large_amount_to_sell(self):
         # This test ensures the find_trade_size_and_number method returns sizes that allow most of the available balance
@@ -109,6 +112,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
 
         self.assertEqual(num_orders, 20)
         self.assertAlmostEqual(size, 0.10739462, 7)
+        np.testing.assert_almost_equal(available, num_orders * size, 0.01)
 
     def test_does_find_trade_size_and_number_return_correct_values_when_given_too_much_to_sell(self):
         # This test ensures the find_trade_size_and_number method returns sizes that do not go over the max price when
@@ -120,6 +124,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
 
         self.assertEqual(num_orders, 20)
         self.assertAlmostEqual(size, 1.3994931, 7)
+        np.testing.assert_almost_equal(available, num_orders * size, 0.01)
 
 
 if __name__ == '__main__':

@@ -15,6 +15,7 @@ from datetime import datetime
 from datetime import timedelta
 from time import sleep
 import pytz
+import os
 
 def mean_confidence_interval(data, confidence=0.95):
     a = data
@@ -154,26 +155,44 @@ class SpreadTradeBot:
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
             price_arr = np.append(price_arr, price)
 
+        # Below 3 times the standard deviation is used to determine the to aim for but 2 times the standard deviation is used to assess risk
         expected_price_err = 3*np.std(price_arr)
         expected_price = np.mean(price_arr) + trade_sign*expected_price_err
 
+        ref_price_err = 2*np.std(price_arr)
+        ref_price = np.mean(price_arr) + trade_sign*ref_price_err
+
         if not is_buy:
             expected_return = expected_price / current_prediction
+            ref_return = ref_price / current_prediction
         else:
             expected_return =  current_prediction / expected_price
+            ref_return = current_prediction / ref_price
+
+        if ref_return < 1:
+            return -1, 1
 
         return expected_return, err
 
     def find_spread_bounds(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict):
 
+
+
         if order_type == 'buy':
             dict_type = 'asks'
+            opposite_dict_type = 'bids'
             is_buy = True
             trade_sign = 1
         else:
             dict_type = 'bids'
+            opposite_dict_type = 'asks'
             is_buy = False
             trade_sign = -1
+
+        prices = self.find_dict_info(order_dict[opposite_dict_type])
+
+        min_allowable_price = np.min(prices)
+        max_allowable_price = np.max(prices)
 
         #Finds the expected return
         expected_return, err = self.find_expected_value(err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset)
@@ -185,7 +204,13 @@ class SpreadTradeBot:
         expected_future_price = current_price*(expected_return**trade_sign)
         min_future_price = expected_future_price - err
         max_future_price = expected_future_price + err
-        print('expected return from ' + order_type + 'ing is ' + num2str(100*(expected_return-1), 2) + '% at $' + num2str(expected_future_price, 2) + ' per')
+
+        if order_type == 'buy':
+            min_future_price = min_allowable_price
+        elif order_type == 'sell':
+            max_future_price = max_allowable_price
+
+        print('expected return from ' + order_type + 'ing is ' + num2str(100*(expected_return-1), 3) + '% at $' + num2str(expected_future_price, 2) + ' per')
 
         return min_future_price, max_future_price, current_price
 
@@ -239,12 +264,14 @@ class SpreadTradeBot:
         return_str = value_sym + num2str(returns, 3)
         formated_string = '$' + num2str(price, 2) + ' (' + return_str + ')'
 
+        return formated_string
+
     def plot_returns(self):
         # Get data
         current_datetime = current_est_time()
         price, portfolio_value = self.get_portfolio_value()
         market_returns = 100 * price / self.initial_price - 100
-        portfolio_returns = 100 * price / self.initial_value - 100
+        portfolio_returns = 100 * portfolio_value / self.initial_value - 100
         data = {'Market': market_returns + 100, 'Algorithm': portfolio_returns + 100}
         new_row = pd.DataFrame(data=data, index=[current_datetime])
         self.returns = self.returns.append(new_row)
@@ -253,13 +280,12 @@ class SpreadTradeBot:
         market_str = self.format_price_info(market_returns, price)
 
         self.returns.plot()
-        plt.title('Algorithm Returns vs Market\nPortfolio: ' + portfolio_str + '\n' + self.prediction_ticker + ': ' + market_str)
+        plt.title('Portfolio: ' + portfolio_str + '\n' + self.prediction_ticker + ': ' + market_str)
         plt.xlabel('Date/Time')
         plt.ylabel('% Initial Value')
 
         plt.savefig('returns.png')
         plt.close()
-
 
     def find_dict_info(self, dict):
         # dict is the order dict for a single side (either asks or bids)
@@ -454,7 +480,7 @@ class SpreadTradeBot:
             order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT',
                                                cancel_after='min', post_only=True)
             self.trade_ids[order_type] = order['id']
-            self.trade_prices[order_type] = np.round(float(order['price']), 2)
+            self.trade_prices[order_type] = price
             msg = order_type + 'ing at $' + price_str + 'due to lack of funds'
             return msg
 
@@ -490,7 +516,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time - 3600
+        last_training_time = current_time
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         price, portfolio_value = self.get_portfolio_value()
@@ -520,6 +546,9 @@ class SpreadTradeBot:
                     err_counter += 1
                     print('failed to find new data due to error: ' + str(e))
                     print('number of consecutive errors: ' + str(err_counter))
+                    exc_type, exc_obj, exc_tb = sys.exc_info()
+                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                    print(exc_type, fname, exc_tb.tb_lineno)
 
                 # Plot returns
                 try:
@@ -533,6 +562,9 @@ class SpreadTradeBot:
                     err_counter += 1
                     print('failed to plot due to error: ' + str(e))
                     print('number of consecutive errors: ' + str(err_counter))
+                    exc_type, exc_obj, exc_tb = sys.exc_info()
+                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                    print(exc_type, fname, exc_tb.tb_lineno)
 
                 # Make trades
                 try:
@@ -551,6 +583,10 @@ class SpreadTradeBot:
                     err_counter += 1
                     print('failed to trade due to error: ' + str(e))
                     print('number of consecutive errors: ' + str(err_counter))
+                    exc_type, exc_obj, exc_tb = sys.exc_info()
+                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                    print(exc_type, fname, exc_tb.tb_lineno)
+
 
             # Update model training
             elif current_time > (last_training_time + 2*3600):
@@ -580,6 +616,9 @@ class SpreadTradeBot:
                     err_counter += 1
                     print('failed to update training due to error: ' + str(e))
                     print('number of consecutive errors: ' + str(err_counter))
+                    exc_type, exc_obj, exc_tb = sys.exc_info()
+                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                    print(exc_type, fname, exc_tb.tb_lineno)
 
 
 
