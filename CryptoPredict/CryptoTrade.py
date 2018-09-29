@@ -145,32 +145,39 @@ class SpreadTradeBot:
 
         if is_buy:
             trade_sign = -1
+            upper_buy = current_prediction + err
+            lower_buy = current_prediction - err
         else:
             trade_sign = 1
+            upper_sell = current_prediction + err
+            lower_sell = current_prediction - err
 
 
-        price_arr = np.array([])
+        value_arr = np.array([])
 
         for i in range(len(self.prediction)-self.minute_length+1, len(self.prediction)-fuzziness):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
-            price_arr = np.append(price_arr, price)
+            if is_buy:
+                upper_sell = price + err
+                lower_sell = price - err
+
+            else:
+                upper_buy = price + err
+                lower_buy = price - err
+
+            expected_point_value = self.find_point_expected_value(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
+
+            value_arr = np.append(value_arr, expected_point_value)
 
         # Below 3 times the standard deviation is used to determine the to aim for but 2 times the standard deviation is used to assess risk
-        expected_price_err = 3*np.std(price_arr)
-        expected_price = np.mean(price_arr) + trade_sign*expected_price_err
+        expected_value_err = 3*np.std(value_arr)
+        expected_return = np.mean(value_arr) + expected_value_err
 
-        ref_price_err = 2*np.std(price_arr)
-        ref_price = np.mean(price_arr) + trade_sign*ref_price_err
-
-        if not is_buy:
-            expected_return = expected_price / current_prediction
-            ref_return = ref_price / current_prediction
-        else:
-            expected_return =  current_prediction / expected_price
-            ref_return = current_prediction / ref_price
-
-        if ref_return < 1:
-            return -1, 1
+        # ref_value_err = 2*np.std(value_arr)
+        # ref_return = np.mean(value_arr) + ref_value_err
+        #
+        # if ref_return < 1:
+        #     return -1, 1
 
         return expected_return, err
 
