@@ -170,14 +170,14 @@ class SpreadTradeBot:
             value_arr = np.append(value_arr, expected_point_value)
 
         # Below 3 times the standard deviation is used to determine the to aim for but 2 times the standard deviation is used to assess risk
-        expected_value_err = 3*np.std(value_arr)
+        expected_value_err = 1*np.std(value_arr)
         expected_return = np.mean(value_arr) + expected_value_err
 
-        # ref_value_err = 2*np.std(value_arr)
-        # ref_return = np.mean(value_arr) + ref_value_err
-        #
-        # if ref_return < 1:
-        #     return -1, 1
+        ref_value_err = 0.5*np.std(value_arr)
+        ref_return = np.mean(value_arr) + ref_value_err
+
+        if ref_return < 1:
+            return -1, 1
 
         return expected_return, err
 
@@ -444,7 +444,10 @@ class SpreadTradeBot:
                 cancel_type = 'buy'
 
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, cancel_type)
+            self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
+            if self.trade_ids[order_type] != '':
+                unused_msg = self.cancel_old_hodl_order(order_type, 0)
             return msg
 
         hodl = False
@@ -523,7 +526,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time
+        last_training_time = current_time - 3600
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         price, portfolio_value = self.get_portfolio_value()
@@ -585,6 +588,11 @@ class SpreadTradeBot:
                         check_period = 2.5
                     else:
                         check_period = 60
+                        if self.trade_ids['buy'] != '':
+                            unused_msg = self.cancel_old_hodl_order('buy', 0)
+
+                        if self.trade_ids['sell'] != '':
+                            unused_msg = self.cancel_old_hodl_order('sell', 0)
                 except Exception as e:
                     last_check = current_time + 5 * 60
                     err_counter += 1
