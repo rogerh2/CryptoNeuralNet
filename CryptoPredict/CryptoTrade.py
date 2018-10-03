@@ -170,10 +170,10 @@ class SpreadTradeBot:
             value_arr = np.append(value_arr, expected_point_value)
 
         # Below 3 times the standard deviation is used to determine the to aim for but 2 times the standard deviation is used to assess risk
-        expected_value_err = 1*np.std(value_arr)
+        expected_value_err = 3*np.std(value_arr)
         expected_return = np.mean(value_arr) + expected_value_err
 
-        ref_value_err = 0.5*np.std(value_arr)
+        ref_value_err = 2 * np.std(value_arr) / np.sqrt((fuzziness - 1))
         ref_return = np.mean(value_arr) + ref_value_err
 
         if ref_return < 1:
@@ -421,6 +421,11 @@ class SpreadTradeBot:
         if self.trade_ids[order_type] != '':
             hodl_id = self.trade_ids[order_type]
             hodl_order = self.auth_client.get_order(hodl_id)
+
+            if not ('status' in hodl_order.keys()):
+                msg = 'waiting on outstanding orders'
+                return msg
+
             if (hodl_order['status'] != 'done') & (self.trade_prices[order_type] != price):
                 print('Canceled old hodl order for more fluidity')
                 self.auth_client.cancel_order(hodl_id)
@@ -494,6 +499,9 @@ class SpreadTradeBot:
             msg = order_type + 'ing at $' + price_str + 'due to lack of funds'
             return msg
 
+        if True:
+            msg = 'Spread trading has been manually disabled'
+            return msg
 
         trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)
 
@@ -526,7 +534,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time - 3600
+        last_training_time = current_time - 2*60
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         price, portfolio_value = self.get_portfolio_value()

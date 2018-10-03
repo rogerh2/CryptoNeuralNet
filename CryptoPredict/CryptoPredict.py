@@ -1017,6 +1017,7 @@ class CoinPriceModel:
                 stop_ind = (dates_list == date_to_object).argmax() + 1
 
                 saved_table = saved_table[start_ind:stop_ind]
+                saved_table.index = np.arange(len(saved_table))
 
             else:
                 saved_table=None\
@@ -2129,8 +2130,8 @@ if __name__ == '__main__':
     elif code_block == 2:
         day = '24'
 
-        date_from = '2018-09-28 22:00:00 EST'
-        date_to = '2018-09-29 22:00:00 EST'
+        date_from = '2018-10-01 20:00:00 EST'
+        date_to = '2018-10-02 16:00:00 EST'
         #date_to = datetime.now().strftime('%Y-%m-%d %H:%M:') + '00 EST'
         #date_from = '2018-06-15 10:20:00 EST'
         #date_to = '2018-09-23 21:46:00 EST'
@@ -2152,7 +2153,7 @@ if __name__ == '__main__':
         model_type = 'price' #Don't change this
         use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-28_22:00:00_EST_to_2018-09-29_22:00:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-28_22:00:00_EST_to_2018-09-29_22:00:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = True
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)

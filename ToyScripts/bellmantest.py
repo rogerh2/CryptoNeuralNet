@@ -1225,28 +1225,31 @@ class OptimalTradeStrategyV5:
         check_val = sq_diff * ln_diff - 1
         return check_val
 
-    def find_expected_value_over_many_trades(self, err, price_is_rising, const_diff, fit_coeff, fuzziness, fit_offset):
-        current_prediction = self.fuzzy_price(fit_coeff, len(self.prediction) - self.prediction_len, fuzziness,
-                                              fit_offset)
+    def find_expected_value_over_many_trades(self, ind, err, price_is_rising, const_diff, fit_coeff, fuzziness, fit_offset):
+        current_prediction = self.fuzzy_price(fit_coeff, ind, fuzziness, fit_offset)
 
         if price_is_rising:
             upper_buy = current_prediction + err
             lower_buy = current_prediction - err
+            sign = -1
         else:
             upper_sell = current_prediction + err
             lower_sell = current_prediction - err
+            sign = 1
 
         value_arr = np.array([])
 
-        for i in range(len(self.prediction) - self.prediction_len + 1, len(self.prediction) - fuzziness):
+        for i in range(ind + 1, ind + self.prediction_len - fuzziness):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
             if price_is_rising:
                 upper_sell = price + err
                 lower_sell = price - err
+                sign = -1
 
             else:
                 upper_buy = price + err
                 lower_buy = price - err
+                sign = 1
 
             expected_point_value = self.find_expected_value_over_single_trade(upper_buy, lower_buy, upper_sell, lower_sell,
                                                                   const_diff) + 1
@@ -1255,10 +1258,15 @@ class OptimalTradeStrategyV5:
 
         # Below 3 times the standard deviation is used to determine the to aim for but 2 times the standard deviation is used to assess risk
 
-        ref_value_err = 0.5*np.std(value_arr)
+        ref_value_err = 2 * np.std(value_arr)/np.sqrt((fuzziness - 1))
         ref_return = np.mean(value_arr) + ref_value_err
+        is_greater = sign*self.prediction[ind] > sign*self.prediction[ind-1]
+        is_lesser = sign*self.prediction[ind] > sign*self.prediction[ind+1]
+        is_not_inflection = (is_greater != is_lesser)
+        next_predictions = sign*self.prediction[(ind + 1):(ind + self.prediction_len - fuzziness)]
 
-        if ref_return < 1:
+
+        if (ref_return < 1) or (is_not_inflection) or (not is_greater):
             return 0
 
         else:
@@ -1311,10 +1319,9 @@ class OptimalTradeStrategyV5:
 
                     minute_cp.update_model_training()
 
-                    from_date = to_date
+                    from_date = fin_table.date[0].to_pydatetime()
                     to_date = fin_table.date[len(fin_table.date.values) - 1].to_pydatetime()
                     test_fin_table = fin_table
-                    test_fin_table.index = np.arange(0, len(test_fin_table))
                     test_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
                                         date_to=to_date.strftime(fmt) + ' EST',
                                         prediction_length=minute_cp.prediction_length,
@@ -1342,10 +1349,13 @@ class OptimalTradeStrategyV5:
                 fuzziness = int(saved_inds[ind, 4])
 
 
-            buy_check_val = self.find_expected_value_over_many_trades(err, True, const_diff, fit_coeff,
+            buy_check_val = self.find_expected_value_over_many_trades(ind, err, True, const_diff, fit_coeff,
                                                                   fuzziness, fit_offset)
-            sell_check_val = self.find_expected_value_over_many_trades(err, False, const_diff, fit_coeff,
+            sell_check_val = self.find_expected_value_over_many_trades(ind, err, False, const_diff, fit_coeff,
                                                                        fuzziness, fit_offset)
+            if (buy_check_val is None) or (sell_check_val is None):
+                continue
+
             if sell_check_val != buy_check_val:
                 if (buy_check_val > 0):# & (fit_coeff > 0):
                     buy_array[ind] = 1
@@ -1390,7 +1400,7 @@ class OptimalTradeStrategyV5:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-09-23_21:46:00_EST_to_2018-09-24_11:12:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-02_21:57:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -1400,14 +1410,12 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/most_recent30currency_ETH.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoPredict/most_recent30currency_ETH.h5'
 
     #date_from = '2018-09-18 22:23:00 EST'
     #date_to = '2018-09-21 18:58:00 EST'
-    #TODO fix problem causing error to be thrown with negtative indeces
-    start_ind = 0
-    date_from = '2018-09-23 23:46:00 EST'
-    date_to = '2018-09-24 09:12:00 EST'
+    date_from = '2018-09-29 19:00:00 EST'
+    date_to = '2018-10-02 21:57:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
@@ -1421,7 +1429,7 @@ if __name__ == '__main__':
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
     fin_table = cp.data_obj.fin_table
     fin_table.index = np.arange(len(fin_table))
-    strategy_obj = OptimalTradeStrategyV5(prediction[start_ind::, 0], test_output[start_ind:-30, 0])
+    strategy_obj = OptimalTradeStrategyV5(prediction[0::, 0], test_output[0:-30, 0])
     #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
     strategy_obj.find_optimal_trade_strategy(saved_inds=None, show_plots=True, fin_table=fin_table, minute_cp=cp )
 
