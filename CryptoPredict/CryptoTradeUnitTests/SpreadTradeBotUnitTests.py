@@ -150,6 +150,8 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
             err, fit_coeff, fit_offset, const_diff, fuzziness = self.spread_bot.find_fit_info()
             sell_a, sell_b = self.spread_bot.find_expected_value(err, False, const_diff, fit_coeff, fuzziness, fit_offset)
             buy_a, buy_b = self.spread_bot.find_expected_value(err, True, const_diff, fit_coeff, fuzziness, fit_offset)
+            test = strategy_obj_backtest.find_expected_value_over_many_trades(i + backtest_padding - start_ind, err, True, const_diff, fit_coeff, fuzziness, fit_offset)
+            self.assertEqual(test, buy_a != -1)
 
             if (sell_a == -1) & (buy_a != -1):
                 jump_bool = 1
