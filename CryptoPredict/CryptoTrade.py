@@ -3,9 +3,9 @@ matplotlib.use('Agg')
 import sys
 # sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
-sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict import CoinPriceModel
-from CryptoPredict import DataSet
+# sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict.CryptoPredict import CoinPriceModel
+from CryptoPredict.CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
@@ -142,20 +142,21 @@ class SpreadTradeBot:
 
     def find_expected_value(self, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
         current_prediction = self.fuzzy_price(fit_coeff, len(self.prediction)-self.minute_length, fuzziness, fit_offset)
+        ind = -self.minute_length
 
         if is_buy:
-            trade_sign = -1
+            sign = -1
             upper_buy = current_prediction + err
             lower_buy = current_prediction - err
         else:
-            trade_sign = 1
+            sign = 1
             upper_sell = current_prediction + err
             lower_sell = current_prediction - err
 
 
         value_arr = np.array([])
 
-        for i in range(len(self.prediction)-self.minute_length+1, len(self.prediction)-fuzziness):
+        for i in range(-self.minute_length+1, -fuzziness):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
             if is_buy:
                 upper_sell = price + err
@@ -175,8 +176,11 @@ class SpreadTradeBot:
 
         ref_value_err = 2 * np.std(value_arr) / np.sqrt((fuzziness - 1))
         ref_return = np.mean(value_arr) + ref_value_err
+        is_greater = sign * self.prediction[ind] > sign * self.prediction[ind - 1]
+        is_lesser = sign * self.prediction[ind] > sign * self.prediction[ind + 1]
+        is_not_inflection = (is_greater != is_lesser)
 
-        if ref_return < 1:
+        if (ref_return < 1) or (is_not_inflection) or (not is_greater):
             return -1, 1
 
         return expected_return, err
