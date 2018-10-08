@@ -1239,7 +1239,7 @@ class OptimalTradeStrategyV5:
 
         value_arr = np.array([])
 
-        for i in range(ind + 1, ind + self.prediction_len - fuzziness):
+        for i in range(ind, ind + self.prediction_len - fuzziness):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
             if price_is_rising:
                 upper_sell = price + err
@@ -1265,7 +1265,7 @@ class OptimalTradeStrategyV5:
         is_not_inflection = (is_greater != is_lesser)
 
 
-        if (ref_return < 1) or (is_not_inflection) or (not is_greater):
+        if (ref_return < 1) or (is_not_inflection) or (not is_greater) or np.isnan(ref_return):
             return 0
 
         else:
@@ -1399,7 +1399,7 @@ class OptimalTradeStrategyV5:
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-03_19:17:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-07_20:42:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -1409,12 +1409,12 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/5_Layers/Best_Model/most_recent30currency_ETH.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_2epochs1538798604.922.h5'
 
     #date_from = '2018-09-18 22:23:00 EST'
     #date_to = '2018-09-21 18:58:00 EST'
-    date_from = '2018-10-02 19:00:00 EST'
-    date_to = '2018-10-03 19:00:00 EST'
+    date_from = '2018-10-04 11:48:00 EST'
+    date_to = '2018-10-07 20:42:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,

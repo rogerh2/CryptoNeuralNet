@@ -3,9 +3,9 @@ matplotlib.use('Agg')
 import sys
 # sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
-# sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict.CryptoPredict import CoinPriceModel
-from CryptoPredict.CryptoPredict import DataSet
+sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict import CoinPriceModel
+from CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
@@ -39,7 +39,7 @@ def current_est_time():
     return est_date
 
 class SpreadTradeBot:
-    min_usd_balance = 100  # Make sure the bot does not trade away all my money
+    min_usd_balance = 75  # Make sure the bot does not trade away all my money
     offset = 40
     usd_id = None
     crypto_id = None
@@ -96,7 +96,7 @@ class SpreadTradeBot:
         #This method searches the past data to determine what value should be used for the error
         prediction = self.prediction
         data = self.price
-        ind = len(data) # I only care about the info for the current time
+        ind = len(data)# I only care about the info for the current time
         offset = self.offset
         err_arr = np.array([])
         off_arr = err_arr
@@ -180,7 +180,7 @@ class SpreadTradeBot:
         is_lesser = sign * self.prediction[ind] > sign * self.prediction[ind + 1]
         is_not_inflection = (is_greater != is_lesser)
 
-        if (ref_return < 1) or (is_not_inflection) or (not is_greater):
+        if (ref_return < 1) or (is_not_inflection) or (not is_greater) or np.isnan(ref_return):
             return -1, 1
 
         return expected_return, err
@@ -444,14 +444,13 @@ class SpreadTradeBot:
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         sleep(0.4)
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
+        if order_type == 'buy':
+            cancel_type = 'sell'
+        else:
+            cancel_type = 'buy'
 
-        if min_future_price is None:
+        if min_future_price is None and (self.trade_logic[cancel_type]):
             self.trade_logic[order_type] = False
-            if order_type == 'buy':
-                cancel_type = 'sell'
-            else:
-                cancel_type = 'buy'
-
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, cancel_type)
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
@@ -462,7 +461,6 @@ class SpreadTradeBot:
         hodl = False
 
         self.trade_logic[order_type] = True
-
         #This determines whether to buy or sell
         if order_type == 'buy':
             dict_type = 'asks'
@@ -538,7 +536,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time - 2*60
+        last_training_time = current_time
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         price, portfolio_value = self.get_portfolio_value()

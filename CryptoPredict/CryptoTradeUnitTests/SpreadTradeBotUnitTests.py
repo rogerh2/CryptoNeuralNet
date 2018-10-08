@@ -17,7 +17,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
                                     secret_key='redacted',
                                     passphrase='redacted', is_sandbox_api=True, minute_len=30)
 
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-08-11_08:46:00_EST_to_2018-08-16_08:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/Legacy/CryptoPredictDataSet_minutes_from_2018-08-11_08:46:00_EST_to_2018-08-16_08:00:00_EST.pickle'
         date_from = '2018-08-11 08:46:00 EST'
         date_to = '2018-08-16 08:00:00 EST'
         time_units = 'minutes'
@@ -128,40 +128,53 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
         self.assertAlmostEqual(size, 1.3994931, 7)
         np.testing.assert_almost_equal(available, num_orders * size, 0.01)
 
-    def test_does_bot_make_correct_buy_predictions(self):
+    def test_does_bot_make_correct_predictions(self):
         prediction = self.prediction
         test_output = self.test_output
         start_ind = 968 + 3804
         stop_ind = 1068 + 3804
-        backtest_padding = 30
+        backtest_padding = 50
 
         strategy_obj_backtest = OptimalTradeStrategyV5(
             prediction[(start_ind - backtest_padding):(stop_ind + backtest_padding + 30), 0],
             test_output[(start_ind - backtest_padding):(stop_ind + backtest_padding), 0])
         strategy_obj_backtest.find_optimal_trade_strategy()
         buy_bool = strategy_obj_backtest.buy_array
+        sell_bool = strategy_obj_backtest.sell_array
 
         bot_buy_bool = np.zeros(len(prediction))
+        bot_sell_bool = np.zeros(len(prediction))
 
         for i in range(start_ind, stop_ind):
             jump_bool = 0
-            self.spread_bot.price = test_output[(i - 90):(i), 0]
+            self.spread_bot.price = test_output[(i - 60):(i), 0]
             self.spread_bot.prediction = prediction[(i - 60):(i + 30), 0]
             err, fit_coeff, fit_offset, const_diff, fuzziness = self.spread_bot.find_fit_info()
             sell_a, sell_b = self.spread_bot.find_expected_value(err, False, const_diff, fit_coeff, fuzziness, fit_offset)
             buy_a, buy_b = self.spread_bot.find_expected_value(err, True, const_diff, fit_coeff, fuzziness, fit_offset)
-            test = strategy_obj_backtest.find_expected_value_over_many_trades(i + backtest_padding - start_ind, err, True, const_diff, fit_coeff, fuzziness, fit_offset)
-            self.assertEqual(test, buy_a != -1)
+            test_buy = strategy_obj_backtest.find_expected_value_over_many_trades(i + backtest_padding - start_ind, err,
+                                                                                  True, const_diff, fit_coeff,
+                                                                                  fuzziness, fit_offset)
+            test_sell = strategy_obj_backtest.find_expected_value_over_many_trades(i + backtest_padding - start_ind, err,
+                                                                                  False, const_diff, fit_coeff,
+                                                                                  fuzziness, fit_offset)
 
-            if (sell_a == -1) & (buy_a != -1):
-                jump_bool = 1
+            print(i-start_ind)
+            self.assertEqual(test_buy, buy_a != -1)
+            self.assertEqual(test_sell, sell_a != -1)
 
-            bot_buy_bool[i] = jump_bool
+
+            if buy_a != sell_a:
+                bot_buy_bool[i] = buy_a > 0
+                bot_sell_bool[i] = sell_a > 0
 
         bot_buy_bool = bot_buy_bool > 0
+        bot_sell_bool = bot_sell_bool > 0
 
         np.testing.assert_array_equal(buy_bool[backtest_padding:-(backtest_padding + 1)],
-                                      bot_buy_bool[start_ind:stop_ind])
+                                      bot_buy_bool[start_ind:stop_ind], 'incorrect buys')
+        np.testing.assert_array_equal(sell_bool[backtest_padding:-(backtest_padding + 1)],
+                                      bot_sell_bool[start_ind:stop_ind], 'incorrect sells')
 
 
 if __name__ == '__main__':
