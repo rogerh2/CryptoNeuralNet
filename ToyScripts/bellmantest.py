@@ -8,6 +8,52 @@ from datetime import datetime
 from datetime import timedelta
 import pandas as pd
 
+def find_spread_trade_strategy_value(buy_bool, sell_bool, all_prices, return_value_over_time=False):
+    # This finds how much money was gained from a starting value of $100 given a particular strategy
+    usd_available = 100
+    eth_available = 0
+
+    all_buys = all_prices[buy_bool]
+    all_sells = all_prices[sell_bool]
+    b = 0
+    s = 0
+    trade_fee_correction = 1
+
+    portfolio_value_over_time = np.array([])
+
+    for i in range(0, len(sell_bool)):
+
+        if buy_bool[i]:
+            if (usd_available > 0):
+                total_val = all_buys[b] * eth_available + usd_available
+                trade_amt = 0.25 * total_val
+                if trade_amt > usd_available:
+                    trade_amt = usd_available
+
+                eth_available = trade_fee_correction * trade_amt / (all_buys[b]) + eth_available
+                usd_available = usd_available - trade_fee_correction * trade_amt
+            b += 1
+        elif sell_bool[i]:
+            if (eth_available > 0):
+                total_val =  eth_available + usd_available/all_sells[s]
+                trade_amt = 0.25 * total_val
+                if trade_amt > eth_available:
+                    trade_amt = eth_available
+
+                usd_available = trade_fee_correction * all_sells[s] * trade_amt + usd_available
+                eth_available = eth_available - trade_fee_correction * trade_amt
+            s += 1
+
+        portfolio_value_over_time = np.append(portfolio_value_over_time, usd_available + eth_available * all_prices[i])
+
+    value = all_prices[-1] * eth_available + usd_available - 100
+
+    portfolio_value_over_time = np.append(portfolio_value_over_time, usd_available + eth_available * all_prices[i])
+
+    if return_value_over_time:
+        return value, portfolio_value_over_time
+    else:
+        return value
 
 def findoptimaltradestrategy(data, show_plots=False, min_price_jump = 1):
     buy_array = np.zeros(len(data))
@@ -1163,6 +1209,8 @@ class OptimalTradeStrategyV5:
         self.buy_array = np.zeros(len(data)+1)
         self.sell_array = np.zeros(len(data)+1)
         self.data_len = len(data)
+        self.last_return = 100
+        self.last_type = 0
 
     def find_fit_info(self, ind):
         #This method searches the past data to determine what value should be used for the error
@@ -1239,7 +1287,7 @@ class OptimalTradeStrategyV5:
 
         value_arr = np.array([])
 
-        for i in range(ind, ind + self.prediction_len - fuzziness):
+        for i in range(ind + 1, ind + self.prediction_len - fuzziness):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
             if price_is_rising:
                 upper_sell = price + err
@@ -1264,12 +1312,10 @@ class OptimalTradeStrategyV5:
         is_lesser = sign*self.prediction[ind] > sign*self.prediction[ind+1]
         is_not_inflection = (is_greater != is_lesser)
 
-
         if (ref_return < 1) or (is_not_inflection) or (not is_greater) or np.isnan(ref_return):
             return 0
 
-        else:
-            return 1
+        return 1
 
     def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
         # offset refers to how many minutes back in time can be checked for creating a fit
@@ -1396,10 +1442,146 @@ class OptimalTradeStrategyV5:
 
             plt.show()
 
+class OptimalTradeStrategyV5Realistic(OptimalTradeStrategyV5):
+
+    def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
+        # offset refers to how many minutes back in time can be checked for creating a fit
+        # TODO set back to old find_optimal_trade_strategy for unittesting
+        buy_array = self.buy_array
+        sell_array = self.sell_array
+        data_len = self.data_len-1
+        prediction = self.prediction
+        data = self.data
+        offset = self.offset
+        price_is_rising = None
+        if saved_inds is None:
+            saved_inds = np.zeros((data_len + 1, 5))
+            save_inds = True
+        elif len(saved_inds):
+            save_inds = False
+
+        buy_check_val = False
+        sell_check_val = False
+
+        for i in range(offset, data_len):
+            print(str(round(100 * (i-offset) / (data_len - offset), 2)) + '% done')
+            ind = i+1
+            fuzzzy_counter = 0
+
+            if ind == len(saved_inds):
+                saved_inds = np.vstack((saved_inds, np.zeros((data_len + 1 - len(saved_inds), 5))))
+                save_inds = True
+
+            if save_inds:
+                # TODO add the ability to increase saved length withut starting over
+                if (ind%121 == 0) & (fin_table is not None):
+                    # In theory this should retrain the model over predetermined intervals
+                    to_date = fin_table.date[ind - 1].to_pydatetime()
+                    from_delta = timedelta(hours=2)
+                    from_date = to_date - from_delta
+                    test_dates = pd.date_range(from_date, to_date, freq='1min')
+                    from_ind = ind - len(test_dates)
+                    fmt = '%Y-%m-%d %H:%M:%S'
+
+                    training_fin_table = fin_table[from_ind:ind]
+                    training_fin_table.index = np.arange(0, len(training_fin_table))
+                    training_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                            date_to=to_date.strftime(fmt) + ' EST',
+                                            prediction_length=minute_cp.prediction_length,
+                                            bitinfo_list=minute_cp.bitinfo_list,
+                                            prediction_ticker='ETH', time_units='minutes', fin_table=training_fin_table)
+                    minute_cp.data_obj = training_data
+
+                    minute_cp.update_model_training()
+
+                    from_date = fin_table.date[0].to_pydatetime()
+                    to_date = fin_table.date[len(fin_table.date.values) - 1].to_pydatetime()
+                    test_fin_table = fin_table
+                    test_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                        date_to=to_date.strftime(fmt) + ' EST',
+                                        prediction_length=minute_cp.prediction_length,
+                                        bitinfo_list=minute_cp.bitinfo_list,
+                                        prediction_ticker='ETH', time_units='minutes', fin_table=test_fin_table)
+                    minute_cp.data_obj = test_data
+
+                    prediction, test_output = minute_cp.test_model(did_train=False, show_plots=False)
+                    # TODO Check to make sure no access to future data!
+                    self.prediction[ind::] = prediction[(ind)::, 0]
+
+
+                err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
+                saved_inds[ind, 0] = err
+                saved_inds[ind, 1] = fit_coeff
+                saved_inds[ind, 2] = fit_offset
+                saved_inds[ind, 3] = const_diff
+                saved_inds[ind, 4] = fuzziness
+
+            else:
+                err = saved_inds[ind, 0]
+                fit_coeff = saved_inds[ind, 1]
+                fit_offset = saved_inds[ind, 2]
+                const_diff = saved_inds[ind, 3]
+                fuzziness = int(saved_inds[ind, 4])
+
+
+            buy_decision = self.find_expected_value_over_many_trades(ind, err, True, const_diff, fit_coeff,
+                                                                  fuzziness, fit_offset)
+            sell_decision = self.find_expected_value_over_many_trades(ind, err, False, const_diff, fit_coeff,
+                                                                       fuzziness, fit_offset)
+            if (buy_check_val is None) or (sell_check_val is None):
+                continue
+
+            if buy_decision != sell_decision:
+                if buy_decision:
+                    buy_check_val = True
+                    sell_check_val = False
+                elif sell_decision:
+                    buy_check_val = False
+                    sell_check_val = True
+
+            if (buy_check_val > 0) & (data[ind] < data[ind-1]):# & (fit_coeff > 0):
+                buy_array[ind] = 1
+            # elif (buy_check_val > 0) & (fit_coeff < 0):
+            #     sell_array[ind] = 1
+
+            if (sell_check_val > 0) & (data[ind] > data[ind-1]):# & (fit_coeff > 0):
+                sell_array[ind] = 1
+            # elif (sell_check_val > 0) & (fit_coeff < 0):
+            #     buy_array[ind] = 1
+
+        if save_inds:
+            table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/703ModelSavedTestIndsto8042018.pickle'
+            with open(table_file_name, 'wb') as file_handle:
+                pickle.dump(saved_inds, file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+        print(str(fuzzzy_counter))
+
+        self.buy_array = np.array([bool(x) for x in buy_array])
+        self.sell_array = np.array([bool(x) for x in sell_array])
+        if show_plots:
+            all_times = np.arange(0, len(data))
+            sell_bool = self.sell_array
+            buy_bool = self.buy_array
+            market_returns = 100 * (data[-1] - data[30]) / data[30]
+            returns, value_over_time = find_spread_trade_strategy_value(buy_bool[0:-2], sell_bool[0:-2], data[0:-1], return_value_over_time=True)
+            plt.plot(all_times[sell_bool[0:-1]], data[sell_bool[0:-1]], 'rx')
+            plt.plot(all_times[buy_bool[0:-1]], data[buy_bool[0:-1]], 'gx')
+            plt.plot(data)
+            plt.title( 'Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market' )
+
+            plt.figure()
+            plt.plot(value_over_time, label='Strategy')
+            plt.plot(100 * data / (data[1]), label='Market')
+            plt.title('Precentage Returns Strategy and Market')
+            plt.ylabel('% Return')
+            plt.legend()
+
+            plt.show()
+
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-07_20:42:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-10-11_00:00:00_EST_to_2018-10-11_06:00:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -1409,12 +1591,12 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_2epochs1538798604.922.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/most_recent30currency_ETH.h5'
 
     #date_from = '2018-09-18 22:23:00 EST'
     #date_to = '2018-09-21 18:58:00 EST'
-    date_from = '2018-10-04 11:48:00 EST'
-    date_to = '2018-10-07 20:42:00 EST'
+    date_from = '2018-10-11 00:00:00 EST'
+    date_to = '2018-10-11 06:00:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,

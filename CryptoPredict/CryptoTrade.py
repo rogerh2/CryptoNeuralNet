@@ -3,9 +3,9 @@ matplotlib.use('Agg')
 import sys
 # sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
-sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict import CoinPriceModel
-from CryptoPredict import DataSet
+#sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict.CryptoPredict import CoinPriceModel
+from CryptoPredict.CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
@@ -39,7 +39,7 @@ def current_est_time():
     return est_date
 
 class SpreadTradeBot:
-    min_usd_balance = 75  # Make sure the bot does not trade away all my money
+    min_usd_balance = 109  # Make sure the bot does not trade away all my money
     offset = 40
     usd_id = None
     crypto_id = None
@@ -439,6 +439,27 @@ class SpreadTradeBot:
 
         return msg
 
+    def determine_trade_price(self, side, order_dict):
+        #side must be 'asks' or 'bids'
+
+        if side == 'buy':
+            order_type = 'bids'
+            opposing_order_type = 'asks'
+            sign = -1
+        elif side == 'sell':
+            order_type = 'asks'
+            opposing_order_type = 'bids'
+            sign = 1
+
+
+        #the below chooses the best price that will still be at the top of the order book
+        trade_price_opp_type = round(float(order_dict[opposing_order_type][0][0]), 2) + 0.01*sign
+        trade_price_type = round(float(order_dict[order_type][0][0]), 2) - 0.01*sign
+        trade_price = np.abs(np.max(sign*np.array([trade_price_opp_type, trade_price_type])))
+
+
+        return trade_price
+
     def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
@@ -465,37 +486,52 @@ class SpreadTradeBot:
         if order_type == 'buy':
             dict_type = 'asks'
             order_type = 'sell'
-            sign = -1
+            opposing_order_type = 'buy'
+            stop_type = 'entry'
+            sign = 1
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             usd_available, available = self.get_wallet_contents()
-            price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
-            if not self.trade_logic[order_type]:
-                hodl = True
-                order_type = 'buy'
-                available = usd_available/price
-                if usd_available < 10:
-                    msg = self.cancel_old_hodl_order(order_type, price)
-                    return msg
+            price = self.determine_trade_price(order_type, order_dict)
+            opposite_available = usd_available/price
+            trade_size_lim = 10/price
 
-        elif order_type == 'sell':
+        else:
             dict_type = 'bids'
             order_type = 'buy'
+            opposing_order_type ='sell'
+            stop_type = 'loss'
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
             available, crypto_available = self.get_wallet_contents()
-            sign = 1
-            price = round(float(order_dict[dict_type][0][0]), 2) + 0.01 * sign
-            if not self.trade_logic[order_type]:
-                hodl = True
-                order_type = 'sell'
-                available = crypto_available
-                if crypto_available < 0.01:
-                    msg = self.cancel_old_hodl_order(order_type, price)
-                    return msg
+            opposite_available = crypto_available
+            sign = -1
+            price = self.determine_trade_price(order_type, order_dict)
+            trade_size_lim = 0.01
+
+        if not self.trade_logic[order_type]:
+            hodl = True
+            order_type = opposing_order_type
+            price = self.determine_trade_price(order_type, order_dict)
+            available = opposite_available
+            if available < trade_size_lim:
+                msg = self.cancel_old_hodl_order(order_type, price)
+                return msg
+
         if hodl:
+            # TODO replace with stop order (see below)
+            # --Stop order instructions--
+            # Stop orders become active and wait to trigger based on the movement of the last trade price. There are two
+            # types of stop orders, stop loss and stop entry:
+            #
+            # stop: 'loss': Triggers when the last trade price changes to a value at or below the stop_price.
+            #
+            # stop: 'entry': Triggers when the last trade price changes to a value at or above the stop_price.
+            #
+            # The last trade price is the last price at which an order was filled. This price can be found in the latest
+            # match message. Note that not all match messages may be received due to dropped messages.
             price_str = num2str(price, 2)
+            stop_price_str = num2str(price + sign*0.02, 2)
             size_str = num2str(available, 8)
-            order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT',
-                                               cancel_after='min', post_only=True)
+            order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, order_type='limit')
             self.trade_ids[order_type] = order['id']
             self.trade_prices[order_type] = price
             msg = order_type + 'ing at $' + price_str + 'due to lack of funds'
@@ -524,6 +560,7 @@ class SpreadTradeBot:
             else:
                 size_str = num2str(trade_size, 8)
             price_str = num2str(price, 2)
+
             self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT', cancel_after='hour', post_only=True)
             sleep(0.4)
             print('Placed limit ' + order_type + ' for ' + size_str + ' ' + self.prediction_ticker + ' at $' + price_str + ' per')
