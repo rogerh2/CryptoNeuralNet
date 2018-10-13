@@ -3,9 +3,9 @@ matplotlib.use('Agg')
 import sys
 # sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
-#sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict.CryptoPredict import CoinPriceModel
-from CryptoPredict.CryptoPredict import DataSet
+sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict import CoinPriceModel
+from CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
@@ -430,7 +430,7 @@ class SpreadTradeBot:
                 msg = 'waiting on outstanding orders'
                 return msg
 
-            if (hodl_order['status'] != 'done') & (self.trade_prices[order_type] != price):
+            if ((hodl_order['status'] != 'done') or (hodl_order['status'] != 'active')) & (self.trade_prices[order_type] != price):
                 print('Canceled old hodl order for more fluidity')
                 self.auth_client.cancel_order(hodl_id)
                 self.trade_ids[order_type] = ''
@@ -529,9 +529,12 @@ class SpreadTradeBot:
             # The last trade price is the last price at which an order was filled. This price can be found in the latest
             # match message. Note that not all match messages may be received due to dropped messages.
             price_str = num2str(price, 2)
-            stop_price_str = num2str(price + sign*0.02, 2)
+            stop_price_str = num2str(price + sign*0.01, 2)
             size_str = num2str(available, 8)
-            order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, order_type='limit')
+            order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, post_only='true', order_type='limit')
+            if not ('id' in order.keys()):
+                msg = str(order.values())
+                return msg
             self.trade_ids[order_type] = order['id']
             self.trade_prices[order_type] = price
             msg = order_type + 'ing at $' + price_str + 'due to lack of funds'
@@ -589,7 +592,7 @@ class SpreadTradeBot:
         check_period = 60
         last_plot = 0
 
-        while 20 < portfolio_value:
+        while 9 < portfolio_value:
             if (current_time > (last_check + check_period)) & (current_time < (last_training_time + 2 * 3600)):
                 # Scrape price from cryptocompae
                 try:
