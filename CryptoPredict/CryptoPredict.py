@@ -2175,8 +2175,8 @@ if __name__ == '__main__':
         #date_from = '2018-10-01 20:00:00 EST'
         #date_to = '2018-10-02 16:00:00 EST'
         #date_to = datetime.now().strftime('%Y-%m-%d %H:%M:') + '00 EST'
-        date_from = '2018-10-11 00:00:00 EST'
-        date_to = '2018-10-11 06:00:00 EST'
+        date_from = '2018-06-15 10:20:00 EST'
+        date_to = '2018-10-15 20:34:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -2187,15 +2187,15 @@ if __name__ == '__main__':
         neuron_count = 37
         layer_count = 3
         batch_size = 96
-        old_neuron_grid = [37, 70, 90, 300]#[100, 200, 300, 400, 1000]#
+        old_neuron_grid = [90]#[37, 70, 90, 300]#[100, 200, 300, 400, 1000]#
         neuron_grid = old_neuron_grid#[x*2 for x in old_neuron_grid]
         time_block_length = 60
         min_distance_between_trades = 5
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/most_recent30currency_ETH.h5'
         model_type = 'price' #Don't change this
-        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
-        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-05_22:18:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-16_20:34:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = False
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)

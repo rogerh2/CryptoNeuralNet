@@ -528,10 +528,10 @@ class SpreadTradeBot:
             #
             # The last trade price is the last price at which an order was filled. This price can be found in the latest
             # match message. Note that not all match messages may be received due to dropped messages.
-            price_str = num2str(price, 2)
-            stop_price_str = num2str(price + sign*0.01, 2)
+            price_str = num2str(price + sign*0.01, 2)
+            stop_price_str = num2str(price + sign*0.02, 2)
             size_str = num2str(available, 8)
-            order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, post_only='true', order_type='limit')
+            order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, order_type='limit')
             if not ('id' in order.keys()):
                 msg = str(order.values())
                 return msg
@@ -634,7 +634,7 @@ class SpreadTradeBot:
                     sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
                     print(buy_msg)
                     print(sell_msg)
-                    if self.trade_logic['buy'] != self.trade_logic['sell']:
+                    if True: # self.trade_logic['buy'] != self.trade_logic['sell']:
                         check_period = 2.5
                     else:
                         check_period = 60
@@ -658,11 +658,13 @@ class SpreadTradeBot:
                 try:
                     err_counter = 0
                     last_training_time = current_time
-                    to_date = self.cp.create_standard_dates()
+                    to_date = datetime.now()
                     from_delta = timedelta(hours=2)
                     from_date = to_date - from_delta
-                    fmt = '%Y-%m-%d %H:%M:%S %Z'
-                    training_data = DataSet(date_from=from_date.strftime(fmt), date_to=to_date.strftime(fmt),
+                    fmt = '%Y-%m-%d %H:%M:'
+                    date_to = to_date.strftime(fmt) + '00 UTC'
+                    date_from = from_date.strftime(fmt) + '00 UTC'
+                    training_data = DataSet(date_from=date_from, date_to=date_to,
                                             prediction_length=self.cp.prediction_length, bitinfo_list=self.bitinfo_list,
                                             prediction_ticker=self.prediction_ticker, time_units='minutes')
                     self.cp.data_obj = training_data
