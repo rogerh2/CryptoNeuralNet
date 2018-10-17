@@ -39,7 +39,7 @@ def current_est_time():
     return est_date
 
 class SpreadTradeBot:
-    min_usd_balance = 109  # Make sure the bot does not trade away all my money
+    min_usd_balance = 100  # Make sure the bot does not trade away all my money
     offset = 40
     usd_id = None
     crypto_id = None
@@ -48,6 +48,7 @@ class SpreadTradeBot:
     trade_ids = {'buy':'', 'sell':''}
     trade_prices = {'buy':'', 'sell':''}
     trade_logic = {'buy': True, 'sell': True}
+    order_status = 'active'
 
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=30,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -430,10 +431,13 @@ class SpreadTradeBot:
                 msg = 'waiting on outstanding orders'
                 return msg
 
-            if ((hodl_order['status'] != 'done') or (hodl_order['status'] != 'active')) & (self.trade_prices[order_type] != price):
+            if (hodl_order['status'] != 'done') & (self.trade_prices[order_type] != price):
                 print('Canceled old hodl order for more fluidity')
                 self.auth_client.cancel_order(hodl_id)
                 self.trade_ids[order_type] = ''
+                self.order_status = hodl_order['status']
+                msg = 'just cancelled an ' + hodl_order['status'] + ' order'
+                return msg
 
         msg = 'waiting on outstanding orders'
 
@@ -531,7 +535,13 @@ class SpreadTradeBot:
             price_str = num2str(price + sign*0.01, 2)
             stop_price_str = num2str(price + sign*0.02, 2)
             size_str = num2str(available, 8)
-            order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, order_type='limit')
+            if self.order_status == 'open':
+                price_str = num2str(price, 2)
+                order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str,
+                                                   time_in_force='GTT', cancel_after='hour', post_only=True)
+            else:
+                price_str = num2str(price + sign * 0.01, 2)
+                order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, order_type='limit')
             if not ('id' in order.keys()):
                 msg = str(order.values())
                 return msg
@@ -576,7 +586,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time
+        last_training_time = 0
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         price, portfolio_value = self.get_portfolio_value()
@@ -601,6 +611,7 @@ class SpreadTradeBot:
                     if (current_time > (last_scrape + 65)):
                         self.spread_bot_predict()
                         last_scrape = current_time
+                        self.order_status = 'active'
                 except Exception as e:
                     last_check = current_time + 5*60
                     err_counter += 1
