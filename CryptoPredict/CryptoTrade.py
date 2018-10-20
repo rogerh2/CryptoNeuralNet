@@ -39,14 +39,14 @@ def current_est_time():
     return est_date
 
 class SpreadTradeBot:
-    min_usd_balance = 100  # Make sure the bot does not trade away all my money
+    min_usd_balance = 100.18  # Make sure the bot does not trade away all my money
     offset = 40
     usd_id = None
     crypto_id = None
     initial_price = 1
     initial_value = 1
     trade_ids = {'buy':'', 'sell':''}
-    trade_prices = {'buy':'', 'sell':''}
+    trade_prices = {'buy':0, 'sell':1000000000}
     trade_logic = {'buy': True, 'sell': True}
     order_status = 'active'
 
@@ -226,11 +226,9 @@ class SpreadTradeBot:
 
         return min_future_price, max_future_price, current_price
 
-    #TODO write function to allocate funds for buys and sells in get_wallet_contents based on current orders and desired orders
+    #TODO write function to allocate funds for buys and sells in get_available_wallet_contents based on current orders and desired orders
 
-    def get_wallet_contents(self):
-        # TODO get rid of cringeworthy repitition
-
+    def get_available_wallet_contents(self):
         data = self.auth_client.get_accounts()
         sleep(0.4)
         USD_ind = [acc["currency"] == 'USD' for acc in data]
@@ -247,6 +245,27 @@ class SpreadTradeBot:
         crypto_available = np.round(float(crypto_wallet['available']), 8)
 
         return usd_available, crypto_available
+
+    def get_full_wallet_contents(self, type):
+        data = self.auth_client.get_accounts()
+        sleep(0.4)
+        USD_ind = [acc["currency"] == 'USD' for acc in data]
+        usd_wallet = data[USD_ind.index(True)]
+
+        crypto_ind = [acc["currency"] == self.prediction_ticker for acc in data]
+        crypto_wallet = data[crypto_ind.index(True)]
+
+        if (self.usd_id is None) or (self.crypto_id is None):
+            self.usd_id = usd_wallet['id']
+            self.crypto_id = crypto_wallet['id']
+
+        usd_available = np.round(float(usd_wallet['balance']) - self.min_usd_balance, 2)
+        crypto_available = np.round(float(crypto_wallet['balance']), 8)
+
+        if type == 'buy':
+            return usd_available
+        else:
+            return crypto_available
 
     def get_portfolio_value(self):
         data = self.auth_client.get_accounts()
@@ -278,16 +297,21 @@ class SpreadTradeBot:
 
         return formated_string
 
-    def plot_returns(self):
-        # Get data
+    def update_returns_data(self, price, portfolio_value):
         current_datetime = current_est_time()
-        price, portfolio_value = self.get_portfolio_value()
         market_returns = 100 * price / self.initial_price - 100
         portfolio_returns = 100 * portfolio_value / self.initial_value - 100
         data = {'Market': market_returns + 100, 'Algorithm': portfolio_returns + 100}
         new_row = pd.DataFrame(data=data, index=[current_datetime])
         self.returns = self.returns.append(new_row)
+        diff_from_max_len = len(self.returns.index) - 604800
+        if diff_from_max_len > 0:
+            self.returns = self.returns.iloc[diff_from_max_len::]
 
+        return portfolio_returns, market_returns
+
+    def plot_returns(self, portfolio_returns, portfolio_value, market_returns, price):
+        # Get data
         portfolio_str = self.format_price_info(portfolio_returns, portfolio_value)
         market_str = self.format_price_info(market_returns, price)
 
@@ -335,27 +359,6 @@ class SpreadTradeBot:
             return np.array([])
 
         spread_prices = np.arange(min_price, max_price, price_step)
-
-        # prices = self.find_dict_info(dict)
-        # j = 0
-        #
-        # for i in range(1, len(prices)):
-        #     if (price < min_price):
-        #         if trade_sign == -1:
-        #             break
-        #         else:
-        #             continue
-        #     elif(price > max_price):
-        #         if trade_sign == 1:
-        #             break
-        #         else:
-        #             continue
-        #
-        #     price = prices[i]
-        #     prior_price = prices[i - 1]
-        #     bid_diff = abs(price - prior_price)
-        #     if trade_sign*price > naive_trade_prices[j]:
-        #         j += 1
 
         return  spread_prices
 
@@ -471,8 +474,10 @@ class SpreadTradeBot:
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
         if order_type == 'buy':
             cancel_type = 'sell'
+            min_cancel_balance = 0.01
         else:
             cancel_type = 'buy'
+            min_cancel_balance = 10
 
         if min_future_price is None and (self.trade_logic[cancel_type]):
             self.trade_logic[order_type] = False
@@ -481,9 +486,16 @@ class SpreadTradeBot:
             msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
             if self.trade_ids[order_type] != '':
                 unused_msg = self.cancel_old_hodl_order(order_type, 0)
+
+            cancel_type_balance = self.get_full_wallet_contents(cancel_type)
+
+            if cancel_type_balance <= min_cancel_balance:
+                self.trade_logic[order_type] = True
+
             return msg
 
         hodl = False
+
 
         self.trade_logic[order_type] = True
         #This determines whether to buy or sell
@@ -494,7 +506,7 @@ class SpreadTradeBot:
             stop_type = 'entry'
             sign = 1
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
-            usd_available, available = self.get_wallet_contents()
+            usd_available, available = self.get_available_wallet_contents()
             price = self.determine_trade_price(order_type, order_dict)
             opposite_available = usd_available/price
             trade_size_lim = 10/price
@@ -505,14 +517,24 @@ class SpreadTradeBot:
             opposing_order_type ='sell'
             stop_type = 'loss'
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
-            available, crypto_available = self.get_wallet_contents()
+            available, crypto_available = self.get_available_wallet_contents()
             opposite_available = crypto_available
             sign = -1
             price = self.determine_trade_price(order_type, order_dict)
             trade_size_lim = 0.01
 
         if not self.trade_logic[order_type]:
-            hodl = True
+            last_trade_price = self.trade_prices[cancel_type]
+            if min_future_price is not None:
+                #Always do as the algorithm says
+                hodl = True
+            elif sign*price > (sign*last_trade_price + 0.0015*last_trade_price):
+                #Trade if the price has moved so much that a new stable are has probably been reached
+                hodl = True
+            elif sign*price < sign*last_trade_price:
+                #Trade if the price is moving favorably since the last trade
+                hodl = True
+
             order_type = opposing_order_type
             price = self.determine_trade_price(order_type, order_dict)
             available = opposite_available
@@ -521,18 +543,6 @@ class SpreadTradeBot:
                 return msg
 
         if hodl:
-            # TODO replace with stop order (see below)
-            # --Stop order instructions--
-            # Stop orders become active and wait to trigger based on the movement of the last trade price. There are two
-            # types of stop orders, stop loss and stop entry:
-            #
-            # stop: 'loss': Triggers when the last trade price changes to a value at or below the stop_price.
-            #
-            # stop: 'entry': Triggers when the last trade price changes to a value at or above the stop_price.
-            #
-            # The last trade price is the last price at which an order was filled. This price can be found in the latest
-            # match message. Note that not all match messages may be received due to dropped messages.
-            price_str = num2str(price + sign*0.01, 2)
             stop_price_str = num2str(price + sign*0.02, 2)
             size_str = num2str(available, 8)
             if self.order_status == 'open':
@@ -581,12 +591,23 @@ class SpreadTradeBot:
         msg = 'Done placing ' + order_type + 's'
         return msg
 
+    def print_err_msg(self, section_text, e, err_counter, current_time):
+        last_check = current_time + 5 * 60
+        err_counter += 1
+        print('failed to' + section_text + 'due to error: ' + str(e))
+        print('number of consecutive errors: ' + str(err_counter))
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        print(exc_type, fname, exc_tb.tb_lineno)
+
+        return last_check, err_counter
+
     def trade_loop(self):
         # This method keeps the bot running continuously
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = 0
+        last_training_time = current_time
         last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         starting_price = round(float(last_order_dict['asks'][0][0]), 2)
         price, portfolio_value = self.get_portfolio_value()
@@ -601,41 +622,39 @@ class SpreadTradeBot:
         err_counter = 0
         check_period = 60
         last_plot = 0
+        last_buy_msg = ''
+        last_sell_msg = ''
+        fmt = '%Y-%m-%d %H:%M:'
+        portfolio_returns = 0
+        market_returns = 0
 
-        while 9 < portfolio_value:
+        while 10.5 < portfolio_value:
             if (current_time > (last_check + check_period)) & (current_time < (last_training_time + 2 * 3600)):
                 # Scrape price from cryptocompae
                 try:
                     err_counter = 0
                     last_check = current_time
                     if (current_time > (last_scrape + 65)):
+                        price, portfolio_value = self.get_portfolio_value()
                         self.spread_bot_predict()
                         last_scrape = current_time
                         self.order_status = 'active'
+                        current_datetime = current_est_time()
+                        portfolio_returns, market_returns =  self.update_returns_data(price, portfolio_value)
+                        print('Current time is ' + current_datetime.strftime(fmt) + ' EST')
+
+
                 except Exception as e:
-                    last_check = current_time + 5*60
-                    err_counter += 1
-                    print('failed to find new data due to error: ' + str(e))
-                    print('number of consecutive errors: ' + str(err_counter))
-                    exc_type, exc_obj, exc_tb = sys.exc_info()
-                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                    print(exc_type, fname, exc_tb.tb_lineno)
+                    last_check, err_counter = self.print_err_msg('find new data', e, err_counter, current_time)
 
                 # Plot returns
                 try:
                     err_counter = 0
                     if (current_time > (last_plot + 5*60)):
-                        price, portfolio_value = self.get_portfolio_value()
-                        self.plot_returns()
+                        self.plot_returns(portfolio_returns, portfolio_value, market_returns, price)
                         last_plot = current_time
                 except Exception as e:
-                    last_check = current_time + 5*60
-                    err_counter += 1
-                    print('failed to plot due to error: ' + str(e))
-                    print('number of consecutive errors: ' + str(err_counter))
-                    exc_type, exc_obj, exc_tb = sys.exc_info()
-                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                    print(exc_type, fname, exc_tb.tb_lineno)
+                    last_check, err_counter = self.print_err_msg('plot', e, err_counter, current_time)
 
                 # Make trades
                 try:
@@ -643,8 +662,14 @@ class SpreadTradeBot:
                     err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
                     buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy')
                     sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
-                    print(buy_msg)
-                    print(sell_msg)
+                    if buy_msg != last_buy_msg:
+                        print(buy_msg)
+                        last_buy_msg = buy_msg
+
+                    if sell_msg != last_sell_msg:
+                        print(sell_msg)
+                        last_sell_msg = sell_msg
+
                     if True: # self.trade_logic['buy'] != self.trade_logic['sell']:
                         check_period = 2.5
                     else:
@@ -655,13 +680,7 @@ class SpreadTradeBot:
                         if self.trade_ids['sell'] != '':
                             unused_msg = self.cancel_old_hodl_order('sell', 0)
                 except Exception as e:
-                    last_check = current_time + 5 * 60
-                    err_counter += 1
-                    print('failed to trade due to error: ' + str(e))
-                    print('number of consecutive errors: ' + str(err_counter))
-                    exc_type, exc_obj, exc_tb = sys.exc_info()
-                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                    print(exc_type, fname, exc_tb.tb_lineno)
+                    last_check, err_counter = self.print_err_msg('trade', e, err_counter, current_time)
 
 
             # Update model training
@@ -672,7 +691,6 @@ class SpreadTradeBot:
                     to_date = datetime.now()
                     from_delta = timedelta(hours=2)
                     from_date = to_date - from_delta
-                    fmt = '%Y-%m-%d %H:%M:'
                     date_to = to_date.strftime(fmt) + '00 UTC'
                     date_from = from_date.strftime(fmt) + '00 UTC'
                     training_data = DataSet(date_from=date_from, date_to=date_to,
@@ -689,6 +707,7 @@ class SpreadTradeBot:
                                  bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=self.save_str, need_data_obj=False)
                     self.prediction = None
                     self.price = None
+                    self.cp.pred_data_obj = None
                 except Exception as e:
                     last_training_time = current_time + 5*60
                     err_counter += 1
@@ -707,7 +726,7 @@ class SpreadTradeBot:
 
         print('Algorithm failed either due to underperformance or due to too many exceptions. Now converting all crypto to USD')
         self.auth_client.cancel_all(self.product_id)
-        usd_available, crypto_available = self.get_wallet_contents()
+        usd_available, crypto_available = self.get_available_wallet_contents()
         self.auth_client.place_market_order(self.product_id, side='sell', size=num2str(crypto_available, 8))
 
 
