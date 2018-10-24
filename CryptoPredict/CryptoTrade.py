@@ -16,6 +16,7 @@ from datetime import timedelta
 from time import sleep
 import pytz
 import os
+import traceback
 
 def mean_confidence_interval(data, confidence=0.95):
     a = data
@@ -39,7 +40,7 @@ def current_est_time():
     return est_date
 
 class SpreadTradeBot:
-    min_usd_balance = 100.18  # Make sure the bot does not trade away all my money
+    min_usd_balance = 100.04  # Make sure the bot does not trade away all my money
     offset = 40
     usd_id = None
     crypto_id = None
@@ -222,7 +223,7 @@ class SpreadTradeBot:
         elif order_type == 'sell':
             max_future_price = max_allowable_price
 
-        print('expected return from ' + order_type + 'ing is ' + num2str(100*(expected_return-1), 3) + '% at $' + num2str(expected_future_price, 2) + ' per')
+        #print('expected return from ' + order_type + 'ing is ' + num2str(100*(expected_return-1), 3) + '% at $' + num2str(expected_future_price, 2) + ' per')
 
         return min_future_price, max_future_price, current_price
 
@@ -467,6 +468,24 @@ class SpreadTradeBot:
 
         return trade_price
 
+    def detect_trade_pressure(self, order_book, opposing_type, order_type):
+        # This looks at the buying and selling pressure to detemrine wether to place a stop limit order vs a regular
+        # limit order
+        n = 10
+        order_dict = order_book[order_type]
+        opposing_dict = order_book[opposing_type]
+
+        first_n_order_sizes = [float(price[1]) for price in order_dict[0:n]]
+        order_sum = sum(first_n_order_sizes)
+
+        first_n_opposing_sizes = [float(price[1]) for price in opposing_dict[0:n]]
+        opposing_sum = sum(first_n_opposing_sizes)
+
+        if order_sum > 2*opposing_sum:
+            return True
+        else:
+            return False
+
     def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
@@ -479,7 +498,9 @@ class SpreadTradeBot:
             cancel_type = 'buy'
             min_cancel_balance = 10
 
-        if min_future_price is None and (self.trade_logic[cancel_type]):
+        is_predicted_return = min_future_price is not None
+
+        if is_predicted_return and (self.trade_logic[cancel_type]):
             self.trade_logic[order_type] = False
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, cancel_type)
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
@@ -496,11 +517,14 @@ class SpreadTradeBot:
 
         hodl = False
 
+        trade_reason = 'predicted return'
 
-        self.trade_logic[order_type] = True
+        self.trade_logic[order_type] = True #this ensures that the last trade type predicted to be profitable is the one currently used
+
         #This determines whether to buy or sell
         if order_type == 'buy':
             dict_type = 'asks'
+            opposite_dict_type = 'bids'
             order_type = 'sell'
             opposing_order_type = 'buy'
             stop_type = 'entry'
@@ -513,6 +537,7 @@ class SpreadTradeBot:
 
         else:
             dict_type = 'bids'
+            opposite_dict_type = 'asks'
             order_type = 'buy'
             opposing_order_type ='sell'
             stop_type = 'loss'
@@ -524,16 +549,23 @@ class SpreadTradeBot:
             trade_size_lim = 0.01
 
         if not self.trade_logic[order_type]:
-            last_trade_price = self.trade_prices[cancel_type]
-            if min_future_price is not None:
+            # last_trade_price = self.trade_prices[cancel_type]
+            # if min_future_price is not None:
+            #     #Always do as the algorithm says
+            #     hodl = True
+            # elif sign*price > (sign*last_trade_price + 0.0015*last_trade_price):
+            #     #Trade if the price has moved so much that a new stable are has probably been reached
+            #     hodl = True
+            # elif sign*price < sign*last_trade_price:
+            #     #Trade if the price is moving favorably since the last trade
+            #     hodl = True
+            #     trade_reason = 'guess'
+
+            if min_future_price is None:
                 #Always do as the algorithm says
-                hodl = True
-            elif sign*price > (sign*last_trade_price + 0.0015*last_trade_price):
-                #Trade if the price has moved so much that a new stable are has probably been reached
-                hodl = True
-            elif sign*price < sign*last_trade_price:
-                #Trade if the price is moving favorably since the last trade
-                hodl = True
+                trade_reason = 'guess'
+
+            hodl = True
 
             order_type = opposing_order_type
             price = self.determine_trade_price(order_type, order_dict)
@@ -543,9 +575,11 @@ class SpreadTradeBot:
                 return msg
 
         if hodl:
-            stop_price_str = num2str(price + sign*0.02, 2)
+            stop_price_str = num2str(price + sign * 0.02, 2)
             size_str = num2str(available, 8)
-            if self.order_status == 'open':
+            is_favorable_pressure = self.detect_trade_pressure(order_dict, dict_type, opposite_dict_type)
+
+            if (self.order_status == 'open' and is_predicted_return) or (is_favorable_pressure):
                 price_str = num2str(price, 2)
                 order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str,
                                                    time_in_force='GTT', cancel_after='hour', post_only=True)
@@ -557,11 +591,12 @@ class SpreadTradeBot:
                 return msg
             self.trade_ids[order_type] = order['id']
             self.trade_prices[order_type] = price
-            msg = order_type + 'ing at $' + price_str + 'due to lack of funds'
+            msg = order_type + 'ing at $' + price_str + ' due to ' + trade_reason
             return msg
 
         if True:
-            msg = 'Spread trading has been manually disabled'
+            unused_msg = self.cancel_old_hodl_order(order_type, 0)
+            msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
             return msg
 
         trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)
@@ -594,11 +629,12 @@ class SpreadTradeBot:
     def print_err_msg(self, section_text, e, err_counter, current_time):
         last_check = current_time + 5 * 60
         err_counter += 1
-        print('failed to' + section_text + 'due to error: ' + str(e))
+        print('failed to' + section_text + ' due to error: ' + str(e))
         print('number of consecutive errors: ' + str(err_counter))
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-        print(exc_type, fname, exc_tb.tb_lineno)
+        #print(exc_type, fname, exc_tb.tb_lineno)
+        print(traceback.format_exc())
 
         return last_check, err_counter
 
@@ -638,10 +674,8 @@ class SpreadTradeBot:
                         price, portfolio_value = self.get_portfolio_value()
                         self.spread_bot_predict()
                         last_scrape = current_time
-                        self.order_status = 'active'
-                        current_datetime = current_est_time()
+                        #self.order_status = 'active' #This forces the order to be reset as a stop order after 1 minute passes
                         portfolio_returns, market_returns =  self.update_returns_data(price, portfolio_value)
-                        print('Current time is ' + current_datetime.strftime(fmt) + ' EST')
 
 
                 except Exception as e:
@@ -662,12 +696,15 @@ class SpreadTradeBot:
                     err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
                     buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy')
                     sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
+                    current_datetime = current_est_time()
                     if buy_msg != last_buy_msg:
-                        print(buy_msg)
+                        print('Current time is ' + current_datetime.strftime(fmt) + ' EST')
+                        print('Buy message: ' + buy_msg)
                         last_buy_msg = buy_msg
 
                     if sell_msg != last_sell_msg:
-                        print(sell_msg)
+                        print('Current time is ' + current_datetime.strftime(fmt) + ' EST')
+                        print('Sell message: ' + sell_msg)
                         last_sell_msg = sell_msg
 
                     if True: # self.trade_logic['buy'] != self.trade_logic['sell']:
