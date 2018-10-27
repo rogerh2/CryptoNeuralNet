@@ -17,6 +17,7 @@ from time import sleep
 import pytz
 import os
 import traceback
+import random
 
 def mean_confidence_interval(data, confidence=0.95):
     a = data
@@ -50,6 +51,8 @@ class SpreadTradeBot:
     trade_prices = {'buy':0, 'sell':1000000000}
     trade_logic = {'buy': True, 'sell': True}
     order_status = 'active'
+    timer = {'buy':1, 'sell':1}
+    should_reset_timer = {'buy': False, 'sell': False}
 
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=30,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
@@ -229,8 +232,7 @@ class SpreadTradeBot:
 
     #TODO write function to allocate funds for buys and sells in get_available_wallet_contents based on current orders and desired orders
 
-    def get_available_wallet_contents(self):
-        data = self.auth_client.get_accounts()
+    def get_available_wallet_contents(self, data):
         sleep(0.4)
         USD_ind = [acc["currency"] == 'USD' for acc in data]
         usd_wallet = data[USD_ind.index(True)]
@@ -247,8 +249,7 @@ class SpreadTradeBot:
 
         return usd_available, crypto_available
 
-    def get_full_wallet_contents(self, type):
-        data = self.auth_client.get_accounts()
+    def get_full_wallet_contents(self, type, data):
         sleep(0.4)
         USD_ind = [acc["currency"] == 'USD' for acc in data]
         usd_wallet = data[USD_ind.index(True)]
@@ -426,28 +427,49 @@ class SpreadTradeBot:
 
         return trade_size, num_orders
 
-    def cancel_old_hodl_order(self, order_type, price):
+    def cancel_old_hodl_order(self, order_type, price, force_limit_order = False, force_stop_limit_order = False, price_lim=0.0):
         if self.trade_ids[order_type] != '':
             hodl_id = self.trade_ids[order_type]
             hodl_order = self.auth_client.get_order(hodl_id)
 
             if not ('status' in hodl_order.keys()):
-                msg = 'waiting on outstanding orders'
+                msg = 'Error caught: status not found in order dict'
                 return msg
 
-            if (hodl_order['status'] != 'done') & (self.trade_prices[order_type] != price):
-                print('Canceled old hodl order for more fluidity')
+            current_status = hodl_order['status']
+
+            if force_limit_order:
+                # This cancels a stop limit order so it can become a limit order
+                if (current_status != 'open') & (current_status != 'done'):
+                    msg = 'changing stop limit order to limit order'
+                    print(msg)
+                    price = 0
+
+            elif force_stop_limit_order:
+                # This cancels a limit order so it can become a stop limit order
+                if (current_status != 'active') & (current_status != 'done'):
+                    msg = 'changing limit order to stop limit order'
+                    print(msg)
+                    price = 0
+
+            if (current_status == 'done') & self.should_reset_timer[order_type]:
+                self.timer[order_type] = 1
+                self.should_reset_timer = False
+
+
+            if (hodl_order['status'] != 'done') & (np.abs(self.trade_prices[order_type] - price) > price_lim):
                 self.auth_client.cancel_order(hodl_id)
                 self.trade_ids[order_type] = ''
                 self.order_status = hodl_order['status']
                 msg = 'just cancelled an ' + hodl_order['status'] + ' order'
+                print(msg)
                 return msg
 
         msg = 'waiting on outstanding orders'
 
         return msg
 
-    def determine_trade_price(self, side, order_dict):
+    def determine_trade_price(self, side, order_dict, is_stop=False):
         #side must be 'asks' or 'bids'
 
         if side == 'buy':
@@ -461,25 +483,37 @@ class SpreadTradeBot:
 
 
         #the below chooses the best price that will still be at the top of the order book
-        trade_price_opp_type = round(float(order_dict[opposing_order_type][0][0]), 2) + 0.01*sign
-        trade_price_type = round(float(order_dict[order_type][0][0]), 2) - 0.01*sign
-        trade_price = np.abs(np.max(sign*np.array([trade_price_opp_type, trade_price_type])))
+        if is_stop:
+            trade_price = round(float(order_dict[opposing_order_type][1][0]), 2) + 0.01*sign
+        else:
+            trade_price_opp_type = round(float(order_dict[opposing_order_type][0][0]), 2) + 0.01*sign
+            trade_price_type = round(float(order_dict[order_type][0][0]), 2) - 0.01*sign
+            trade_price = np.abs(np.max(sign*np.array([trade_price_opp_type, trade_price_type])))
 
 
         return trade_price
 
+    def find_order_size_sums(self, order_dict, n):
+        ref_price = float(order_dict[0][0])
+        order_sum = float(order_dict[0][1])
+        for i in range(1, n):
+            price = float(order_dict[i][0])
+            if price < (ref_price + n/100):
+                order_sum += float(order_dict[i][1])
+            else:
+                break
+
+        return order_sum
+
     def detect_trade_pressure(self, order_book, opposing_type, order_type):
         # This looks at the buying and selling pressure to detemrine wether to place a stop limit order vs a regular
         # limit order
-        n = 10
+        n = 4
         order_dict = order_book[order_type]
         opposing_dict = order_book[opposing_type]
 
-        first_n_order_sizes = [float(price[1]) for price in order_dict[0:n]]
-        order_sum = sum(first_n_order_sizes)
-
-        first_n_opposing_sizes = [float(price[1]) for price in opposing_dict[0:n]]
-        opposing_sum = sum(first_n_opposing_sizes)
+        order_sum = self.find_order_size_sums(order_dict, n)
+        opposing_sum = self.find_order_size_sums(opposing_dict, n)
 
         if order_sum > 2*opposing_sum:
             return True
@@ -489,6 +523,8 @@ class SpreadTradeBot:
     def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+        sleep(0.4)
+        accnt_data = self.auth_client.get_accounts()
         sleep(0.4)
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
         if order_type == 'buy':
@@ -500,15 +536,15 @@ class SpreadTradeBot:
 
         is_predicted_return = min_future_price is not None
 
-        if is_predicted_return and (self.trade_logic[cancel_type]):
+        if (not is_predicted_return) and (self.trade_logic[cancel_type]):
             self.trade_logic[order_type] = False
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, cancel_type)
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
-            msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
+            msg = 'Currently no value is expected'
             if self.trade_ids[order_type] != '':
                 unused_msg = self.cancel_old_hodl_order(order_type, 0)
 
-            cancel_type_balance = self.get_full_wallet_contents(cancel_type)
+            cancel_type_balance = self.get_full_wallet_contents(cancel_type, accnt_data)
 
             if cancel_type_balance <= min_cancel_balance:
                 self.trade_logic[order_type] = True
@@ -530,8 +566,8 @@ class SpreadTradeBot:
             stop_type = 'entry'
             sign = 1
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
-            usd_available, available = self.get_available_wallet_contents()
-            price = self.determine_trade_price(order_type, order_dict)
+            usd_available, available = self.get_available_wallet_contents(accnt_data)
+            price = self.determine_trade_price(order_type, order_dict, is_stop=True) #using is_stop for the most conservative answer
             opposite_available = usd_available/price
             trade_size_lim = 10/price
 
@@ -542,61 +578,66 @@ class SpreadTradeBot:
             opposing_order_type ='sell'
             stop_type = 'loss'
             self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
-            available, crypto_available = self.get_available_wallet_contents()
+            available, crypto_available = self.get_available_wallet_contents(accnt_data)
             opposite_available = crypto_available
             sign = -1
-            price = self.determine_trade_price(order_type, order_dict)
+            price = self.determine_trade_price(order_type, order_dict, is_stop=True) #using is_stop for the most conservative answer
             trade_size_lim = 0.01
 
-        if not self.trade_logic[order_type]:
-            # last_trade_price = self.trade_prices[cancel_type]
-            # if min_future_price is not None:
-            #     #Always do as the algorithm says
-            #     hodl = True
+        if True:
+            last_trade_price = self.trade_prices[cancel_type]
+            trade_probability = 0.5 * np.log(self.timer[cancel_type]) / np.log(120)
+            rand_num = random.random()
+            if min_future_price is not None:
+                #Always do as the algorithm says
+                hodl = True
             # elif sign*price > (sign*last_trade_price + 0.0015*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
-            # elif sign*price < sign*last_trade_price:
-            #     #Trade if the price is moving favorably since the last trade
-            #     hodl = True
-            #     trade_reason = 'guess'
-
-            if min_future_price is None:
-                #Always do as the algorithm says
+            if (sign*price < sign*(last_trade_price + 0.0015*last_trade_price)) or (rand_num < trade_probability):
+                #Trade if the price is moving favorably since the last trade
+                hodl = True
                 trade_reason = 'guess'
-
-            hodl = True
 
             order_type = opposing_order_type
             price = self.determine_trade_price(order_type, order_dict)
             available = opposite_available
-            if available < trade_size_lim:
-                msg = self.cancel_old_hodl_order(order_type, price)
-                return msg
 
         if hodl:
-            stop_price_str = num2str(price + sign * 0.02, 2)
             size_str = num2str(available, 8)
             is_favorable_pressure = self.detect_trade_pressure(order_dict, dict_type, opposite_dict_type)
 
             if (self.order_status == 'open' and is_predicted_return) or (is_favorable_pressure):
+                unused_msg = self.cancel_old_hodl_order(order_type, price, force_limit_order=True)
                 price_str = num2str(price, 2)
+                if available < trade_size_lim:
+                    msg = 'insufficient funds'
+                    return msg
                 order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str,
                                                    time_in_force='GTT', cancel_after='hour', post_only=True)
+                order_kind = 'limit'
             else:
-                price_str = num2str(price + sign * 0.01, 2)
+                price = self.determine_trade_price(order_type, order_dict, is_stop=True)
+                stop_price_str = num2str(price + sign * 0.01, 2)
+                price_str = num2str(price, 2)
+                unused_msg = self.cancel_old_hodl_order(order_type, price, force_stop_limit_order=True)
+                if available < trade_size_lim:
+                    msg = 'insufficient funds'
+                    return msg
                 order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, order_type='limit')
+                order_kind = 'stop limit'
             if not ('id' in order.keys()):
                 msg = str(order.values())
                 return msg
             self.trade_ids[order_type] = order['id']
             self.trade_prices[order_type] = price
-            msg = order_type + 'ing at $' + price_str + ' due to ' + trade_reason
+            self.should_reset_timer[order_type] = True
+            msg = 'placing ' + order_kind + ' order at $' + price_str + ' due to ' + trade_reason
             return msg
 
         if True:
             unused_msg = self.cancel_old_hodl_order(order_type, 0)
-            msg = 'Currently no value is expected from ' + order_type + 'ing ' + self.prediction_ticker + ' now'
+            msg = 'Currently no value is expected. It has been ' + str(self.timer[cancel_type]) + ' minutes since the last trade'
             return msg
 
         trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)
@@ -676,6 +717,8 @@ class SpreadTradeBot:
                         last_scrape = current_time
                         #self.order_status = 'active' #This forces the order to be reset as a stop order after 1 minute passes
                         portfolio_returns, market_returns =  self.update_returns_data(price, portfolio_value)
+                        self.timer['buy'] += 1
+                        self.timer['sell'] += 1
 
 
                 except Exception as e:
@@ -708,7 +751,7 @@ class SpreadTradeBot:
                         last_sell_msg = sell_msg
 
                     if True: # self.trade_logic['buy'] != self.trade_logic['sell']:
-                        check_period = 2.5
+                        check_period = 1
                     else:
                         check_period = 60
                         if self.trade_ids['buy'] != '':
@@ -723,6 +766,7 @@ class SpreadTradeBot:
             # Update model training
             elif current_time > (last_training_time + 2*3600):
                 try:
+                    last_scrape = 0
                     err_counter = 0
                     last_training_time = current_time
                     to_date = datetime.now()
@@ -763,8 +807,11 @@ class SpreadTradeBot:
 
         print('Algorithm failed either due to underperformance or due to too many exceptions. Now converting all crypto to USD')
         self.auth_client.cancel_all(self.product_id)
-        usd_available, crypto_available = self.get_available_wallet_contents()
+        accnt_data = self.auth_client.get_accounts()
+        sleep(0.4)
+        usd_available, crypto_available = self.get_available_wallet_contents(accnt_data)
         self.auth_client.place_market_order(self.product_id, side='sell', size=num2str(crypto_available, 8))
+
 
 
 
