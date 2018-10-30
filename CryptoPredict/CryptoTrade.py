@@ -454,7 +454,7 @@ class SpreadTradeBot:
 
             if (current_status == 'done') & self.should_reset_timer[order_type]:
                 self.timer[order_type] = 1
-                self.should_reset_timer = False
+                self.should_reset_timer[order_type] = False
 
 
             if (hodl_order['status'] != 'done') & (np.abs(self.trade_prices[order_type] - price) > price_lim):
@@ -515,7 +515,7 @@ class SpreadTradeBot:
         order_sum = self.find_order_size_sums(order_dict, n)
         opposing_sum = self.find_order_size_sums(opposing_dict, n)
 
-        if order_sum > 2*opposing_sum:
+        if order_sum > 1.25*opposing_sum:
             return True
         else:
             return False
@@ -588,16 +588,17 @@ class SpreadTradeBot:
             last_trade_price = self.trade_prices[cancel_type]
             trade_probability = 0.5 * np.log(self.timer[cancel_type]) / np.log(120)
             rand_num = random.random()
-            if min_future_price is not None:
-                #Always do as the algorithm says
-                hodl = True
-            # elif sign*price > (sign*last_trade_price + 0.0015*last_trade_price):
+            # elif sign*price > (sign*last_trade_price + 0.001*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
-            if (sign*price < sign*(last_trade_price + 0.0015*last_trade_price)) or (rand_num < trade_probability):
+            if (sign*price < sign*(last_trade_price - sign*0.001*last_trade_price)) or (self.timer[cancel_type] > 2*60):
                 #Trade if the price is moving favorably since the last trade
                 hodl = True
                 trade_reason = 'guess'
+            if min_future_price is not None:
+                # Always do as the algorithm says
+                # hodl = False
+                trade_reason = 'predicted_return'
 
             order_type = opposing_order_type
             price = self.determine_trade_price(order_type, order_dict)
@@ -637,7 +638,7 @@ class SpreadTradeBot:
 
         if True:
             unused_msg = self.cancel_old_hodl_order(order_type, 0)
-            msg = 'Currently no value is expected. It has been ' + str(self.timer[cancel_type]) + ' minutes since the last trade'
+            msg = 'Currently no value is expected.'
             return msg
 
         trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)

@@ -1442,6 +1442,182 @@ class OptimalTradeStrategyV5:
 
             plt.show()
 
+class OptimalTradeStrategyFuzzyPriceVisualizer:
+
+    offset = 40
+    prediction_len = 30
+
+    def __init__(self, prediction, data):
+        self.data = data
+        self.prediction = prediction
+        self.buy_array = np.zeros(len(data)+1)
+        self.sell_array = np.zeros(len(data)+1)
+        self.data_len = len(data)
+        self.last_return = 100
+        self.last_type = 0
+
+    def find_fit_info(self, ind):
+        #This method searches the past data to determine what value should be used for the error
+        prediction = self.prediction
+        data = self.data
+        offset = self.offset
+        err_arr = np.array([])
+        off_arr = err_arr
+        coeff_arr = err_arr
+        err_judgement_arr = err_arr  # this array will contain the residual from the prior datum
+
+        for N in range(10, offset):
+            past_predictions = prediction[(ind - N):(ind)]
+            past_data = data[(ind - N):(ind)]
+
+            # Find error
+            current_fit = np.polyfit(past_data, past_predictions, 1, full=True)
+            current_coeff = current_fit[0][0]
+            current_off = current_fit[0][1]
+            current_err = 2 * np.sqrt(current_fit[1] / (N - 1))
+            err_arr = np.append(err_arr, current_err)
+            off_arr = np.append(off_arr, current_off)
+            coeff_arr = np.append(coeff_arr, current_coeff)
+
+            err_judgement_arr = np.append(err_judgement_arr, np.abs(
+                prediction[ind - 1] - current_off - current_coeff * data[
+                    ind - 1]) + current_err)  # current_err/np.sqrt(N)) #
+
+        err_ind = np.argmin(np.abs(err_judgement_arr))
+        fit_coeff = 1 / coeff_arr[err_ind]
+
+        err = err_arr[err_ind] * fit_coeff
+        fit_offset = -off_arr[err_ind] * fit_coeff
+        const_diff = 2 * err
+        fuzziness = int((err_ind + 10) / 2)  # TODO make more logical fuzziness
+
+        return err, fit_coeff, fit_offset, const_diff, fuzziness
+
+    def find_next_inflection_ind(self, data, ind, fuzziness, is_high_peak):
+        for i in range(ind+1, len(data)-1):
+            last_datum = data[i-1]
+            current_datum = data[i]
+            next_datum = data[i+1]
+            last_check = current_datum > last_datum
+            next_check = current_datum > next_datum
+
+            if (last_check == next_check) and (next_check == is_high_peak):
+                if np.abs((current_datum - np.mean(data[(i-fuzziness):(i+fuzziness)]))) < 3*np.std(data[(i-fuzziness):(i+fuzziness)]):
+                    return i
+
+        return (len(data) - 1)
+
+    def fuzzy_price(self, fit_coeff, ind, fuzziness, fit_offset):
+        price = np.mean(fit_coeff * self.prediction[(ind - fuzziness):(ind + fuzziness)] + fit_offset)
+        #price = fit_coeff * self.prediction[ind] + fit_offset
+        return price
+
+    def find_expected_value_over_single_trade(self, upper_buy, lower_buy, upper_sell, lower_sell, const_diff):
+        ln_diff = (np.log(upper_buy) - np.log(lower_buy)) / const_diff
+        sq_diff = ((upper_sell) ** 2 - (lower_sell) ** 2) / (2 * const_diff)
+        check_val = sq_diff * ln_diff - 1
+        return check_val
+
+    def plot_fuzzy_price(self, ind, err, price_is_rising, const_diff, fit_coeff, fuzziness, fit_offset):
+        max_ind = ind + self.prediction_len - fuzziness
+        data = self.data[(ind+self.prediction_len):(max_ind+self.prediction_len)]
+        old_data = self.data[(ind):(max_ind)]
+
+        price_arr = np.array([])
+
+        for i in range(ind, max_ind):
+            price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
+            price_arr = np.append(price_arr, price)
+
+        #data = (data - np.mean(data))/np.std(data)
+        price_arr = np.std(old_data)*((price_arr - np.mean(price_arr))) + np.mean(old_data)
+
+        plt.plot(np.min(price_arr)*np.ones(np.shape(data)), 'r--x')
+        plt.plot(np.max(price_arr) * np.ones(np.shape(data)), 'r--x')
+        plt.plot(data, 'b--o')
+        plt.show()
+
+    def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
+        # offset refers to how many minutes back in time can be checked for creating a fit
+        # TODO add shift size to prediction to determine offset for trade
+        buy_array = self.buy_array
+        sell_array = self.sell_array
+        data_len = self.data_len
+        prediction = self.prediction
+        data = self.data
+        offset = self.offset
+        price_is_rising = None
+        if saved_inds is None:
+            saved_inds = np.zeros((data_len + 1, 5))
+            save_inds = True
+        elif len(saved_inds):
+            save_inds = False
+
+        for i in range(offset, data_len):
+            print(str(round(100 * i / (data_len - offset), 2)) + '% done')
+            ind = i+1
+            fuzzzy_counter = 0
+
+            if ind == len(saved_inds):
+                saved_inds = np.vstack((saved_inds, np.zeros((data_len + 1 - len(saved_inds), 5))))
+                save_inds = True
+
+            if save_inds:
+                # TODO add the ability to increase saved length withut starting over
+                if (ind%121 == 0) & (fin_table is not None):
+                    # In theory this should retrain the model over predetermined intervals
+                    to_date = fin_table.date[ind - 1].to_pydatetime()
+                    from_delta = timedelta(hours=2)
+                    from_date = to_date - from_delta
+                    test_dates = pd.date_range(from_date, to_date, freq='1min')
+                    from_ind = ind - len(test_dates)
+                    fmt = '%Y-%m-%d %H:%M:%S'
+
+                    training_fin_table = fin_table[from_ind:ind]
+                    training_fin_table.index = np.arange(0, len(training_fin_table))
+                    training_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                            date_to=to_date.strftime(fmt) + ' EST',
+                                            prediction_length=minute_cp.prediction_length,
+                                            bitinfo_list=minute_cp.bitinfo_list,
+                                            prediction_ticker='ETH', time_units='minutes', fin_table=training_fin_table)
+                    minute_cp.data_obj = training_data
+
+                    minute_cp.update_model_training()
+
+                    from_date = fin_table.date[0].to_pydatetime()
+                    to_date = fin_table.date[len(fin_table.date.values) - 1].to_pydatetime()
+                    test_fin_table = fin_table
+                    test_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                        date_to=to_date.strftime(fmt) + ' EST',
+                                        prediction_length=minute_cp.prediction_length,
+                                        bitinfo_list=minute_cp.bitinfo_list,
+                                        prediction_ticker='ETH', time_units='minutes', fin_table=test_fin_table)
+                    minute_cp.data_obj = test_data
+
+                    prediction, test_output = minute_cp.test_model(did_train=False, show_plots=False)
+                    # TODO Check to make sure no access to future data!
+                    self.prediction[ind::] = prediction[(ind)::, 0]
+
+
+                err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
+                saved_inds[ind, 0] = err
+                saved_inds[ind, 1] = fit_coeff
+                saved_inds[ind, 2] = fit_offset
+                saved_inds[ind, 3] = const_diff
+                saved_inds[ind, 4] = fuzziness
+
+            else:
+                err = saved_inds[ind, 0]
+                fit_coeff = saved_inds[ind, 1]
+                fit_offset = saved_inds[ind, 2]
+                const_diff = saved_inds[ind, 3]
+                fuzziness = int(saved_inds[ind, 4])
+
+
+            self.plot_fuzzy_price(ind, err, True, const_diff, fit_coeff,
+                                  fuzziness, fit_offset)
+            plt.close('all')
+
 class OptimalTradeStrategyV5Realistic(OptimalTradeStrategyV5):
 
     def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
@@ -1610,7 +1786,7 @@ if __name__ == '__main__':
     #findoptimaltradestrategystochastic(prediction[::, 0], test_output[::, 0], 40, show_plots=True)
     fin_table = cp.data_obj.fin_table
     fin_table.index = np.arange(len(fin_table))
-    strategy_obj = OptimalTradeStrategyV5(prediction[0::, 0], test_output[0:-30, 0])
+    strategy_obj = OptimalTradeStrategyFuzzyPriceVisualizer(prediction[0::, 0], test_output[0:-30, 0])
     #strategy_obj = OptimalTradeStrategy(prediction[200:629, 0], test_output[200:599 , 0])
     strategy_obj.find_optimal_trade_strategy(saved_inds=None, show_plots=True, fin_table=fin_table, minute_cp=cp )
 
