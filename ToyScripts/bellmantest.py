@@ -1240,7 +1240,7 @@ class OptimalTradeStrategyV5:
                     ind - 1]) + current_err)  # current_err/np.sqrt(N)) #
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
-        fit_coeff = 1 / coeff_arr[err_ind]
+        fit_coeff = np.abs(1 / coeff_arr[err_ind])
 
         err = err_arr[err_ind] * fit_coeff
         fit_offset = -off_arr[err_ind] * fit_coeff
@@ -1484,7 +1484,7 @@ class OptimalTradeStrategyFuzzyPriceVisualizer:
                     ind - 1]) + current_err)  # current_err/np.sqrt(N)) #
 
         err_ind = np.argmin(np.abs(err_judgement_arr))
-        fit_coeff = 1 / coeff_arr[err_ind]
+        fit_coeff = np.abs(1 / coeff_arr[err_ind])
 
         err = err_arr[err_ind] * fit_coeff
         fit_offset = -off_arr[err_ind] * fit_coeff
@@ -1530,11 +1530,23 @@ class OptimalTradeStrategyFuzzyPriceVisualizer:
             price_arr = np.append(price_arr, price)
 
         #data = (data - np.mean(data))/np.std(data)
-        price_arr = np.std(old_data)*((price_arr - np.mean(price_arr))) + np.mean(old_data)
+        price_arr = (price_arr - price_arr[0]) + data[0]
 
-        plt.plot(np.min(price_arr)*np.ones(np.shape(data)), 'r--x')
-        plt.plot(np.max(price_arr) * np.ones(np.shape(data)), 'r--x')
+        #plt.plot(np.min(price_arr)*np.ones(np.shape(data)), 'k--')
+        #plt.plot(np.max(price_arr)*np.ones(np.shape(data)), 'k--')
+        #TODO change correction to be a rotation to have the right derivative and not a scale
+        t = np.arange(0, len(price_arr))
+        del_correction = self.fuzzy_price(fit_coeff, ind-1, fuzziness, fit_offset) - old_data[-1] - self.fuzzy_price(fit_coeff, ind, fuzziness, fit_offset) + data[0]
+        plt.plot(del_correction*price_arr + data[0]+ del_correction*(-price_arr[0]), 'k--')
+        plt.plot(del_correction*price_arr - err*(t/30) + data[0]+  del_correction*(-price_arr[0]), 'k--')
+        plt.plot(del_correction*price_arr + err*(t/30) + data[0]+  del_correction*(-price_arr[0]), 'k--')
+
+        s = np.argmax(price_arr)
+        b = np.argmin(price_arr)
+
         plt.plot(data, 'b--o')
+        plt.plot(b, data[b], 'gx')
+        plt.plot(s, data[s], 'rx')
         plt.show()
 
     def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
@@ -1617,6 +1629,158 @@ class OptimalTradeStrategyFuzzyPriceVisualizer:
             self.plot_fuzzy_price(ind, err, True, const_diff, fit_coeff,
                                   fuzziness, fit_offset)
             plt.close('all')
+
+class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVisualizer):
+
+    offset = 40
+    prediction_len = 30
+
+    def __init__(self, prediction, data):
+        super(OptimalTradeStrategyTestBedForVisualizer, self).__init__(prediction, data)
+
+    def find_expected_value_over_many_trades(self, ind, err, price_is_rising, const_diff, fit_coeff, fuzziness, fit_offset):
+        current_prediction = self.fuzzy_price(fit_coeff, ind, fuzziness, fit_offset)
+
+        if price_is_rising:
+            sign = -1
+        else:
+            sign = 1
+
+        max_ind = ind + self.prediction_len - fuzziness
+
+        price_arr = np.array([])
+
+        for i in range(ind, max_ind):
+            price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
+            price_arr = np.append(price_arr, price)
+
+        should_trade = np.argmax(sign*price_arr) < 1
+        return should_trade
+
+    def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
+        # offset refers to how many minutes back in time can be checked for creating a fit
+        # TODO add shift size to prediction to determine offset for trade
+        buy_array = self.buy_array
+        sell_array = self.sell_array
+        data_len = self.data_len
+        prediction = self.prediction
+        data = self.data
+        offset = self.offset
+        price_is_rising = None
+        if saved_inds is None:
+            saved_inds = np.zeros((data_len + 1, 5))
+            save_inds = True
+        elif len(saved_inds):
+            save_inds = False
+
+        for i in range(offset, data_len):
+            print(str(round(100 * i / (data_len - offset), 2)) + '% done')
+            ind = i+1
+            fuzzzy_counter = 0
+
+            if ind == len(saved_inds):
+                saved_inds = np.vstack((saved_inds, np.zeros((data_len + 1 - len(saved_inds), 5))))
+                save_inds = True
+
+            if save_inds:
+                # TODO add the ability to increase saved length withut starting over
+                if (ind%121 == 0) & (fin_table is not None):
+                    # In theory this should retrain the model over predetermined intervals
+                    to_date = fin_table.date[ind - 1].to_pydatetime()
+                    from_delta = timedelta(hours=2)
+                    from_date = to_date - from_delta
+                    test_dates = pd.date_range(from_date, to_date, freq='1min')
+                    from_ind = ind - len(test_dates)
+                    fmt = '%Y-%m-%d %H:%M:%S'
+
+                    training_fin_table = fin_table[from_ind:ind]
+                    training_fin_table.index = np.arange(0, len(training_fin_table))
+                    training_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                            date_to=to_date.strftime(fmt) + ' EST',
+                                            prediction_length=minute_cp.prediction_length,
+                                            bitinfo_list=minute_cp.bitinfo_list,
+                                            prediction_ticker='ETH', time_units='minutes', fin_table=training_fin_table)
+                    minute_cp.data_obj = training_data
+
+                    minute_cp.update_model_training()
+
+                    from_date = fin_table.date[0].to_pydatetime()
+                    to_date = fin_table.date[len(fin_table.date.values) - 1].to_pydatetime()
+                    test_fin_table = fin_table
+                    test_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                        date_to=to_date.strftime(fmt) + ' EST',
+                                        prediction_length=minute_cp.prediction_length,
+                                        bitinfo_list=minute_cp.bitinfo_list,
+                                        prediction_ticker='ETH', time_units='minutes', fin_table=test_fin_table)
+                    minute_cp.data_obj = test_data
+
+                    prediction, test_output = minute_cp.test_model(did_train=False, show_plots=False)
+                    # TODO Check to make sure no access to future data!
+                    self.prediction[ind::] = prediction[(ind)::, 0]
+
+
+                err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
+                saved_inds[ind, 0] = err
+                saved_inds[ind, 1] = fit_coeff
+                saved_inds[ind, 2] = fit_offset
+                saved_inds[ind, 3] = const_diff
+                saved_inds[ind, 4] = fuzziness
+
+            else:
+                err = saved_inds[ind, 0]
+                fit_coeff = saved_inds[ind, 1]
+                fit_offset = saved_inds[ind, 2]
+                const_diff = saved_inds[ind, 3]
+                fuzziness = int(saved_inds[ind, 4])
+
+
+            buy_check_val = self.find_expected_value_over_many_trades(ind, err, True, const_diff, fit_coeff,
+                                                                  fuzziness, fit_offset)
+            sell_check_val = self.find_expected_value_over_many_trades(ind, err, False, const_diff, fit_coeff,
+                                                                       fuzziness, fit_offset)
+            if (buy_check_val is None) or (sell_check_val is None):
+                continue
+
+            if sell_check_val != buy_check_val:
+                if (buy_check_val > 0):# & (fit_coeff > 0):
+                    buy_array[ind] = 1
+                # elif (buy_check_val > 0) & (fit_coeff < 0):
+                #     sell_array[ind] = 1
+
+                print(str(sell_check_val))
+                if (sell_check_val > 0):# & (fit_coeff > 0):
+                    sell_array[ind] = 1
+                # elif (sell_check_val > 0) & (fit_coeff < 0):
+                #     buy_array[ind] = 1
+
+        if save_inds:
+            table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/703ModelSavedTestIndsto8042018.pickle'
+            with open(table_file_name, 'wb') as file_handle:
+                pickle.dump(saved_inds, file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+        print(str(fuzzzy_counter))
+
+        self.buy_array = np.array([bool(x) for x in buy_array])
+        self.sell_array = np.array([bool(x) for x in sell_array])
+        if show_plots:
+            all_times = np.arange(0, len(data))
+            sell_bool = self.sell_array
+            buy_bool = self.buy_array
+            market_returns = 100 * (data[-1] - data[30]) / data[30]
+            returns, value_over_time = find_trade_strategy_value(buy_bool[1:-1], sell_bool[1:-1], data[0:-1], return_value_over_time=True)
+            plt.plot(all_times[sell_bool[0:-1]], data[sell_bool[0:-1]], 'rx')
+            plt.plot(all_times[buy_bool[0:-1]], data[buy_bool[0:-1]], 'gx')
+            plt.plot(data)
+            plt.title( 'Return of ' + str(np.round(returns, 3)) + '% vs ' + str(np.round(market_returns, 3)) + '% Market' )
+
+            plt.figure()
+            plt.plot(value_over_time, label='Strategy')
+            plt.plot(100 * data / (data[1]), label='Market')
+            plt.title('Precentage Returns Strategy and Market')
+            plt.ylabel('% Return')
+            plt.legend()
+
+            plt.show()
 
 class OptimalTradeStrategyV5Realistic(OptimalTradeStrategyV5):
 
@@ -1757,7 +1921,7 @@ class OptimalTradeStrategyV5Realistic(OptimalTradeStrategyV5):
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-23_20:46:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-29_20:34:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -1767,17 +1931,17 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_37neurons_3epochs1540346838.009812.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_2epochs1540346883.579073.h5'
 
     #date_from = '2018-09-18 22:23:00 EST'
     #date_to = '2018-09-21 18:58:00 EST'
-    date_from = '2018-10-22 20:46:00 EST'
-    date_to = '2018-10-23 20:46:00 EST'
+    date_from = '2018-10-23 00:00:00 EST'
+    date_to = '2018-10-29 00:00:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
                         data_set_path=pickle_path)
-    cp.test_model(did_train=False)
+    #cp.test_model(did_train=False)
     prediction, test_output = cp.test_model(did_train=False, show_plots=False)
     data = test_output[::, 0]
 
