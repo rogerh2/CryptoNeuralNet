@@ -1617,7 +1617,21 @@ class OptimalTradeStrategyFuzzyPriceVisualizer:
         plt.plot(low_data, 'r--')
         plt.show(block=False)
 
-    def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
+    def characterize_shape(self, data):
+        #This function encodes the rough shape of the data as a 4 bit number
+        min_loc = np.argmin(data)
+        max_loc = np.argmax(data)
+        min_first = str(int(min_loc == 0))
+        max_first = str(int(max_loc == 0))
+        min_last = str(int(min_loc == (len(data)-1)))
+        max_last = str(int(max_loc == (len(data)-1)))
+
+        shape = eval(str('0b' + min_first + min_last + max_first + max_last))
+        # 0000 = 0 /\/, 0001 = 1 increasing \/, 0010 = 2 decreasing \/, 0100 = 4 decreasing /\,  0110 = 6 \, 1000 = 8
+        # increasing /\, 1001 = 9 /
+        return shape
+
+    def plot_predictions(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
         # offset refers to how many minutes back in time can be checked for creating a fit
         # TODO add shift size to prediction to determine offset for trade
         buy_array = self.buy_array
@@ -1704,6 +1718,82 @@ class OptimalTradeStrategyFuzzyPriceVisualizer:
                 if (self.fig2 is not None):
                     plt.close(self.fig2.number)
 
+    def plot_shapes(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):
+        # offset refers to how many minutes back in time can be checked for creating a fit
+        data_len = self.data_len
+        offset = self.offset
+        shape_array = []
+
+        if saved_inds is None:
+            saved_inds = np.zeros((data_len + 1, 5))
+            save_inds = True
+        elif len(saved_inds):
+            save_inds = False
+
+        for i in range(offset, data_len):
+            print(str(round(100 * i / (data_len - offset), 2)) + '% done')
+            ind = i + 1
+
+
+            if ind == len(saved_inds):
+                saved_inds = np.vstack((saved_inds, np.zeros((data_len + 1 - len(saved_inds), 5))))
+                save_inds = True
+
+            if save_inds:
+                # TODO add the ability to increase saved length withut starting over
+                if (ind % 121 == 0) & (fin_table is not None):
+                    # In theory this should retrain the model over predetermined intervals
+                    to_date = fin_table.date[ind - 1].to_pydatetime()
+                    from_delta = timedelta(hours=2)
+                    from_date = to_date - from_delta
+                    test_dates = pd.date_range(from_date, to_date, freq='1min')
+                    from_ind = ind - len(test_dates)
+                    fmt = '%Y-%m-%d %H:%M:%S'
+
+                    training_fin_table = fin_table[from_ind:ind]
+                    training_fin_table.index = np.arange(0, len(training_fin_table))
+                    training_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                            date_to=to_date.strftime(fmt) + ' EST',
+                                            prediction_length=minute_cp.prediction_length,
+                                            bitinfo_list=minute_cp.bitinfo_list,
+                                            prediction_ticker='ETH', time_units='minutes', fin_table=training_fin_table)
+                    minute_cp.data_obj = training_data
+
+                    minute_cp.update_model_training()
+
+                    from_date = fin_table.date[0].to_pydatetime()
+                    to_date = fin_table.date[len(fin_table.date.values) - 1].to_pydatetime()
+                    test_fin_table = fin_table
+                    test_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
+                                        date_to=to_date.strftime(fmt) + ' EST',
+                                        prediction_length=minute_cp.prediction_length,
+                                        bitinfo_list=minute_cp.bitinfo_list,
+                                        prediction_ticker='ETH', time_units='minutes', fin_table=test_fin_table)
+                    minute_cp.data_obj = test_data
+
+                    prediction, test_output = minute_cp.test_model(did_train=False, show_plots=False)
+                    # TODO Check to make sure no access to future data!
+                    self.prediction[(ind - 120)::] = prediction[(ind - 120)::, 0]
+
+                err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info(ind)
+                saved_inds[ind, 0] = err
+                saved_inds[ind, 1] = fit_coeff
+                saved_inds[ind, 2] = fit_offset
+                saved_inds[ind, 3] = const_diff
+                saved_inds[ind, 4] = fuzziness
+
+            else:
+                err = saved_inds[ind, 0]
+                fit_coeff = saved_inds[ind, 1]
+                fit_offset = saved_inds[ind, 2]
+                const_diff = saved_inds[ind, 3]
+                fuzziness = int(saved_inds[ind, 4])
+
+            prediction_data, temp = self.create_price_arr(ind, fuzziness, fit_offset, fit_coeff)
+            shape = self.characterize_shape(prediction_data)
+            shape_array
+
+
 class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVisualizer):
 
     offset = 40
@@ -1712,20 +1802,6 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
 
     def __init__(self, prediction, data, data_low):
         super(OptimalTradeStrategyTestBedForVisualizer, self).__init__(prediction, data, data_low)
-
-    def characterize_shape(self, data):
-        #This function encodes the rough shape of the data as a 4 bit number
-        min_loc = np.argmin(data)
-        max_loc = np.argmax(data)
-        min_first = str(int(min_loc == 0))
-        max_first = str(int(max_loc == 0))
-        min_last = str(int(min_loc == (len(data)-1)))
-        max_last = str(int(max_loc == (len(data)-1)))
-
-        shape = eval(str('0b' + min_first + min_last + max_first + max_last))
-        # 0000 = 0 /\/, 0001 = 1 increasing \/, 0010 = 2 decreasing \/, 0100 = 4 decreasing /\,  0110 = 6 \, 1000 = 8
-        # increasing /\, 1001 = 9 /
-        return shape
 
     def compare_shapes(self, prediction, actual):
         pred_shape = self.characterize_shape(prediction)
@@ -1738,9 +1814,9 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
         data = self.data[(ind-10):ind]
 
         if is_buy:
-            trade_group = [1, 8, 9]
+            trade_group = [4, 8, 9]
         else:
-            trade_group = [2, 4, 6]
+            trade_group = [0, 1, 2, 6]
 
         max_ind = ind + self.prediction_len - fuzziness
 
@@ -1758,10 +1834,53 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
         past_shape = self.characterize_shape(data)
         should_trade = 0
 
-        if (price_shape in trade_group):#(np.argmax(sign*price_arr) < 1):# & (np.abs(np.max(price_arr) - np.min(price_arr))/current_prediction > 0):
+        if (price_shape in trade_group):
             should_trade = 1
 
         return should_trade
+
+    def place_trade(self, sell_check_val, buy_check_val, sell_array, buy_array, sell_price, buy_price, i, ind):
+        data = self.data
+
+        if sell_check_val != buy_check_val:
+            # if buy_check_val & (((data[i] + spread*data[i]) > self.order_limits['sell']) or (self.order_limits['buy'] == 0)):
+            #     buy_array[ind] = 1
+            #     self.order_limits['sell'] = data[i] + spread*data[i]
+            #     self.order_limits['buy'] = 0
+            #
+            # elif sell_check_val & (((low_data[i] - spread*low_data[i]) < self.order_limits['buy']) or (self.order_limits['sell'] == 0)):
+            #     self.order_limits['sell'] = 0
+            #     sell_array[ind] = 1
+            #     self.order_limits['buy'] = data[i] - spread * data[i]
+            #
+            # elif (self.order_limits['buy'] > low_data[i]) & (self.order_limits['buy'] > 0):
+            #     buy_array[ind] = 1
+            #     sell_data[i] = self.order_limits['buy']
+            #     self.order_limits['buy'] = 0
+            #
+            # elif (self.order_limits['sell'] < data[i]) & (self.order_limits['sell'] > 0):
+            #     sell_array[ind] = 1
+            #     sell_data[i] = self.order_limits['sell']
+            #     self.order_limits['sell'] = 0
+
+            price = data[i]
+            data_diff = np.abs(data[i] - data[i - 1])
+            older_data_diff = np.abs(data[i - 1] - data[i - 3])
+            sign = (data[i] - data[i - 1]) / np.abs(data[i] - data[i - 1])
+            jump_criteria = (older_data_diff > 2 * np.std(data[(i - 30):i])) and (
+            data_diff < 0.5 * np.std(data[(i - 30):i]))
+            if buy_check_val:
+                buy_array[ind] = 1
+                if ((price < sell_price) or (sign < 0)) and jump_criteria:
+
+                    buy_price = price + 0.001 * price
+            elif sell_check_val:
+                sell_array[ind] = 1
+                if ((price > buy_price) or (sign > 0)) and jump_criteria:
+
+                    sell_price = price - 0.001 * (price)
+
+        return sell_price, sell_array, buy_price, buy_array
 
     def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
         # offset refers to how many minutes back in time can be checked for creating a fit
@@ -1853,40 +1972,7 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
 
             spread = 0.001
 
-            if sell_check_val != buy_check_val:
-                # if buy_check_val & (((data[i] + spread*data[i]) > self.order_limits['sell']) or (self.order_limits['buy'] == 0)):
-                #     buy_array[ind] = 1
-                #     self.order_limits['sell'] = data[i] + spread*data[i]
-                #     self.order_limits['buy'] = 0
-                #
-                # elif sell_check_val & (((low_data[i] - spread*low_data[i]) < self.order_limits['buy']) or (self.order_limits['sell'] == 0)):
-                #     self.order_limits['sell'] = 0
-                #     sell_array[ind] = 1
-                #     self.order_limits['buy'] = data[i] - spread * data[i]
-                #
-                # elif (self.order_limits['buy'] > low_data[i]) & (self.order_limits['buy'] > 0):
-                #     buy_array[ind] = 1
-                #     sell_data[i] = self.order_limits['buy']
-                #     self.order_limits['buy'] = 0
-                #
-                # elif (self.order_limits['sell'] < data[i]) & (self.order_limits['sell'] > 0):
-                #     sell_array[ind] = 1
-                #     sell_data[i] = self.order_limits['sell']
-                #     self.order_limits['sell'] = 0
-
-                price = data[i]
-                data_diff = np.abs(data[i] - data[i-1])
-                older_data_diff = np.abs(data[i-1] - data[i-3])
-                sign = (data[i] - data[i-1])/np.abs(data[i] - data[i-1])
-                jump_criteria = (older_data_diff > 2*np.std(data[(i-30):i])) and (data_diff < 0.5*np.std(data[(i-30):i]))
-                if buy_check_val:
-                    if ((price < sell_price) or (sign < 0)) and jump_criteria:
-                        buy_array[ind] = 1
-                        buy_price = price + 0.001*price
-                elif sell_check_val:
-                    if ((price > buy_price) or (sign > 0)) and jump_criteria:
-                        sell_array[ind] = 1
-                        sell_price = price - 0.001*(price)
+            sell_price, sell_array, buy_price, buy_array = self.place_trade(sell_check_val, buy_check_val, sell_array, buy_array, sell_price, buy_price, i, ind)
 
         if save_inds:
             table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/703ModelSavedTestIndsto8042018.pickle'
@@ -2056,7 +2142,7 @@ class OptimalTradeStrategyV5Realistic(OptimalTradeStrategyV5):
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-11-06_21:30:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-11-10_09:33:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -2071,7 +2157,7 @@ if __name__ == '__main__':
     #date_from = '2018-09-18 22:23:00 EST'
     #date_to = '2018-09-21 18:58:00 EST'
     date_from = '2018-10-23 00:00:00 EST'
-    date_to = '2018-11-06 00:00:00 EST'
+    date_to = '2018-11-10 09:30:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
@@ -2091,5 +2177,5 @@ if __name__ == '__main__':
     strategy_obj.find_optimal_trade_strategy(saved_inds=None, show_plots=True, fin_table=fin_table, minute_cp=cp )
 
     #price = saved_table.ETH_high.values
-    #findoptimaltradestrategy(price, show_plots=True)
+    #findoptimaltradestrategy(data_high, show_plots=True)
 
