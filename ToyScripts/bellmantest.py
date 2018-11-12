@@ -1798,7 +1798,8 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
 
     offset = 40
     prediction_len = 30
-    order_limits = {'buy': 0, 'sell':0}
+    order_limits = {'buy':0, 'sell':0}
+    order_stats = {'buy':{'mean':0, 'std':0}, 'sell':{'mean':0, 'std':0}}
 
     def __init__(self, prediction, data, data_low):
         super(OptimalTradeStrategyTestBedForVisualizer, self).__init__(prediction, data, data_low)
@@ -1839,7 +1840,7 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
 
         return should_trade
 
-    def place_trade(self, sell_check_val, buy_check_val, sell_array, buy_array, sell_price, buy_price, i, ind):
+    def place_ideal_market_order(self, sell_check_val, buy_check_val, sell_array, buy_array, sell_price, buy_price, i, ind):
         data = self.data
 
         if sell_check_val != buy_check_val:
@@ -1882,6 +1883,32 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
 
         return sell_price, sell_array, buy_price, buy_array
 
+    def place_limit_order(self, sell_check_val, buy_check_val, sell_array, buy_array, spread, sell_price, buy_price, i, ind, sell_data):
+        data = self.data
+        low_data = self.data_low
+        should_update_buy = ((low_data[i] - spread*low_data[i]) < self.order_limits['buy'])
+        should_update_sell = ((low_data[i] - spread * low_data[i]) < self.order_limits['sell'])
+        should_buy = self.order_limits['buy'] == 0
+        should_sell = self.order_limits['sell'] == 0
+        if sell_check_val != buy_check_val:
+            if (buy_check_val & (should_sell or should_update_sell)) & (should_buy):
+                self.order_limits['sell'] = data[i] + spread * data[i]
+
+            elif (sell_check_val & (should_update_buy or should_buy)) & (should_sell):
+                self.order_limits['buy'] = low_data[i] - spread * low_data[i]
+
+            if (self.order_limits['buy'] > low_data[i]) & (not should_buy):
+                buy_array[ind] = 1
+                sell_data[i] = self.order_limits['buy']
+                self.order_limits['buy'] = 0
+
+            elif (self.order_limits['sell'] < data[i]) & (not should_sell):
+                sell_array[ind] = 1
+                sell_data[i] = self.order_limits['sell']
+                self.order_limits['sell'] = 0
+
+        return sell_price, sell_array, buy_price, buy_array, sell_data
+
     def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
         # offset refers to how many minutes back in time can be checked for creating a fit
         # TODO add shift size to prediction to determine offset for trade
@@ -1891,7 +1918,6 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
         prediction = self.prediction
         data = self.data
         sell_data = data
-        low_data = self.data_low
         offset = self.offset
         price_is_rising = None
         last_sell = 0
@@ -1972,7 +1998,8 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
 
             spread = 0.001
 
-            sell_price, sell_array, buy_price, buy_array = self.place_trade(sell_check_val, buy_check_val, sell_array, buy_array, sell_price, buy_price, i, ind)
+            #sell_price, sell_array, buy_price, buy_array = self.place_ideal_market_order(sell_check_val, buy_check_val, sell_array, buy_array, sell_price, buy_price, i, ind)
+            sell_price, sell_array, buy_price, buy_array, sell_data = self.place_limit_order(sell_check_val, buy_check_val, sell_array, buy_array, spread, sell_price, buy_price, i, ind, sell_data)
 
         if save_inds:
             table_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/703ModelSavedTestIndsto8042018.pickle'
@@ -2157,7 +2184,7 @@ if __name__ == '__main__':
     #date_from = '2018-09-18 22:23:00 EST'
     #date_to = '2018-09-21 18:58:00 EST'
     date_from = '2018-10-23 00:00:00 EST'
-    date_to = '2018-11-10 09:30:00 EST'
+    date_to = '2018-10-24 09:30:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
