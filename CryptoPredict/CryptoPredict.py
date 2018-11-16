@@ -632,9 +632,10 @@ class CryptoCompare:
         exchange = self.exchange
         limit = self.datedelta("minutes")
         first_lim = limit
+        minute_lim = 2000
 
-        if limit > 2001:
-            first_lim = 2001
+        if limit > minute_lim:
+            first_lim = minute_lim
 
         if self.date_to:
             url = 'https://min-api.cryptocompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
@@ -647,15 +648,15 @@ class CryptoCompare:
         if exchange:
             url += '&e={}'.format(exchange)
 
-        loop_len = int(np.ceil(limit/2001))
-        if limit > 2001: #This if statement is to allow the gathering of historical minute data beyond 2000 points (the limit)
+        loop_len = int(np.ceil(limit/minute_lim))
+        if limit > minute_lim: #This if statement is to allow the gathering of historical minute data beyond 2000 points (the limit)
             df, time_stamp = self.create_data_frame(url, symbol, return_time_stamp=True)
             for num in range(1, loop_len):
                 toTs = time_stamp - 60 # have to subtract a value of 60 had to be added to avoid repeated indices
                 url_new = temp_url + '&toTs={}'.format(toTs)
                 if num == (loop_len - 1):
                     url_new = 'https://min-api.CryptoCompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                        .format(symbol.upper(), comparison_symbol.upper(), limit - num*2001, self.aggregate, toTs)
+                        .format(symbol.upper(), comparison_symbol.upper(), limit - num*minute_lim, self.aggregate, toTs)
                 df_to_append, time_stamp = self.create_data_frame(url_new, symbol, return_time_stamp=True)
                 df = df_to_append.append(df, ignore_index=True) #The earliest data goes on top
             return df
@@ -2175,8 +2176,8 @@ if __name__ == '__main__':
         #date_from = '2018-10-01 20:00:00 EST'
         #date_to = '2018-10-02 16:00:00 EST'
         #date_to = datetime.now().strftime('%Y-%m-%d %H:%M:') + '00 EST'
-        date_from = '2018-06-15 10:20:00 EST'
-        date_to = '2018-10-22 20:46:00 EST'
+        date_from = '2018-11-13 10:20:00 EST'
+        date_to = '2018-11-14 00:00:00 EST'
         prediction_length = 30
         epochs = 5000
         prediction_ticker = 'ETH'
@@ -2195,7 +2196,7 @@ if __name__ == '__main__':
         model_type = 'price' #Don't change this
         use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-10-23_20:46:00_EST.pickle'
+        pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-11-15_21:06:00_EST.pickle'
         test_model_save_bool = False
         test_model_from_model_path = False
         run_neural_net(date_from, date_to, prediction_length, epochs, prediction_ticker, bitinfo_list, time_unit, activ_func, isleakyrelu, neuron_count, min_distance_between_trades, model_path, model_type, use_type, data_set_path=pickle_path, save_test_model=test_model_save_bool, test_saved_model=test_model_from_model_path, batch_size=batch_size, layer_count=layer_count, neuron_grid=neuron_grid)

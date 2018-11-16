@@ -145,54 +145,56 @@ class SpreadTradeBot:
         check_val = sq_diff * ln_diff
         return check_val
 
-    def find_expected_value(self, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
-        current_prediction = self.fuzzy_price(fit_coeff, len(self.prediction)-self.minute_length, fuzziness, fit_offset)
-        ind = -self.minute_length
+    def characterize_shape(self, data):
+        #This function encodes the rough shape of the data as a 4 bit number
+        min_loc = np.argmin(data)
+        max_loc = np.argmax(data)
+        min_first = str(int(min_loc == 0))
+        max_first = str(int(max_loc == 0))
+        min_last = str(int(min_loc == (len(data)-1)))
+        max_last = str(int(max_loc == (len(data)-1)))
+
+        shape = eval(str('0b' + min_first + min_last + max_first + max_last))
+        # 0000 = 0 /\/, 0001 = 1 increasing \/, 0010 = 2 decreasing \/, 0100 = 4 decreasing /\,  0110 = 6 \, 1000 = 8
+        # increasing /\, 1001 = 9 /
+        return shape
+
+    def compare_shapes(self, prediction, actual):
+        pred_shape = self.characterize_shape(prediction)
+        actual_shape = self.characterize_shape(actual)
+
+        return pred_shape == actual_shape
+
+    def find_expected_value_over_many_trades(self, ind, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
+
+        data = self.data[(ind-10):ind]
 
         if is_buy:
-            sign = -1
-            upper_buy = current_prediction + err
-            lower_buy = current_prediction - err
+            trade_group = [4, 8, 9]
         else:
-            sign = 1
-            upper_sell = current_prediction + err
-            lower_sell = current_prediction - err
+            trade_group = [1, 2, 6]
 
+        max_ind = ind + self.prediction_len - fuzziness
 
-        value_arr = np.array([])
+        price_arr = np.array([])
+        old_price_arr = np.array([])
 
-        for i in range(-self.minute_length+1, -fuzziness):
+        for i in range(ind-10, max_ind):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
-            if is_buy:
-                upper_sell = price + err
-                lower_sell = price - err
-
+            if i >= ind:
+                price_arr = np.append(price_arr, price)
             else:
-                upper_buy = price + err
-                lower_buy = price - err
+                old_price_arr = np.append(old_price_arr, price)
 
-            expected_point_value = self.find_point_expected_value(upper_buy, lower_buy, upper_sell, lower_sell, const_diff)
+        price_shape = self.characterize_shape(price_arr)
+        should_trade = 0
 
-            value_arr = np.append(value_arr, expected_point_value)
+        if (price_shape in trade_group):
+            should_trade = 1
 
-        # Below 3 times the standard deviation is used to determine the to aim for but 2 times the standard deviation is used to assess risk
-        expected_value_err = 3*np.std(value_arr)
-        expected_return = np.mean(value_arr) + expected_value_err
-
-        ref_value_err = 2 * np.std(value_arr) / np.sqrt((fuzziness - 1))
-        ref_return = np.mean(value_arr) + ref_value_err
-        is_greater = sign * self.prediction[ind] > sign * self.prediction[ind - 1]
-        is_lesser = sign * self.prediction[ind] > sign * self.prediction[ind + 1]
-        is_not_inflection = (is_greater != is_lesser)
-
-        if (ref_return < 1) or (is_not_inflection) or (not is_greater) or np.isnan(ref_return):
-            return -1, 1
-
-        return expected_return, err
+        return should_trade
 
     def find_spread_bounds(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict):
-
-
 
         if order_type == 'buy':
             dict_type = 'asks'
@@ -520,6 +522,15 @@ class SpreadTradeBot:
         else:
             return False
 
+    def should_update_trade_price(self):
+        data = self.price
+        i = -1
+        data_diff = np.abs(data[i] - data[i - 1])
+        older_data_diff = np.abs(data[i - 1] - data[i - 3])
+        jump_criteria = (older_data_diff > 2 * np.std(data[(i - 30):i])) and (
+            data_diff < 0.5 * np.std(data[(i - 30):i]))
+        return jump_criteria
+
     def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
@@ -585,13 +596,14 @@ class SpreadTradeBot:
             trade_size_lim = 0.01
 
         if True:
+            jump_bool = self.should_update_trade_price()
             last_trade_price = self.trade_prices[cancel_type]
             trade_probability = 0.5 * np.log(self.timer[cancel_type]) / np.log(120)
             rand_num = random.random()
             # elif sign*price > (sign*last_trade_price + 0.001*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
-            if (sign*price < sign*(last_trade_price - sign*0.001*last_trade_price)) or (self.timer[cancel_type] > 2*60):
+            if jump_bool or (jump_bool and (sign*price < sign*(last_trade_price - sign*0.1))):
                 #Trade if the price is moving favorably since the last trade
                 hodl = True
                 trade_reason = 'guess'
@@ -680,6 +692,15 @@ class SpreadTradeBot:
 
         return last_check, err_counter
 
+    def reinitialize_model(self):
+        temp = "2018-05-05 00:00:00 EST"
+        self.cp = CoinPriceModel(temp, temp, days=self.minute_length, prediction_ticker=self.prediction_ticker,
+                                 bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=self.save_str,
+                                 need_data_obj=False)
+        self.prediction = None
+        self.price = None
+        self.cp.pred_data_obj = None
+
     def trade_loop(self):
         # This method keeps the bot running continuously
         current_time = datetime.now().timestamp()
@@ -724,6 +745,9 @@ class SpreadTradeBot:
 
                 except Exception as e:
                     last_check, err_counter = self.print_err_msg('find new data', e, err_counter, current_time)
+                    #The most common error found here corrupts the past datset. By reinitializing the issues caused by the error can hopefully be mitigated
+                    self.reinitialize_model()
+                    continue
 
                 # Plot returns
                 try:
@@ -784,12 +808,13 @@ class SpreadTradeBot:
                     self.cp.model.save(self.save_str)
 
                     # Reinitialize CoinPriceModel
-                    temp = "2018-05-05 00:00:00 EST"
-                    self.cp = CoinPriceModel(temp, temp, days=self.minute_length, prediction_ticker=self.prediction_ticker,
-                                 bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=self.save_str, need_data_obj=False)
-                    self.prediction = None
-                    self.price = None
-                    self.cp.pred_data_obj = None
+                    self.reinitialize_model()
+                    # temp = "2018-05-05 00:00:00 EST"
+                    # self.cp = CoinPriceModel(temp, temp, days=self.minute_length, prediction_ticker=self.prediction_ticker,
+                    #              bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=self.save_str, need_data_obj=False)
+                    # self.prediction = None
+                    # self.price = None
+                    # self.cp.pred_data_obj = None
                 except Exception as e:
                     last_training_time = current_time + 5*60
                     err_counter += 1

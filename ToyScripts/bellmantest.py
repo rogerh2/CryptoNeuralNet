@@ -1800,6 +1800,7 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
     prediction_len = 30
     order_limits = {'buy':0, 'sell':0}
     order_stats = {'buy':{'mean':0, 'std':0}, 'sell':{'mean':0, 'std':0}}
+    last_trade = 'sell'
 
     def __init__(self, prediction, data, data_low):
         super(OptimalTradeStrategyTestBedForVisualizer, self).__init__(prediction, data, data_low)
@@ -1817,7 +1818,7 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
         if is_buy:
             trade_group = [4, 8, 9]
         else:
-            trade_group = [0, 1, 2, 6]
+            trade_group = [1, 2, 6]
 
         max_ind = ind + self.prediction_len - fuzziness
 
@@ -1883,29 +1884,74 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
 
         return sell_price, sell_array, buy_price, buy_array
 
+    def should_update_trade(self, type, data, spread):
+        #This function determines if the current limit price should be updated
+        order_limit = self.order_limits[type]
+        stat_dict = self.order_stats[type]
+        is_better_trade_predicted = ((data[-1] + spread * data[-1]) < order_limit)
+        is_current_price_out_of_bounds = abs(stat_dict['mean'] - np.mean(data)) > (stat_dict['std'] + np.std(data))
+
+        if stat_dict['mean'] > 0:
+            should_update = is_better_trade_predicted or is_current_price_out_of_bounds
+
+        else:
+            should_update = is_better_trade_predicted
+
+        return should_update
+
     def place_limit_order(self, sell_check_val, buy_check_val, sell_array, buy_array, spread, sell_price, buy_price, i, ind, sell_data):
         data = self.data
         low_data = self.data_low
-        should_update_buy = ((low_data[i] - spread*low_data[i]) < self.order_limits['buy'])
-        should_update_sell = ((low_data[i] - spread * low_data[i]) < self.order_limits['sell'])
+        current_mean = np.mean(data[(i-self.prediction_len):i])
+        current_std = np.std(data[(i - self.prediction_len):i])
+
+        should_update_buy = self.should_update_trade('buy', data[(i-self.prediction_len):i], spread)
+        should_update_sell = self.should_update_trade('sell', data[(i-self.prediction_len):i], spread)
         should_buy = self.order_limits['buy'] == 0
         should_sell = self.order_limits['sell'] == 0
+
         if sell_check_val != buy_check_val:
+            data_diff = np.abs(data[i] - data[i - 1])
+            older_data_diff = np.abs(data[i - 1] - data[i - 3])
+            sign = (data[i] - data[i - 1]) / np.abs(data[i] - data[i - 1])
+            jump_criteria = (older_data_diff > 2 * np.std(data[(i - 30):i])) and (
+                data_diff < 0.5 * np.std(data[(i - 30):i]))
+
+            #This sets the limit orders
             if (buy_check_val & (should_sell or should_update_sell)) & (should_buy):
                 self.order_limits['sell'] = data[i] + spread * data[i]
+                self.order_stats['sell']['mean'] = current_mean
+                self.order_stats['sell']['std'] = current_std
+
+            elif buy_check_val & (should_update_buy or should_buy) & (should_sell):
+                self.order_limits['buy'] = low_data[i] - spread * low_data[i]
+                self.order_stats['buy']['mean'] = current_mean
+                self.order_stats['buy']['std'] = current_std
 
             elif (sell_check_val & (should_update_buy or should_buy)) & (should_sell):
                 self.order_limits['buy'] = low_data[i] - spread * low_data[i]
+                self.order_stats['buy']['mean'] = current_mean
+                self.order_stats['buy']['std'] = current_std
 
+            #This cancels bad limit orders
+
+            if (buy_check_val or jump_criteria) & (not should_buy):
+                self.order_limits['buy'] = low_data[i]
+            elif (sell_check_val or jump_criteria)  & (not should_sell):
+                self.order_limits['sell'] = data[i]
+
+            #This places trades once the prices hit
             if (self.order_limits['buy'] > low_data[i]) & (not should_buy):
                 buy_array[ind] = 1
                 sell_data[i] = self.order_limits['buy']
                 self.order_limits['buy'] = 0
+                self.last_trade = 'buy'
 
             elif (self.order_limits['sell'] < data[i]) & (not should_sell):
                 sell_array[ind] = 1
                 sell_data[i] = self.order_limits['sell']
                 self.order_limits['sell'] = 0
+                self.last_trade = 'sell'
 
         return sell_price, sell_array, buy_price, buy_array, sell_data
 
@@ -1996,7 +2042,7 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
             if (buy_check_val is None) or (sell_check_val is None):
                 continue
 
-            spread = 0.001
+            spread = np.std(data[(i-self.prediction_len):i])/np.mean(data[(i-self.prediction_len):i])
 
             #sell_price, sell_array, buy_price, buy_array = self.place_ideal_market_order(sell_check_val, buy_check_val, sell_array, buy_array, sell_price, buy_price, i, ind)
             sell_price, sell_array, buy_price, buy_array, sell_data = self.place_limit_order(sell_check_val, buy_check_val, sell_array, buy_array, spread, sell_price, buy_price, i, ind, sell_data)
@@ -2024,6 +2070,7 @@ class OptimalTradeStrategyTestBedForVisualizer(OptimalTradeStrategyFuzzyPriceVis
             plt.figure()
             plt.plot(value_over_time, label='Strategy')
             plt.plot(100 * data / (data[1]), label='Market')
+            #plt.plot(100 * self.data_low / (self.data[1]), label='Lows')
             plt.title('Precentage Returns Strategy and Market')
             plt.ylabel('% Return')
             plt.legend()
@@ -2169,7 +2216,7 @@ class OptimalTradeStrategyV5Realistic(OptimalTradeStrategyV5):
 
 
 if __name__ == '__main__':
-    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-11-10_09:33:00_EST.pickle'
+    pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-11-15_21:06:00_EST.pickle'
     inds_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/SavedInds/802ModelSavedTestIndsto8042018.pickle'
 
     with open(pickle_path, 'rb') as ds_file:
@@ -2179,12 +2226,12 @@ if __name__ == '__main__':
         saved_inds = pickle.load(ind_file)
 
     #model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_40neurons_4epochs1530856066.874304.h5'
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_90neurons_2epochs1540346883.579073.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/ETHmodel_30minutes_leakyreluact_adamopt_mean_absolute_percentage_errorloss_300neurons_4epochs1540346933.387409.h5'
 
     #date_from = '2018-09-18 22:23:00 EST'
     #date_to = '2018-09-21 18:58:00 EST'
-    date_from = '2018-10-23 00:00:00 EST'
-    date_to = '2018-10-24 09:30:00 EST'
+    date_from = '2018-11-15 00:00:00 EST'
+    date_to = '2018-11-15 21:06:00 EST'
     bitinfo_list = ['eth']
     cp = CoinPriceModel(date_from, date_to, days=30, prediction_ticker='ETH',
                         bitinfo_list=bitinfo_list, time_units='minutes', model_path=model_path, need_data_obj=True,
