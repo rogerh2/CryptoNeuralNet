@@ -1,11 +1,11 @@
 import matplotlib
 matplotlib.use('Agg')
 import sys
-sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
+#sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
-#sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict.CryptoPredict import CoinPriceModel
-from CryptoPredict.CryptoPredict import DataSet
+sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict import CoinPriceModel
+from CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
@@ -165,34 +165,31 @@ class SpreadTradeBot:
 
         return pred_shape == actual_shape
 
-    def find_expected_value_over_many_trades(self, ind, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
+    def find_expected_value(self, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
 
-        data = self.data[(ind-10):ind]
+        ind = -self.cp.prediction_length
 
         if is_buy:
             trade_group = [4, 8, 9]
         else:
             trade_group = [1, 2, 6]
 
-        max_ind = ind + self.prediction_len - fuzziness
+        max_ind = -fuzziness
 
         price_arr = np.array([])
-        old_price_arr = np.array([])
 
-        for i in range(ind-10, max_ind):
+        for i in range(ind, max_ind):
             price = self.fuzzy_price(fit_coeff, i, fuzziness, fit_offset)
-            if i >= ind:
-                price_arr = np.append(price_arr, price)
-            else:
-                old_price_arr = np.append(old_price_arr, price)
+            price_arr = np.append(price_arr, price)
 
         price_shape = self.characterize_shape(price_arr)
-        should_trade = 0
+        should_trade = np.nan
 
         if (price_shape in trade_group):
-            should_trade = 1
+            #TODO fix expected future price if you ever go back to trying to predict the price instead of the direction
+            should_trade = 1 + np.mean(price_arr[1::])/price_arr[1]
 
-        return should_trade
+        return should_trade, err
 
     def find_spread_bounds(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict):
 
@@ -603,7 +600,10 @@ class SpreadTradeBot:
         if True:
             jump_bool, bound_bool = self.should_update_trade_price(order_type)
             last_trade_price = self.trade_info[cancel_type]
-            spread = self.trade_info[cancel_type]['std']/self.trade_info[cancel_type]['mean']
+            if self.trade_info[cancel_type]['mean'] > 0:
+                spread = self.trade_info[cancel_type]['std']/self.trade_info[cancel_type]['mean']
+            else:
+                spread = 0.001
             # elif sign*price > (sign*last_trade_price + 0.001*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
