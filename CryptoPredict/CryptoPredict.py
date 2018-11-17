@@ -33,10 +33,11 @@ from email.mime.image import MIMEImage
 
 
 def convert_time_to_uct(naive_date_from):
-    est = pytz.timezone('America/New_York')
-    est_date_from = est.localize(naive_date_from)
+    current_tz = get_current_tz()
+    sys_tz = pytz.timezone(current_tz)
+    sys_tz_date_from = sys_tz.localize(naive_date_from)
     utc = pytz.UTC
-    utc_date = est_date_from.astimezone(utc)
+    utc_date = sys_tz_date_from.astimezone(utc)
     return utc_date
 
 def get_current_tz():
@@ -527,18 +528,21 @@ class CryptoCompare:
         if exchange:
             self.exchange = exchange
 
+        current_tz = get_current_tz()
+
         fmt = '%Y-%m-%d %H:%M:%S %Z'
         naive_date_from = datetime.strptime(date_from, fmt)
-        est = pytz.timezone('America/New_York')
-        est_date_from = est.localize(naive_date_from)
+        sys_tz = pytz.timezone(current_tz)
+        sys_tz_date_from = sys_tz.localize(naive_date_from)
         utc = pytz.UTC
-        self.date_from = est_date_from.astimezone(utc)
+        self.date_from = sys_tz_date_from.astimezone(utc)
 
         if date_to:
             naive_date_to = datetime.strptime(date_to, fmt)
-            est_date_to = est.localize(naive_date_to)
-
-        self.date_to = est_date_to.astimezone(utc)
+            sys_tz_date_to = sys_tz.localize(naive_date_to)
+            self.date_to = sys_tz_date_to.astimezone(utc)
+        else:
+            self.date_to = None
 
     def datedelta(self, units):
         d1_ts = time.mktime(self.date_from.timetuple())
@@ -715,11 +719,13 @@ class CryptoCompare:
 
     def news(self, symbol, date_before=None):
         fmt = '%Y-%m-%d %H:%M:%S %Z'
+        current_tz = get_current_tz()
+
         naive_date_before = datetime.strptime(date_before, fmt)
-        est = pytz.timezone('America/New_York')
-        est_date_before = est.localize(naive_date_before)
+        sys_tz = pytz.timezone(current_tz)
+        sys_tz_date_before = sys_tz.localize(naive_date_before)
         utc = pytz.UTC
-        date_before = est_date_before.astimezone(utc)
+        date_before = sys_tz_date_before.astimezone(utc)
         url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={},BTC,Regulation,Altcoin,Blockchain,Mining,Trading,Market&lTs={}" \
         .format(symbol.upper(), int(date_before.timestamp()))
         try:
@@ -1186,13 +1192,8 @@ class CoinPriceModel:
             return prediction, test_output
 
     def create_standard_dates(self):
-        #TODO make timezone variable
-        utc_to_date = datetime.now()
-        utc = pytz.UTC
-        est = pytz.timezone('America/New_York')
-        utc_to_date = utc.localize(utc_to_date)
-        to_date = utc_to_date.astimezone(est)
-        return utc_to_date
+        to_date = datetime.now()
+        return to_date
 
     def predict(self, time_units='hours', show_plots=True, old_prediction=np.array([]), is_first_prediction=True):
         fmt = '%Y-%m-%d %H:%M'
