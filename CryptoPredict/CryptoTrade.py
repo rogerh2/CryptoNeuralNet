@@ -1,11 +1,11 @@
 import matplotlib
 matplotlib.use('Agg')
 import sys
-# sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
+sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
-sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict import CoinPriceModel
-from CryptoPredict import DataSet
+#sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
+from CryptoPredict.CryptoPredict import CoinPriceModel
+from CryptoPredict.CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
@@ -41,14 +41,14 @@ def current_est_time():
     return est_date
 
 class SpreadTradeBot:
-    min_usd_balance = 100.04  # Make sure the bot does not trade away all my money
+    min_usd_balance = 100.00  # Make sure the bot does not trade away all my money
     offset = 40
     usd_id = None
     crypto_id = None
     initial_price = 1
     initial_value = 1
     trade_ids = {'buy':'', 'sell':''}
-    trade_prices = {'buy':0, 'sell':1000000000}
+    trade_info = {'buy':{'price':0, 'mean':0, 'std':0}, 'sell':{'price':1000000000, 'mean':0, 'std':0}}
     trade_logic = {'buy': True, 'sell': True}
     order_status = 'active'
     timer = {'buy':1, 'sell':1}
@@ -459,7 +459,7 @@ class SpreadTradeBot:
                 self.should_reset_timer[order_type] = False
 
 
-            if (hodl_order['status'] != 'done') & (np.abs(self.trade_prices[order_type] - price) > price_lim):
+            if (hodl_order['status'] != 'done') & (np.abs(self.trade_info[order_type]['price'] - price) > price_lim):
                 self.auth_client.cancel_order(hodl_id)
                 self.trade_ids[order_type] = ''
                 self.order_status = hodl_order['status']
@@ -522,14 +522,19 @@ class SpreadTradeBot:
         else:
             return False
 
-    def should_update_trade_price(self):
+    def should_update_trade_price(self, type):
         data = self.price
+        stat_dict = self.trade_info[type]
         i = -1
         data_diff = np.abs(data[i] - data[i - 1])
         older_data_diff = np.abs(data[i - 1] - data[i - 3])
-        jump_criteria = (older_data_diff > 2 * np.std(data[(i - 30):i])) and (
-            data_diff < 0.5 * np.std(data[(i - 30):i]))
-        return jump_criteria
+
+        jump_criteria = (older_data_diff > 2 * np.std(data[(30)::])) and (
+            data_diff < 0.5 * np.std(data[(-30)::]))
+
+        is_current_price_out_of_bounds = abs(stat_dict['mean'] - np.mean(data[(30)::])) > (stat_dict['std'] + np.std(data[(30)::]))
+
+        return jump_criteria, is_current_price_out_of_bounds
 
     def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
         #get min, max, and current price and order_book
@@ -596,14 +601,13 @@ class SpreadTradeBot:
             trade_size_lim = 0.01
 
         if True:
-            jump_bool = self.should_update_trade_price()
-            last_trade_price = self.trade_prices[cancel_type]
-            trade_probability = 0.5 * np.log(self.timer[cancel_type]) / np.log(120)
-            rand_num = random.random()
+            jump_bool, bound_bool = self.should_update_trade_price(order_type)
+            last_trade_price = self.trade_info[cancel_type]
+            spread = self.trade_info[cancel_type]['std']/self.trade_info[cancel_type]['mean']
             # elif sign*price > (sign*last_trade_price + 0.001*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
-            if jump_bool or (jump_bool and (sign*price < sign*(last_trade_price - sign*0.1))):
+            if bound_bool or (jump_bool and (sign*price < (sign - spread)*last_trade_price)):
                 #Trade if the price is moving favorably since the last trade
                 hodl = True
                 trade_reason = 'guess'
@@ -643,7 +647,10 @@ class SpreadTradeBot:
                 msg = str(order.values())
                 return msg
             self.trade_ids[order_type] = order['id']
-            self.trade_prices[order_type] = price
+            self.trade_info[order_type]['price'] = price
+            self.trade_info[order_type]['mean'] = np.mean(self.price[-30::])
+            self.trade_info[order_type]['std'] = np.std(self.price[-30::])
+
             self.should_reset_timer[order_type] = True
             msg = 'placing ' + order_kind + ' order at $' + price_str + ' due to ' + trade_reason
             return msg

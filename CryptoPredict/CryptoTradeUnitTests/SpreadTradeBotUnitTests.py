@@ -17,7 +17,7 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
                                     secret_key='redacted',
                                     passphrase='redacted', is_sandbox_api=True, minute_len=30)
 
-        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/Legacy/CryptoPredictDataSet_minutes_from_2018-08-11_08:46:00_EST_to_2018-08-16_08:00:00_EST.pickle'
+        pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-11-06_21:30:00_EST.pickle'
         date_from = '2018-08-11 08:46:00 EST'
         date_to = '2018-08-16 08:00:00 EST'
         time_units = 'minutes'
@@ -175,6 +175,13 @@ class SpreadTradeBotUnitTests(unittest.TestCase):
                                       bot_buy_bool[start_ind:stop_ind], 'incorrect buys')
         np.testing.assert_array_equal(sell_bool[backtest_padding:-(backtest_padding + 1)],
                                       bot_sell_bool[start_ind:stop_ind], 'incorrect sells')
+
+    def test_can_CoinPriceModel_make_predictions(self):
+        self.spread_bot.spread_bot_predict()
+
+        nan_sum = np.sum(np.isnan(self.prediction))
+
+        self.assertEqual(nan_sum, 0)
 
 
 if __name__ == '__main__':

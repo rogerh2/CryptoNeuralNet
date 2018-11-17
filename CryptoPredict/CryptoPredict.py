@@ -10,6 +10,7 @@ import numpy as np
 import keras
 import pytz
 import pickle
+import tzlocal
 import base64
 import hashlib
 import hmac
@@ -37,6 +38,12 @@ def convert_time_to_uct(naive_date_from):
     utc = pytz.UTC
     utc_date = est_date_from.astimezone(utc)
     return utc_date
+
+def get_current_tz():
+    now = datetime.now(tzlocal.get_localzone())
+    tz = now.strftime('%Z')
+
+    return tz
 
 def find_trade_strategy_value(buy_bool, sell_bool, all_prices, return_value_over_time=False):
     #This finds how much money was gained from a starting value of $100 given a particular strategy
@@ -396,11 +403,12 @@ class OptimalTradeStrategy:
                     test_dates = pd.date_range(from_date, to_date, freq='1min')
                     from_ind = ind - len(test_dates)
                     fmt = '%Y-%m-%d %H:%M:%S'
-
                     training_fin_table = fin_table[from_ind:ind]
                     training_fin_table.index = np.arange(0, len(training_fin_table))
-                    training_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
-                                            date_to=to_date.strftime(fmt) + ' EST',
+                    current_tz = get_current_tz()
+
+                    training_data = DataSet(date_from=from_date.strftime(fmt) + ' ' + current_tz,
+                                            date_to=to_date.strftime(fmt) + ' ' + current_tz,
                                             prediction_length=minute_cp.prediction_length,
                                             bitinfo_list=minute_cp.bitinfo_list,
                                             prediction_ticker='ETH', time_units='minutes', fin_table=training_fin_table)
@@ -412,8 +420,8 @@ class OptimalTradeStrategy:
                     to_date = fin_table.date[len(fin_table.date.values) - 1].to_pydatetime()
                     test_fin_table = fin_table
                     test_fin_table.index = np.arange(0, len(test_fin_table))
-                    test_data = DataSet(date_from=from_date.strftime(fmt) + ' EST',
-                                        date_to=to_date.strftime(fmt) + ' EST',
+                    test_data = DataSet(date_from=from_date.strftime(fmt) + ' ' + current_tz,
+                                        date_to=to_date.strftime(fmt) + ' ' + current_tz,
                                         prediction_length=minute_cp.prediction_length,
                                         bitinfo_list=minute_cp.bitinfo_list,
                                         prediction_ticker='ETH', time_units='minutes', fin_table=test_fin_table)
@@ -648,17 +656,17 @@ class CryptoCompare:
         if exchange:
             url += '&e={}'.format(exchange)
 
-        loop_len = int(np.ceil(limit/minute_lim))
-        if limit > minute_lim: #This if statement is to allow the gathering of historical minute data beyond 2000 points (the limit)
+        loop_len = int(np.ceil(limit / minute_lim))
+        if limit > minute_lim: # This if statement is to allow the gathering of historical minute data beyond 2000 points (the limit)
             df, time_stamp = self.create_data_frame(url, symbol, return_time_stamp=True)
             for num in range(1, loop_len):
                 toTs = time_stamp - 60 # have to subtract a value of 60 had to be added to avoid repeated indices
                 url_new = temp_url + '&toTs={}'.format(toTs)
                 if num == (loop_len - 1):
                     url_new = 'https://min-api.CryptoCompare.com/data/histominute?fsym={}&tsym={}&limit={}&aggregate={}&toTs={}' \
-                        .format(symbol.upper(), comparison_symbol.upper(), limit - num*minute_lim, self.aggregate, toTs)
+                        .format(symbol.upper(), comparison_symbol.upper(), limit - num * minute_lim, self.aggregate, toTs)
                 df_to_append, time_stamp = self.create_data_frame(url_new, symbol, return_time_stamp=True)
-                df = df_to_append.append(df, ignore_index=True) #The earliest data goes on top
+                df = df_to_append.append(df, ignore_index=True) # The earliest data go on top
             return df
 
         df = self.create_data_frame(url, symbol)
@@ -823,7 +831,8 @@ class DataSet:
                 news_sentiment.insert(0, sentiment_sum)
 
                 iterations_complete += 1
-                print('news scraping ' + str(round(100 * iterations_complete / total_len, 2)) + '% complete')
+                if total_len > 30:
+                    print('news scraping ' + str(round(100 * iterations_complete / total_len, 2)) + '% complete')
 
             temp_table = pd.DataFrame({'Sentiment': news_sentiment, 'News Frequency': news_count}, index=fin_table.index)
             fin_table = pd.concat([fin_table, temp_table], axis=1, join_axes=[temp_table.index])
@@ -933,9 +942,10 @@ class DataSet:
     def add_data(self, date_to, retain_length=False):
         # TODO add ability to change prediction length
         time_del = timedelta(minutes=1)
-        fmt = '%Y-%m-%d %H:%M:%S %Z'
+        current_tz = get_current_tz()
+        fmt = '%Y-%m-%d %H:%M:%S '
         from_datetime = datetime.strptime(self.date_to, fmt) + time_del
-        date_from = datetime.strftime(from_datetime, fmt) + 'EST'
+        date_from = datetime.strftime(from_datetime, fmt) + current_tz
         old_fin_table = self.fin_table
         temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
         fin_table_addition = temp_data_obj.fin_table
@@ -952,15 +962,18 @@ class DataSet:
     def get_next_data(self, date_to):
         # TODO add ability to change prediction length
         time_del = timedelta(minutes=1) #Keeps dates from overlapping
-        fmt = '%Y-%m-%d %H:%M:%S %Z'
+        fmt = '%Y-%m-%d %H:%M:%S '
+        current_tz = get_current_tz()
+
         old_fin_table = self.fin_table
         from_datetime = datetime.strptime(self.date_to, fmt) + time_del
-        date_from = datetime.strftime(from_datetime, fmt) + 'EST'
+        date_from = datetime.strftime(from_datetime, fmt) + current_tz
         temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
         next_fin_table = temp_data_obj.fin_table
         next_fin_table.index = next_fin_table.index + np.max(old_fin_table.index.values) + 1
 
-        self.fin_table = old_fin_table.append(next_fin_table)
+        self.fin_table = old_fin_table.append(next_fin_table[1::])
+        self.fin_table = self.fin_table[~self.fin_table.index.duplicated(keep='first')]
 
         self.date_to = date_to
 
@@ -1173,15 +1186,18 @@ class CoinPriceModel:
             return prediction, test_output
 
     def create_standard_dates(self):
+        #TODO make timezone variable
         utc_to_date = datetime.now()
         utc = pytz.UTC
         est = pytz.timezone('America/New_York')
         utc_to_date = utc.localize(utc_to_date)
         to_date = utc_to_date.astimezone(est)
-        return to_date
+        return utc_to_date
 
     def predict(self, time_units='hours', show_plots=True, old_prediction=np.array([]), is_first_prediction=True):
-        fmt = '%Y-%m-%d %H:%M:%S %Z'
+        fmt = '%Y-%m-%d %H:%M'
+        current_tz = get_current_tz()
+        date_str_add_on = ':00 ' + current_tz
         to_date = datetime.now()
         if time_units == 'minutes':
             delta = timedelta(minutes=self.prediction_length)
@@ -1193,15 +1209,16 @@ class CoinPriceModel:
             delta = timedelta(days=self.prediction_length)
             from_delta = timedelta(days=30)
 
-
+        date_to_str = to_date.strftime(fmt) + date_str_add_on
         if self.pred_data_obj is None:
             from_date = to_date - from_delta
-            test_data = DataSet(date_from=(from_date.strftime(fmt)+' EST'), date_to=(to_date.strftime(fmt)+' EST'), prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list,
+            date_from_str = from_date.strftime(fmt) + date_str_add_on
+            test_data = DataSet(date_from=date_from_str, date_to=date_to_str, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list,
                                 prediction_ticker=self.prediction_ticker, time_units=time_units)
         else:
             # TODO add ability to change prediction length in case its not one minute
             test_data = self.pred_data_obj
-            test_data.get_next_data(to_date.strftime(fmt) + ' EST')
+            test_data.get_next_data(date_to_str)
 
         self.pred_data_obj = test_data
 
