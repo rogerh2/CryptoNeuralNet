@@ -949,37 +949,32 @@ class DataSet:
         # TODO add ability to change prediction length
         time_del = timedelta(minutes=1)
         current_tz = get_current_tz()
-        fmt = '%Y-%m-%d %H:%M:%S '
+        fmt = '%Y-%m-%d %H:%M:%S %Z'
+        fmt_sans_tz = '%Y-%m-%d %H:%M:%S '
         from_datetime = datetime.strptime(self.date_to, fmt) + time_del
-        date_from = datetime.strftime(from_datetime, fmt) + current_tz
-        old_fin_table = self.fin_table
-        temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
-        fin_table_addition = temp_data_obj.fin_table
-        fin_table_addition.index = fin_table_addition.index + np.max(old_fin_table.index.values) + 1
-        new_fin_table = old_fin_table.append(fin_table_addition)
+        date_from = datetime.strftime(from_datetime, fmt_sans_tz) + current_tz
+        if date_from == date_to:
+            from_datetime = datetime.strptime(self.date_to, fmt)
+            date_from = datetime.strftime(from_datetime, fmt_sans_tz) + current_tz
+            old_fin_table = self.fin_table
+            temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length,
+                                    bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker,
+                                    time_units=self.time_units)
+            fin_table_addition = temp_data_obj.fin_table
+            fin_table_addition.index = fin_table_addition.index + np.max(old_fin_table.index.values) + 1
+            new_fin_table = old_fin_table.append(fin_table_addition.iloc[-1])
+
+        else:
+            old_fin_table = self.fin_table
+            temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
+            fin_table_addition = temp_data_obj.fin_table
+            fin_table_addition.index = fin_table_addition.index + np.max(old_fin_table.index.values) + 1
+            new_fin_table = old_fin_table.append(fin_table_addition)
 
         if retain_length:
             self.fin_table = new_fin_table.iloc[len(fin_table_addition)::]
         else:
             self.fin_table = new_fin_table
-
-        self.date_to = date_to
-
-    def get_next_data(self, date_to):
-        # TODO add ability to change prediction length
-        time_del = timedelta(minutes=1) #Keeps dates from overlapping
-        fmt = '%Y-%m-%d %H:%M:%S '
-        current_tz = get_current_tz()
-
-        old_fin_table = self.fin_table
-        from_datetime = datetime.strptime(self.date_to, fmt) + time_del
-        date_from = datetime.strftime(from_datetime, fmt) + current_tz
-        temp_data_obj = DataSet(date_from, date_to, prediction_length=self.prediction_length, bitinfo_list=self.bitinfo_list, prediction_ticker=self.prediction_ticker, time_units=self.time_units)
-        next_fin_table = temp_data_obj.fin_table
-        next_fin_table.index = next_fin_table.index + np.max(old_fin_table.index.values) + 1
-
-        self.fin_table = old_fin_table.append(next_fin_table[1::])
-        self.fin_table = self.fin_table[~self.fin_table.index.duplicated(keep='first')]
 
         self.date_to = date_to
 
@@ -1219,7 +1214,7 @@ class CoinPriceModel:
         else:
             # TODO add ability to change prediction length in case its not one minute
             test_data = self.pred_data_obj
-            test_data.get_next_data(date_to_str)
+            test_data.add_data(date_to_str)
 
         self.pred_data_obj = test_data
 

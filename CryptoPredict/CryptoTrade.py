@@ -772,13 +772,14 @@ class SpreadTradeBot:
                     buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy')
                     sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
                     current_datetime = current_est_time()
+                    prez_fmt = '%Y-%m-%d %H:%M'
                     if buy_msg != last_buy_msg:
-                        print('Current time is ' + current_datetime.strftime(fmt) + ' EST')
+                        print('Current time is ' + current_datetime.strftime(prez_fmt) + ' EST')
                         print('Buy message: ' + buy_msg)
                         last_buy_msg = buy_msg
 
                     if sell_msg != last_sell_msg:
-                        print('Current time is ' + current_datetime.strftime(fmt) + ' EST')
+                        print('Current time is ' + current_datetime.strftime(prez_fmt) + ' EST')
                         print('Sell message: ' + sell_msg)
                         last_sell_msg = sell_msg
 

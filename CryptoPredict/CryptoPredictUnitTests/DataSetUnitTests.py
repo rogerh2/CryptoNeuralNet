@@ -1,18 +1,20 @@
 import unittest
 from CryptoPredict.CryptoPredict import DataSet
+from CryptoPredict.CryptoPredict import get_current_tz
+from datetime import datetime
 import pickle
 import numpy as np
 
 
 class TestDataSet(unittest.TestCase):
     def setUp(self):
-        date_from = "2018-05-15 09:00:00 EST"
-        date_to = "2018-05-16 09:00:00 EST"
+        date_from = "2018-11-17 06:00:00 EST"
+        date_to = "2018-11-17 09:00:00 EST"
         bitinfo_list = ['eth']
         prediction_ticker = 'ETH'
-        time_units = 'hours'
+        time_units = 'minutes'
 
-        self.data_obj = DataSet(date_from=date_from, date_to=date_to, prediction_length=6, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units)
+        self.data_obj = DataSet(date_from=date_from, date_to=date_to, prediction_length=30, bitinfo_list=bitinfo_list, prediction_ticker=prediction_ticker, time_units=time_units)
         self.data_obj.create_arrays()
 
     def test_create_price_prediction_columns_creates_correct_number_of_columns_and(self):
@@ -49,6 +51,7 @@ class TestDataSet(unittest.TestCase):
 
         #It should buy and sell an equal number of times
         self.assertEqual(num_sell_ones, num_buy_ones)
+
 
 
 if __name__ == '__main__':
