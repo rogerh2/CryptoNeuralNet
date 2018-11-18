@@ -551,15 +551,13 @@ class SpreadTradeBot:
 
         if (not is_predicted_return) and (self.trade_logic[cancel_type]):
             self.trade_logic[order_type] = False
-            self.cancel_out_of_bounds_orders(max_future_price, min_future_price, cancel_type)
-            self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
-            msg = 'Currently no value is expected'
+            msg = 'Conditions not met for trade'
             if self.trade_ids[order_type] != '':
                 unused_msg = self.cancel_old_hodl_order(order_type, 0)
 
             cancel_type_balance = self.get_full_wallet_contents(cancel_type, accnt_data)
 
-            if cancel_type_balance <= min_cancel_balance:
+            if (cancel_type_balance <= min_cancel_balance):
                 self.trade_logic[order_type] = True
 
             return msg
@@ -572,57 +570,56 @@ class SpreadTradeBot:
 
         #This determines whether to buy or sell
         if order_type == 'buy':
-            dict_type = 'asks'
-            opposite_dict_type = 'bids'
-            order_type = 'sell'
-            opposing_order_type = 'buy'
-            stop_type = 'entry'
-            sign = 1
-            self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
-            usd_available, available = self.get_available_wallet_contents(accnt_data)
-            price = self.determine_trade_price(order_type, order_dict, is_stop=True) #using is_stop for the most conservative answer
-            opposite_available = usd_available/price
-            trade_size_lim = 10/price
-
-        else:
             dict_type = 'bids'
             opposite_dict_type = 'asks'
             order_type = 'buy'
-            opposing_order_type ='sell'
-            stop_type = 'loss'
-            self.cancel_out_of_bounds_orders(max_future_price, min_future_price, order_type)
-            available, crypto_available = self.get_available_wallet_contents(accnt_data)
-            opposite_available = crypto_available
-            sign = -1
+            stop_type = 'entry'
+            sign = 1
+            usd_available, crypto_available = self.get_available_wallet_contents(accnt_data)
             price = self.determine_trade_price(order_type, order_dict, is_stop=True) #using is_stop for the most conservative answer
+            available = usd_available/price
+            trade_size_lim = 10/price
+
+        else:
+            dict_type = 'asks'
+            opposite_dict_type = 'bids'
+            order_type = 'sell'
+            stop_type = 'loss'
+            usd_available, available = self.get_available_wallet_contents(accnt_data)
+            price = self.determine_trade_price(order_type, order_dict, is_stop=True)
+            sign = -1
             trade_size_lim = 0.01
+
 
         if True:
             jump_bool, bound_bool = self.should_update_trade_price(order_type)
             last_trade_price = self.trade_info[cancel_type]
-            if self.trade_info[cancel_type]['mean'] > 0:
-                spread = self.trade_info[cancel_type]['std']/self.trade_info[cancel_type]['mean']
-            else:
-                spread = 0.001
+            spread = np.std(self.price[-30::])/np.mean(self.price[-30::]) + 0.05
+            spread_bool = (sign * price < (sign - spread) * last_trade_price)
+
             # elif sign*price > (sign*last_trade_price + 0.001*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
-            if bound_bool or (jump_bool and (sign*price < (sign - spread)*last_trade_price)):
+            if jump_bool and (order_type == 'buy'):
                 #Trade if the price is moving favorably since the last trade
                 hodl = True
-                trade_reason = 'guess'
-            if min_future_price is not None:
-                # Always do as the algorithm says
-                # hodl = False
                 trade_reason = 'predicted_return'
 
-            order_type = opposing_order_type
-            price = self.determine_trade_price(order_type, order_dict)
-            available = opposite_available
+            elif jump_bool and (bound_bool or spread_bool):
+                hodl = True
+                trade_reason = 'predicted_return'
+
+            if min_future_price is None:
+                if order_type == 'buy':
+                    return 'conditions not met for Trade'
+
+                trade_reason = 'guess'
+
+        price = self.determine_trade_price(order_type, order_dict)
 
         if hodl:
             size_str = num2str(available, 8)
-            is_favorable_pressure = self.detect_trade_pressure(order_dict, dict_type, opposite_dict_type)
+            is_favorable_pressure = self.detect_trade_pressure(order_dict, opposite_dict_type, dict_type)
 
             if (self.order_status == 'open' and is_predicted_return) or (is_favorable_pressure):
                 unused_msg = self.cancel_old_hodl_order(order_type, price, force_limit_order=True)
@@ -655,36 +652,9 @@ class SpreadTradeBot:
             msg = 'placing ' + order_kind + ' order at $' + price_str + ' due to ' + trade_reason
             return msg
 
-        if True:
-            unused_msg = self.cancel_old_hodl_order(order_type, 0)
-            msg = 'Currently no value is expected.'
-            return msg
 
-        trade_size, num_orders = self.find_trade_size_and_number(err, available, current_price, order_type)
-
-        if (num_orders == 0):
-            msg = 'No satisfactory limit ' + order_type + 's' + ' found'
-            return msg
-
-        limit_prices = self.price_loop(order_dict[dict_type], max_future_price, min_future_price, num_orders, order_type)
-
-        if len(limit_prices) == 0:
-            msg = 'No satisfactory limit ' + order_type + 's' + ' found'
-            return msg
-
-        #This places the limit orders
-        for price in limit_prices:
-            if order_type == 'buy':
-                size_str = num2str(trade_size/price, 8)
-            else:
-                size_str = num2str(trade_size, 8)
-            price_str = num2str(price, 2)
-
-            self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str, time_in_force='GTT', cancel_after='hour', post_only=True)
-            sleep(0.4)
-            print('Placed limit ' + order_type + ' for ' + size_str + ' ' + self.prediction_ticker + ' at $' + price_str + ' per')
-
-        msg = 'Done placing ' + order_type + 's'
+        unused_msg = self.cancel_old_hodl_order(order_type, 0)
+        msg = 'Conditions not met for trade'
         return msg
 
     def print_err_msg(self, section_text, e, err_counter, current_time):
