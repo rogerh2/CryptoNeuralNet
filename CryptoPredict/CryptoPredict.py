@@ -127,7 +127,6 @@ def find_optimal_trade_strategy(offset_data, show_plots=False, min_price_jump = 
         return sell_bool, buy_bool
 
 def find_optimal_trade_strategy_stochastic(prediction, data, offset=40, prediction_length=30): #Cannot be copie pasted, this is a test
-    #TODO add shift size to prediction to determine offset for trade
     buy_array = np.zeros(len(data))
     sell_array = np.zeros(len(data))
     data_len = len(data)
@@ -182,7 +181,7 @@ def find_optimal_trade_strategy_stochastic(prediction, data, offset=40, predicti
         err = err_arr[err_ind]*fit_coeff
         fit_offset = -off_arr[err_ind]*fit_coeff
         const_diff = 2*err
-        fuzziness = int((err_ind + 10)/2) #TODO make more logical fuzziness
+        fuzziness = int((err_ind + 10)/2)
 
         if (fuzziness + ind) > data_len:
             #This ensures that the fuzziness is not too large
@@ -306,7 +305,7 @@ class OptimalTradeStrategy:
         err = err_arr[err_ind] * fit_coeff
         fit_offset = -off_arr[err_ind] * fit_coeff
         const_diff = 2 * err
-        fuzziness = int((err_ind + 10) / 2)  # TODO make more logical fuzziness
+        fuzziness = int((err_ind + 10) / 2)
 
         return err, fit_coeff, fit_offset, const_diff, fuzziness
 
@@ -372,7 +371,6 @@ class OptimalTradeStrategy:
 
     def find_optimal_trade_strategy(self, saved_inds=None, show_plots=False, fin_table=None, minute_cp=None):  # Cannot be copie pasted, this is a test
         # offset refers to how many minutes back in time can be checked for creating a fit
-        # TODO add shift size to prediction to determine offset for trade
         buy_array = self.buy_array
         sell_array = self.sell_array
         data_len = self.data_len
@@ -429,7 +427,6 @@ class OptimalTradeStrategy:
                     minute_cp.data_obj = test_data
 
                     prediction, test_output = minute_cp.test_model(did_train=False, show_plots=False)
-                    # TODO Check to make sure no access to future data!
                     self.prediction[ind::] = prediction[(ind)::, 0]
 
 
@@ -474,7 +471,6 @@ class OptimalTradeStrategy:
                 check_val = self.find_expected_value_over_many_trades(current_price, err, price_is_rising, const_diff,
                                                                       inflection_inds, fit_coeff, fuzziness, fit_offset)
                 if price_is_rising:
-                    # TODO run big test without allowing negative coefficients
                     # The formula for check val comes from integrating sell_price/buyprice - 1 over the predicted errors
                     # for both the buy and sell prices based on past errors
                     # both the sq and ln differences are needed for symmetry (else you get unbalanced buy or sells)
@@ -639,7 +635,7 @@ class CryptoCompare:
         df = self.create_data_frame(url, symbol)
         return df
 
-    def minute_price_historical(self, symbol='LTC'): #TODO this method returns one hour less than it should, reason unkown. Fix this
+    def minute_price_historical(self, symbol='LTC'):
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         limit = self.datedelta("minutes")
@@ -682,7 +678,7 @@ class CryptoCompare:
         data = page.json()['Data']
         return data
 
-    def coin_snapshot_full_by_id(self, symbol='LTC', symbol_id_dict={}):#TODO fix the thid argument mutability
+    def coin_snapshot_full_by_id(self, symbol='LTC', symbol_id_dict={}):#TODO fix the id argument mutability
 
         if not symbol_id_dict:
             symbol_id_dict = {
@@ -754,7 +750,6 @@ class DataSet:
         sym = bitinfo_list[0]
 
         if temp_fin_table is not None:
-            #TODO shorten fin table so that it starts from date_from
             self.fin_table = temp_fin_table
         else:
             if time_units == 'days':
@@ -783,7 +778,6 @@ class DataSet:
             iterations_complete = 0
 
             rate_limit_url = 'https://min-api.cryptocompare.com/stats/rate/limit'
-            #TODO check new ratelimits for timeout info
             # try:
             #     page = requests.get(rate_limit_url)
             # except:
@@ -2189,12 +2183,12 @@ if __name__ == '__main__':
         #date_from = '2018-10-01 20:00:00 EST'
         #date_to = '2018-10-02 16:00:00 EST'
         #date_to = datetime.now().strftime('%Y-%m-%d %H:%M:') + '00 EST'
-        date_from = '2018-11-13 10:20:00 EST'
-        date_to = '2018-11-14 00:00:00 EST'
+        date_from = '2018-11-11 21:00:00 EST'
+        date_to = '2018-11-18 20:00:00 EST'
         prediction_length = 30
         epochs = 5000
-        prediction_ticker = 'ETH'
-        bitinfo_list = ['eth']
+        prediction_ticker = 'LTC'
+        bitinfo_list = ['ltc']
         time_unit = 'minutes'
         activ_func = 'relu'
         isleakyrelu = True
@@ -2207,7 +2201,7 @@ if __name__ == '__main__':
         min_distance_between_trades = 5
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/Models/3_Layers/Current_Best_Model/most_recent30currency_ETH.h5'
         model_type = 'price' #Don't change this
-        use_type = 'optimize' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
+        use_type = 'test' #valid options are 'test', 'optimize', 'predict'. See run_neural_net for description
         #pickle_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-08-11_08:46:00_EST.pickle'
         pickle_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet_minutes_from_2018-06-15_10:20:00_EST_to_2018-11-15_21:06:00_EST.pickle'
         test_model_save_bool = False

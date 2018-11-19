@@ -170,7 +170,7 @@ class SpreadTradeBot:
         ind = -self.cp.prediction_length
 
         if is_buy:
-            trade_group = [4, 8, 9]
+            trade_group = [0, 4, 8, 9]
         else:
             trade_group = [1, 2, 6]
 
@@ -268,12 +268,9 @@ class SpreadTradeBot:
         else:
             return crypto_available
 
-    def get_portfolio_value(self):
-        data = self.auth_client.get_accounts()
-        sleep(0.4)
-        order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+    def get_portfolio_value(self, order_dict, data):
+
         price = float(order_dict['asks'][0][0])
-        sleep(0.4)
 
         USD_ind = [acc["currency"] == 'USD' for acc in data]
         usd_wallet = data[USD_ind.index(True)]
@@ -520,6 +517,7 @@ class SpreadTradeBot:
             return False
 
     def should_update_trade_price(self, type):
+        # TODO use second by second price
         data = self.price
         stat_dict = self.trade_info[type]
         i = -1
@@ -533,12 +531,8 @@ class SpreadTradeBot:
 
         return jump_criteria, is_current_price_out_of_bounds
 
-    def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type):
+    def place_limit_orders(self, err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict, accnt_data):
         #get min, max, and current price and order_book
-        order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
-        sleep(0.4)
-        accnt_data = self.auth_client.get_accounts()
-        sleep(0.4)
         min_future_price, max_future_price, current_price = self.find_spread_bounds(err, const_diff, fit_coeff, fuzziness, fit_offset, order_type, order_dict)
         if order_type == 'buy':
             cancel_type = 'sell'
@@ -593,26 +587,25 @@ class SpreadTradeBot:
 
         if True:
             jump_bool, bound_bool = self.should_update_trade_price(order_type)
-            last_trade_price = self.trade_info[cancel_type]
+            last_trade_price = self.trade_info[cancel_type]['price']
+            #TODO use second by second price
             spread = np.std(self.price[-30::])/np.mean(self.price[-30::]) + 0.05
             spread_bool = (sign * price < (sign - spread) * last_trade_price)
 
             # elif sign*price > (sign*last_trade_price + 0.001*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
-            if jump_bool and (order_type == 'buy'):
-                #Trade if the price is moving favorably since the last trade
+            if jump_bool and (order_type == 'buy') and (min_future_price is not None):
+                # It's ok to buy when the price moves in the right direction
                 hodl = True
                 trade_reason = 'predicted_return'
 
             elif jump_bool and (bound_bool or spread_bool):
+                # Wait until value is created or the situation has changed to sell
                 hodl = True
                 trade_reason = 'predicted_return'
 
             if min_future_price is None:
-                if order_type == 'buy':
-                    return 'conditions not met for Trade'
-
                 trade_reason = 'guess'
 
         price = self.determine_trade_price(order_type, order_dict)
@@ -645,6 +638,7 @@ class SpreadTradeBot:
                 return msg
             self.trade_ids[order_type] = order['id']
             self.trade_info[order_type]['price'] = price
+            # TODO use second by second price
             self.trade_info[order_type]['mean'] = np.mean(self.price[-30::])
             self.trade_info[order_type]['std'] = np.std(self.price[-30::])
 
@@ -684,9 +678,12 @@ class SpreadTradeBot:
         last_check = 0
         last_scrape = 0
         last_training_time = current_time
-        last_order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
-        starting_price = round(float(last_order_dict['asks'][0][0]), 2)
-        price, portfolio_value = self.get_portfolio_value()
+        order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+        sleep(0.4)
+        accnt_data = self.auth_client.get_accounts()
+        sleep(0.4)
+        starting_price = round(float(order_dict['asks'][0][0]), 2)
+        price, portfolio_value = self.get_portfolio_value(order_dict, accnt_data)
         self.initial_price = price
         self.initial_value = portfolio_value
 
@@ -704,14 +701,20 @@ class SpreadTradeBot:
         portfolio_returns = 0
         market_returns = 0
 
-        while 10.5 < portfolio_value:
+        while 15.15 < portfolio_value:
             if (current_time > (last_check + check_period)) & (current_time < (last_training_time + 2 * 3600)):
+
+                order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+                sleep(0.4)
+                accnt_data = self.auth_client.get_accounts()
+                sleep(0.4)
+
                 # Scrape price from cryptocompae
                 try:
                     err_counter = 0
                     last_check = current_time
                     if (current_time > (last_scrape + 65)):
-                        price, portfolio_value = self.get_portfolio_value()
+                        price, portfolio_value = self.get_portfolio_value(order_dict, accnt_data)
                         self.spread_bot_predict()
                         last_scrape = current_time
                         #self.order_status = 'active' #This forces the order to be reset as a stop order after 1 minute passes
@@ -739,8 +742,10 @@ class SpreadTradeBot:
                 try:
                     err_counter = 0
                     err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
-                    buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy')
-                    sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell')
+                    buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', order_dict, accnt_data)
+                    sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell', order_dict, accnt_data)
+                    buy_msg = buy_msg.title()
+                    sell_msg = sell_msg.title()
                     current_datetime = current_est_time()
                     prez_fmt = '%Y-%m-%d %H:%M'
                     if buy_msg != last_buy_msg:

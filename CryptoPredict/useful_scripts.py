@@ -3,7 +3,7 @@ from datetime import datetime
 import numpy as np
 
 
-def create_new_dataset():
+def update_old_dataset():
     date_to = datetime.now().strftime('%Y-%m-%d %H:%M:') + '00 EST'
     pickle_path = input('Enter path to old data here: ')
     increase_saved_dataset_length(pickle_path, date_to)
