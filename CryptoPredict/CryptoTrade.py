@@ -516,16 +516,25 @@ class SpreadTradeBot:
         else:
             return False
 
-    def should_update_trade_price(self, type):
+    def scrape_granular_price(self):
+        trade_prices = list(self.auth_client.get_product_trades(self.product_id))
+        stored_trade_prices = np.array([])
+
+    def should_update_trade_price(self, type, sign):
         # TODO use second by second price
         data = self.price
         stat_dict = self.trade_info[type]
         i = -1
-        data_diff = np.abs(data[i] - data[i - 1])
-        older_data_diff = np.abs(data[i - 1] - data[i - 3])
+        del_data = sign*np.diff(data[-30::])
 
-        jump_criteria = (older_data_diff > 2 * np.std(data[(30)::])) and (
-            data_diff < 0.5 * np.std(data[(-30)::]))
+        jump_ind = np.argmax(del_data)
+
+        if (jump_ind < (len(del_data) - 1)):
+            data_after_jump = del_data[jump_ind::]
+            jump_criteria = (np.argmax(del_data) > (np.std(del_data) + np.mean(del_data))) & (
+            np.sum(data_after_jump) < 0)
+        else:
+            jump_criteria = False
 
         is_current_price_out_of_bounds = abs(stat_dict['mean'] - np.mean(data[(30)::])) > (stat_dict['std'] + np.std(data[(30)::]))
 
@@ -586,26 +595,25 @@ class SpreadTradeBot:
 
 
         if True:
-            jump_bool, bound_bool = self.should_update_trade_price(order_type)
+            jump_bool, bound_bool = self.should_update_trade_price(order_type, -sign)
             last_trade_price = self.trade_info[cancel_type]['price']
             #TODO use second by second price
-            spread = np.std(self.price[-30::])/np.mean(self.price[-30::]) + 0.05
+            spread = np.std(self.price[-30::])/np.mean(self.price[-30::])
+            if spread == 0:
+                spread = 0.001
             spread_bool = (sign * price < (sign - spread) * last_trade_price)
 
             # elif sign*price > (sign*last_trade_price + 0.001*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
-            if jump_bool and (order_type == 'buy') and (min_future_price is not None):
+            if jump_bool and (min_future_price is not None):
                 # It's ok to buy when the price moves in the right direction
                 hodl = True
-                trade_reason = 'predicted_return'
+                trade_reason = 'predicted return'
 
-            elif jump_bool and (bound_bool or spread_bool):
+            elif (bound_bool or spread_bool) and (order_type != 'buy'):
                 # Wait until value is created or the situation has changed to sell
                 hodl = True
-                trade_reason = 'predicted_return'
-
-            if min_future_price is None:
                 trade_reason = 'guess'
 
         price = self.determine_trade_price(order_type, order_dict)
@@ -704,13 +712,12 @@ class SpreadTradeBot:
         while 15.15 < portfolio_value:
             if (current_time > (last_check + check_period)) & (current_time < (last_training_time + 2 * 3600)):
 
-                order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
-                sleep(0.4)
-                accnt_data = self.auth_client.get_accounts()
-                sleep(0.4)
-
                 # Scrape price from cryptocompae
                 try:
+                    order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
+                    sleep(0.4)
+                    accnt_data = self.auth_client.get_accounts()
+                    sleep(0.4)
                     err_counter = 0
                     last_check = current_time
                     if (current_time > (last_scrape + 65)):
