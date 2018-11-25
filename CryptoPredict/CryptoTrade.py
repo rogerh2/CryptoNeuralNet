@@ -42,11 +42,14 @@ def current_est_time():
 
 class SpreadTradeBot:
     min_usd_balance = 100.00  # Make sure the bot does not trade away all my money
+    price_lim = 0
     offset = 40
     usd_id = None
     crypto_id = None
+    granular_price = None
     initial_price = 1
     initial_value = 1
+    max_jump_ind = 7
     trade_ids = {'buy':'', 'sell':''}
     trade_info = {'buy':{'price':0, 'mean':0, 'std':0}, 'sell':{'price':1000000000, 'mean':0, 'std':0}}
     trade_logic = {'buy': True, 'sell': True}
@@ -170,7 +173,7 @@ class SpreadTradeBot:
         ind = -self.cp.prediction_length
 
         if is_buy:
-            trade_group = [0, 4, 8, 9]
+            trade_group = [4, 8, 9]
         else:
             trade_group = [1, 2, 6]
 
@@ -427,6 +430,7 @@ class SpreadTradeBot:
         if self.trade_ids[order_type] != '':
             hodl_id = self.trade_ids[order_type]
             hodl_order = self.auth_client.get_order(hodl_id)
+            sleep(0.4)
 
             if not ('status' in hodl_order.keys()):
                 msg = 'Error caught: status not found in order dict'
@@ -444,7 +448,7 @@ class SpreadTradeBot:
             elif force_stop_limit_order:
                 # This cancels a limit order so it can become a stop limit order
                 if (current_status != 'active') & (current_status != 'done'):
-                    msg = 'changing limit order to stop limit order'
+                    msg = '\nchanging limit order to stop limit order'
                     print(msg)
                     price = 0
 
@@ -452,12 +456,17 @@ class SpreadTradeBot:
                 self.timer[order_type] = 1
                 self.should_reset_timer[order_type] = False
 
+            # gran price should keep the bot from cancelling a partially filled order due to price movements
+            if self.granular_price is not None:
+                gran_price = self.granular_price[-1]
+            else:
+                gran_price = 0
 
-            if (hodl_order['status'] != 'done') & (np.abs(self.trade_info[order_type]['price'] - price) > price_lim):
+            if (hodl_order['status'] != 'done') & (np.abs(self.trade_info[order_type]['price'] - price) > price_lim) & (np.abs(self.trade_info[order_type]['price'] - gran_price) > 0.01):
                 self.auth_client.cancel_order(hodl_id)
                 self.trade_ids[order_type] = ''
                 self.order_status = hodl_order['status']
-                msg = 'just cancelled an ' + hodl_order['status'] + ' order'
+                msg = '\njust cancelled an ' + hodl_order['status'] + ' order'
                 print(msg)
                 return msg
 
@@ -504,39 +513,95 @@ class SpreadTradeBot:
     def detect_trade_pressure(self, order_book, opposing_type, order_type):
         # This looks at the buying and selling pressure to detemrine wether to place a stop limit order vs a regular
         # limit order
-        n = 4
+        n = 5
         order_dict = order_book[order_type]
         opposing_dict = order_book[opposing_type]
 
         order_sum = self.find_order_size_sums(order_dict, n)
         opposing_sum = self.find_order_size_sums(opposing_dict, n)
 
-        if order_sum > 1.25*opposing_sum:
+        if order_sum > 0.75*opposing_sum:
             return True
         else:
             return False
 
     def scrape_granular_price(self):
+        #This creates a second by second price from all trades
         trade_prices = list(self.auth_client.get_product_trades(self.product_id))
+        sleep(0.4)
         stored_trade_prices = np.array([])
+        current_ts = int(datetime.utcnow().strftime('%s'))
+        iso_fmt = '%Y-%m-%dT%H:%M:%S.%fZ'
+        last_order_type = 'begin'
+        time_since_last_trade = np.min(np.array([self.timer['buy'], self.timer['sell']]))
+        if time_since_last_trade > 10:
+            time_since_last_trade = 0
+        did_not_set_max_jump_ind = True
+        num_minutes = 5 + time_since_last_trade
+
+        for i in range(0, len(trade_prices)):
+
+            trade = trade_prices[i]
+            if type(trade) is not dict:
+                # This ensures that the string 'message' at the end of the returned array does not cause an error
+                continue
+
+            date_str = trade['time']
+
+            if '.' not in date_str:
+                date_str = date_str[0:-1] + '.000Z'
+
+            trade_ts = int(datetime.strptime( date_str, iso_fmt).strftime('%s'))
+            time_since_trade = current_ts - trade_ts
+
+            if time_since_trade > num_minutes*60:
+                # Only look at the past five minutes
+                break
+
+            if (time_since_trade > 60*time_since_last_trade) & (did_not_set_max_jump_ind):
+                self.max_jump_ind = i
+                did_not_set_max_jump_ind = False
+
+            order_type = trade['side']
+
+
+            if order_type != last_order_type:
+                # Only direction reversals are stored
+                rounded_price = round(float(trade['price']), 2)
+                stored_trade_prices = np.insert(stored_trade_prices, 0, rounded_price)
+                last_order_type = order_type
+
+
+        if (self.max_jump_ind < 7) or (did_not_set_max_jump_ind) or (self.max_jump_ind > (len(stored_trade_prices) - 9)):
+            self.max_jump_ind = 7
+
+        if len(stored_trade_prices) > 2*num_minutes:
+            # Only use the granular price if reversals are happening on a time scale that is < 1min
+            self.granular_price = stored_trade_prices
+        else:
+            self.granular_price = None
 
     def should_update_trade_price(self, type, sign):
-        # TODO use second by second price
-        data = self.price
-        stat_dict = self.trade_info[type]
-        i = -1
-        del_data = sign*np.diff(data[-30::])
 
-        jump_ind = np.argmax(del_data)
-
-        if (jump_ind < (len(del_data) - 1)):
-            data_after_jump = del_data[jump_ind::]
-            jump_criteria = (np.argmax(del_data) > (np.std(del_data) + np.mean(del_data))) & (
-            np.sum(data_after_jump) < 0)
+        # The if/else statement below decides whether to trade on the scale of seconds or minutes
+        if self.granular_price is not None:
+            data = self.granular_price
+            max_jump_del = self.max_jump_ind
         else:
-            jump_criteria = False
+            data = self.price[-30::]
+            max_jump_del = 5
 
-        is_current_price_out_of_bounds = abs(stat_dict['mean'] - np.mean(data[(30)::])) > (stat_dict['std'] + np.std(data[(30)::]))
+        stat_dict = self.trade_info[type]
+        del_data = sign*np.diff(data)
+        del_data_mean_half_std = np.mean(del_data) - 0.5*np.std(del_data)
+        del_data_mean_std = np.std(del_data) + np.mean(del_data)
+
+        jump_is_greater_than_std_jump = np.max(del_data[-max_jump_del:-2]) > del_data_mean_std*(del_data_mean_std > 0)
+        jump_is_outside_price_variance = np.max(del_data[-max_jump_del:-2]) > np.std(data)
+        current_mvt_is_rebound = np.mean(del_data[-2::]) < del_data_mean_half_std*(del_data_mean_half_std < 0)
+
+        jump_criteria = jump_is_greater_than_std_jump & current_mvt_is_rebound & jump_is_outside_price_variance
+        is_current_price_out_of_bounds = abs(stat_dict['mean'] - np.mean(self.price[-30::])) > (stat_dict['std'] + np.std(self.price[-30::]))
 
         return jump_criteria, is_current_price_out_of_bounds
 
@@ -554,7 +619,7 @@ class SpreadTradeBot:
 
         if (not is_predicted_return) and (self.trade_logic[cancel_type]):
             self.trade_logic[order_type] = False
-            msg = 'Conditions not met for trade'
+            msg = ''
             if self.trade_ids[order_type] != '':
                 unused_msg = self.cancel_old_hodl_order(order_type, 0)
 
@@ -569,7 +634,15 @@ class SpreadTradeBot:
 
         trade_reason = 'predicted return'
 
+        if is_predicted_return:
+            current_state = 'predicted return '
+        else:
+            current_state = 'No predicted return '
+
         self.trade_logic[order_type] = True #this ensures that the last trade type predicted to be profitable is the one currently used
+        cancel_type_balance = self.get_full_wallet_contents(cancel_type, accnt_data)
+        order_type_balance = self.get_full_wallet_contents(cancel_type, accnt_data)
+        balance = cancel_type_balance + order_type_balance
 
         #This determines whether to buy or sell
         if order_type == 'buy':
@@ -597,24 +670,30 @@ class SpreadTradeBot:
         if True:
             jump_bool, bound_bool = self.should_update_trade_price(order_type, -sign)
             last_trade_price = self.trade_info[cancel_type]['price']
-            #TODO use second by second price
             spread = np.std(self.price[-30::])/np.mean(self.price[-30::])
+
             if spread == 0:
                 spread = 0.001
+            num_spread_trades = 3
+
             spread_bool = (sign * price < (sign - spread) * last_trade_price)
 
             # elif sign*price > (sign*last_trade_price + 0.001*last_trade_price):
             #     #Trade if the price has moved so much that a new stable are has probably been reached
             #     hodl = True
             if jump_bool and (min_future_price is not None):
-                # It's ok to buy when the price moves in the right direction
+                # Buy when the price moves in a favorable direction
                 hodl = True
                 trade_reason = 'predicted return'
+                current_state += 'jump detected'
 
-            elif (bound_bool or spread_bool) and (order_type != 'buy'):
+            elif ((bound_bool or spread_bool) or (jump_bool and (price > last_trade_price))) and (order_type == 'sell'):
                 # Wait until value is created or the situation has changed to sell
                 hodl = True
                 trade_reason = 'guess'
+                # if available > (balance/num_spread_trades + trade_size_lim):
+                #     available = balance/num_spread_trades
+                current_state += 'spread detected'
 
         price = self.determine_trade_price(order_type, order_dict)
 
@@ -627,6 +706,12 @@ class SpreadTradeBot:
                 price_str = num2str(price, 2)
                 if available < trade_size_lim:
                     msg = 'insufficient funds'
+                    # if (order_type == 'buy') and (price > self.trade_info[order_type]['price']):
+                    #     #This updates the price for calculating the spread
+                    #     self.trade_info[order_type]['price'] = price
+                    #     self.trade_info[order_type]['mean'] = np.mean(self.price[-30::])
+                    #     self.trade_info[order_type]['std'] = np.std(self.price[-30::])
+                    #     msg = 'Updating buy price for spread to $' + price_str
                     return msg
                 order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str,
                                                    time_in_force='GTT', cancel_after='hour', post_only=True)
@@ -656,7 +741,7 @@ class SpreadTradeBot:
 
 
         unused_msg = self.cancel_old_hodl_order(order_type, 0)
-        msg = 'Conditions not met for trade'
+        msg = current_state
         return msg
 
     def print_err_msg(self, section_text, e, err_counter, current_time):
@@ -685,7 +770,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time
+        last_training_time = current_time - 60*60
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         sleep(0.4)
         accnt_data = self.auth_client.get_accounts()
@@ -695,7 +780,7 @@ class SpreadTradeBot:
         self.initial_price = price
         self.initial_value = portfolio_value
 
-        # This message is shown at the beginning for juding the bot's performance down the line
+        # This message is shown at the beginning
         print('Begin trading at ' + datetime.strftime(datetime.now(), '%m-%d-%Y %H:%M')
               + ' with current price of $' + str(
             starting_price) + ' per ' + self.prediction_ticker + 'and a portfolio worth $' + num2str(portfolio_value, 2))
@@ -709,7 +794,7 @@ class SpreadTradeBot:
         portfolio_returns = 0
         market_returns = 0
 
-        while 15.15 < portfolio_value:
+        while 13.15 < portfolio_value:
             if (current_time > (last_check + check_period)) & (current_time < (last_training_time + 2 * 3600)):
 
                 # Scrape price from cryptocompae
@@ -718,6 +803,7 @@ class SpreadTradeBot:
                     sleep(0.4)
                     accnt_data = self.auth_client.get_accounts()
                     sleep(0.4)
+                    self.scrape_granular_price()
                     err_counter = 0
                     last_check = current_time
                     if (current_time > (last_scrape + 65)):
@@ -751,17 +837,18 @@ class SpreadTradeBot:
                     err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
                     buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', order_dict, accnt_data)
                     sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell', order_dict, accnt_data)
-                    buy_msg = buy_msg.title()
-                    sell_msg = sell_msg.title()
                     current_datetime = current_est_time()
-                    prez_fmt = '%Y-%m-%d %H:%M'
-                    if buy_msg != last_buy_msg:
-                        print('Current time is ' + current_datetime.strftime(prez_fmt) + ' EST')
+                    prez_fmt = '%Y-%m-%d %H:%M:%S'
+                    sell_msg = sell_msg.title()
+                    buy_msg = buy_msg.title()
+
+                    if (buy_msg != last_buy_msg) and (buy_msg != ''):
+                        print('\nCurrent time is ' + current_datetime.strftime(prez_fmt) + ' EST')
                         print('Buy message: ' + buy_msg)
                         last_buy_msg = buy_msg
 
-                    if sell_msg != last_sell_msg:
-                        print('Current time is ' + current_datetime.strftime(prez_fmt) + ' EST')
+                    if (sell_msg != last_sell_msg) and (sell_msg != ''):
+                        print('\nCurrent time is ' + current_datetime.strftime(prez_fmt) + ' EST')
                         print('Sell message: ' + sell_msg)
                         last_sell_msg = sell_msg
 
