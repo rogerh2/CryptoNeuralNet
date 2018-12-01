@@ -379,25 +379,6 @@ class SpreadTradeBot:
 
         return  spread_prices
 
-    def cancel_out_of_bounds_orders(self, upper_limit_price, lower_limit_price, order_type):
-        order_generator = self.auth_client.get_orders(self.product_id)
-        sleep(0.4)
-        order_list = list(order_generator)
-
-        if upper_limit_price is None:
-            upper_limit_price = -1.1
-            lower_limit_price = 100000.1
-
-        if len(order_list) > 0:
-            for i in range(0, len(order_list)):
-                order = order_list[i]
-                if (order["side"] == order_type) & ((float(order["price"]) > upper_limit_price) or (float(order["price"]) < lower_limit_price)):
-                    order_id = order["id"]
-                    # if order_id == self.trade_ids[order_type]:
-                    #     continue
-                    self.auth_client.cancel_order(order_id)
-                    sleep(0.4)
-
     def find_trade_size_and_number(self, err, available, current_price, side):
         # This method finds the limit size to choose as well as the number of orders, it tries to keep orders to under
         # $5000  (hopefully this will be a problem soon!) and at least 4 cent spacing between orders
@@ -442,51 +423,77 @@ class SpreadTradeBot:
 
         return trade_size, num_orders
 
-    def cancel_old_hodl_order(self, order_type, price, force_limit_order = False, force_stop_limit_order = False, price_lim=0.0):
-        hodl_order = None
-        if self.trade_ids[order_type] != '':
-            hodl_id = self.trade_ids[order_type]
-            hodl_order = self.auth_client.get_order(hodl_id)
-            sleep(0.4)
+    def cancel_old_hodl_order(self, order_type, limit_order_price, stop_order_price, force_limit_order = False, force_stop_limit_order = False, price_lim=0.0):
+        order_generator = self.auth_client.get_orders(self.product_id)
+        sleep(0.4)
+        order_list = list(order_generator)
+        new_funds_available = 0
+        #Ensures no paradoxical cunondrums by forcing a stop limit and a limit order
+        if force_stop_limit_order and force_limit_order:
+            force_stop_limit_order = False
+            force_limit_order = False
 
-            if not ('status' in hodl_order.keys()):
-                msg = 'Error caught: status not found in order dict'
-                return msg
+        for order in order_list:
+            #cancel limit orders
+            freed_funds = self.cancel_individual_order(order_type, limit_order_price, 'open', order, force_limit_order, force_stop_limit_order, price_lim)
+            if freed_funds is None:
+                # cancel stop limit orders
+                freed_funds = self.cancel_individual_order(order_type, stop_order_price, 'active', order,
+                                                          force_limit_order, force_stop_limit_order, price_lim)
 
-            current_status = hodl_order['status']
+            if freed_funds is not None:
+                new_funds_available += freed_funds
 
-            if force_limit_order:
-                # This cancels a stop limit order so it can become a limit order
-                if (current_status != 'open') & (current_status != 'done'):
-                    msg = 'changing stop limit order to limit order'
-                    print(msg)
-                    price = 0
+        return new_funds_available
 
-            elif force_stop_limit_order:
-                # This cancels a limit order so it can become a stop limit order
-                if (current_status != 'active') & (current_status != 'done'):
-                    msg = '\nchanging limit order to stop limit order'
-                    print(msg)
-                    price = 0
+    def cancel_individual_order(self, order_type, price, desired_status, hodl_order, force_limit_order, force_stop_limit_order, price_lim):
 
-            if (current_status == 'done') & self.should_reset_timer[order_type]:
-                self.timer[order_type] = 1
-                self.should_reset_timer[order_type] = False
-
-        if (np.abs(self.trade_info[order_type]['price'] - price) > price_lim):
-            #TODO make this work with multiple orders without cancel ally
-            #self.auth_client.cancel_order(hodl_id)
-            self.auth_client.cancel_all(product_id=self.product_id)
-            self.trade_ids[order_type] = ''
-            if hodl_order is not None:
-                self.order_status = hodl_order['status']
-                msg = '\njust cancelled an ' + hodl_order['status'] + ' order'
-                print(msg)
-            else:
-                msg = ''
+        #Some checks to avoid errors
+        if type(hodl_order) != dict:
+            msg = None
             return msg
 
-        msg = 'waiting on outstanding orders'
+        if not ('status' in hodl_order.keys()):
+            msg = None
+            return msg
+
+        #Some checks and messages to inform user
+        current_status = hodl_order['status']
+
+        if force_limit_order:
+            # This cancels a stop limit order so it can become a limit order
+            if (current_status != 'open') & (current_status != 'done'):
+                msg = 'changing stop limit order to limit order'
+                print(msg)
+                price = 0
+
+        elif force_stop_limit_order:
+            # This cancels a limit order so it can become a stop limit order
+            if (current_status != 'active') & (current_status != 'done'):
+                msg = '\nchanging limit order to stop limit order'
+                print(msg)
+                price = 0
+
+        if (current_status == 'done') & self.should_reset_timer[order_type]:
+            self.timer[order_type] = 1
+            self.should_reset_timer[order_type] = False
+
+        # desired_status allows it to use the price that is relevant to that order
+        if (np.abs(self.trade_info[order_type]['price'] - price) > price_lim) and (desired_status == current_status):
+            #TODO make this work with multiple orders without cancel ally
+            #self.auth_client.cancel_order(hodl_id)
+            self.auth_client.cancel_order(order_id=hodl_order['id'])
+            self.trade_ids[order_type] = ''
+
+            self.order_status = hodl_order['status']
+            msg = '\njust cancelled an ' + hodl_order['status'] + ' order'
+            print(msg)
+
+            remaining_size = float(hodl_order['size']) - float(hodl_order['filled_size'])
+
+            return remaining_size
+
+        msg = None
 
         return msg
 
@@ -650,7 +657,7 @@ class SpreadTradeBot:
             self.trade_logic[order_type] = False
             msg = ''
             if self.trade_ids[order_type] != '':
-                unused_msg = self.cancel_old_hodl_order(order_type, 0)
+                unused_msg = self.cancel_old_hodl_order(order_type, 0, 0)
 
             cancel_type_balance = self.get_full_wallet_contents(cancel_type, accnt_data)
 
@@ -726,14 +733,15 @@ class SpreadTradeBot:
 
 
         price = self.determine_trade_price(order_type, order_dict)
+        stop_order_price = self.determine_trade_price(order_type, order_dict, is_stop=True)
 
         # -- place trade --
         if hodl:
-            size_str = num2str(available, 8)
             is_favorable_pressure = self.detect_trade_pressure(order_dict, opposite_dict_type, dict_type)
 
             if (self.order_status == 'open' and is_predicted_return) or (is_favorable_pressure):
-                unused_msg = self.cancel_old_hodl_order(order_type, price, force_limit_order=True)
+                freed_available = self.cancel_old_hodl_order(order_type, price, stop_order_price, force_limit_order=True)
+                available += freed_available
                 price_str = num2str(price, 2)
                 if available < trade_size_lim:
                     msg = 'insufficient funds - ' + trade_reason
@@ -744,17 +752,19 @@ class SpreadTradeBot:
                     #     self.trade_info[order_type]['std'] = np.std(self.price[-30::])
                     #     msg = 'Updating buy price for spread to $' + price_str
                     return msg
+                size_str = num2str(available, 8)
                 order = self.auth_client.place_limit_order(self.product_id, order_type, price_str, size_str,
                                                    time_in_force='GTT', cancel_after='hour', post_only=True)
                 order_kind = 'limit'
             else:
-                price = self.determine_trade_price(order_type, order_dict, is_stop=True)
                 stop_price_str = num2str(price + sign * 0.01, 2)
-                price_str = num2str(price, 2)
-                unused_msg = self.cancel_old_hodl_order(order_type, price)
+                price_str = num2str(stop_order_price, 2)
+                freed_available = self.cancel_old_hodl_order(order_type, price, stop_order_price, force_stop_limit_order=True)
+                available += freed_available
                 if available < trade_size_lim:
                     msg = 'insufficient funds - ' + trade_reason
                     return msg
+                size_str = num2str(available, 8)
                 order = self.auth_client.place_order(product_id=self.product_id, side=order_type, price=price_str, size=size_str, stop=stop_type, stop_price=stop_price_str, order_type='limit')
                 order_kind = 'stop limit'
             if not ('id' in order.keys()):
@@ -771,7 +781,7 @@ class SpreadTradeBot:
             return msg
 
 
-        unused_msg = self.cancel_old_hodl_order(order_type, 0)
+        #unused_msg = self.cancel_old_hodl_order(order_type, 0, 0)
         msg = current_state
         return msg
 
@@ -801,7 +811,7 @@ class SpreadTradeBot:
         current_time = datetime.now().timestamp()
         last_check = 0
         last_scrape = 0
-        last_training_time = current_time - 10*60
+        last_training_time = current_time #- 10*60
         order_dict = self.auth_client.get_product_order_book(self.product_id, level=2)
         sleep(0.4)
         accnt_data = self.auth_client.get_accounts()
@@ -888,10 +898,10 @@ class SpreadTradeBot:
                     else:
                         check_period = 60
                         if self.trade_ids['buy'] != '':
-                            unused_msg = self.cancel_old_hodl_order('buy', 0)
+                            unused_msg = self.cancel_old_hodl_order('buy', 0, 0)
 
                         if self.trade_ids['sell'] != '':
-                            unused_msg = self.cancel_old_hodl_order('sell', 0)
+                            unused_msg = self.cancel_old_hodl_order('sell', 0, 0)
                 except Exception as e:
                     last_check, err_counter = self.print_err_msg('trade', e, err_counter, current_time)
 
