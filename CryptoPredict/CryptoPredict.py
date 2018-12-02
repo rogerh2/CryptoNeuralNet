@@ -30,8 +30,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 
 
-
-
 def convert_time_to_uct(naive_date_from):
     current_tz = get_current_tz()
     sys_tz = pytz.timezone(current_tz)
