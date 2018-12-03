@@ -3,19 +3,17 @@ from CryptoBot.CryptoForecast import DataScraper
 from CryptoBot.CryptoBot_Shared_Functions import convert_time_to_uct
 from datetime import datetime
 from datetime import timedelta
-import pickle
-import numpy as np
 
 
 class DataScraperTestCase(unittest.TestCase):
 
     def setUp(self):
         self.fmt = '%Y-%m-%d %H:%M:%S'
-        self.ds = DataScraper("2018-05-15 09:00:00", date_to="2018-05-16 09:00:00", exchange='Coinbase')
+        self.test_obj = DataScraper("2018-05-15 09:00:00", date_to="2018-05-16 09:00:00", exchange='Coinbase')
 
     def test_can_scrape_hourly_coinbase_prices(self):
         ref_ts = convert_time_to_uct(datetime.strptime("2018-05-16 09:00:00", self.fmt)).timestamp()
-        df = self.ds.hourly_price_historical(symbol='ETH')
+        df = self.test_obj.get_historical_price(symbol='ETH', unit='hr')
 
         # Ensure the correct number of checks are returned
         self.assertEqual(len(df.index), 25)
@@ -31,7 +29,7 @@ class DataScraperTestCase(unittest.TestCase):
         date_from = (datetime.now() - timedelta(minutes=2999)).strftime('%Y-%m-%d %H:%M:') + '00'
         ref_ts = convert_time_to_uct(datetime.strptime(date_to, self.fmt)).timestamp()
         ds = DataScraper(date_from=date_from, date_to=date_to, exchange='Coinbase')
-        df = ds.minute_price_historical(symbol='ETH')
+        df = ds.get_historical_price(symbol='ETH', unit='min')
 
         # Ensure the correct number of checks are returned, the asserted number must be off by 2 presumably because 1 extra trailing minute is added after every 2000
         self.assertEqual(len(df.index), 3001)
@@ -46,7 +44,7 @@ class DataScraperTestCase(unittest.TestCase):
         ref_date_from = "2018-11-30 07:01:00"
         ds = DataScraper(date_from=ref_date_from, date_to="2018-12-01 23:00:00", exchange='Coinbase')
         ds_date_from_ts = convert_time_to_uct(datetime.strptime(ref_date_from, self.fmt), tz_str='America/New_York').timestamp()
-        a = ds.iteratively_scrape_news(['ETH'])
+        a = ds.iteratively_scrape_news(['ETH', 'BTC'])
 
         self.assertGreater(a[0]['published_on'], ds_date_from_ts)
 

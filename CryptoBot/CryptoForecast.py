@@ -32,13 +32,10 @@ from CryptoBot.CryptoBot_Shared_Functions import get_current_tz
 class DataScraper:
 
     comparison_symbols = ['USD']
-    exchange = ''
+    exchange = 'Coinbase'
     aggregate = 1
 
-    def __init__(self, date_from, date_to=None, comparison_symbols=None, exchange=None, current_tz=None):
-
-        if comparison_symbols:
-            self.comparison_symbols = comparison_symbols
+    def __init__(self, date_from, date_to=None, exchange=None, current_tz=None):
 
         if exchange:
             self.exchange = exchange
@@ -72,7 +69,7 @@ class DataScraper:
 
         return del_date
 
-    def price(self, symbol='LTC'):
+    def price(self, symbol):
         comparison_symbols = self.comparison_symbols
         exchange = self.exchange
 
@@ -89,7 +86,7 @@ class DataScraper:
         data = page.json()
         return data
 
-    def create_data_frame(self, url, symbol='LTC', return_time_stamp=False):
+    def create_data_frame(self, url, symbol, return_time_stamp=False):
         try:
             page = requests.get(url)
             data = page.json()['Data']
@@ -112,7 +109,7 @@ class DataScraper:
         df = df.drop(columns=[symbol + '_time']) #Drop this because the unix timestamp column is no longer needed
         return df
 
-    def daily_price_historical(self, symbol='LTC', all_data=True, limit=1):
+    def daily_price_historical(self, symbol, all_data=True, limit=1):
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         if self.date_from:
@@ -133,7 +130,7 @@ class DataScraper:
         df = self.create_data_frame(url, symbol)
         return df
 
-    def hourly_price_historical(self, symbol = 'LTC'):
+    def hourly_price_historical(self, symbol):
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         limit = self.datedelta("hours")
@@ -150,7 +147,7 @@ class DataScraper:
         df = self.create_data_frame(url, symbol)
         return df
 
-    def minute_price_historical(self, symbol='LTC'):
+    def minute_price_historical(self, symbol):
         comparison_symbol = self.comparison_symbols[0]
         exchange = self.exchange
         limit = self.datedelta("minutes")
@@ -187,13 +184,26 @@ class DataScraper:
         df = self.create_data_frame(url, symbol)
         return df
 
+    def get_historical_price(self, symbol, unit='min'):
+
+        if unit == 'min':
+            data = self.minute_price_historical(symbol)
+        elif unit == 'hr':
+            data = self.hourly_price_historical(symbol)
+        elif unit == 'day':
+            data = self.daily_price_historical(symbol)
+        else:
+            raise ValueError('unit must be in [''min'', ''hr'', ''day'']')
+
+        return data
+
     def coin_list(self):
         url = 'https://www.cryptocompare.com/api/data/coinlist/'
         page = requests.get(url)
         data = page.json()['Data']
         return data
 
-    def coin_snapshot_full_by_id(self, symbol='LTC', symbol_id_dict={}):#TODO fix the id argument mutability
+    def coin_snapshot_full_by_id(self, symbol, symbol_id_dict={}):#TODO fix the id argument mutability
 
         if not symbol_id_dict:
             symbol_id_dict = {
@@ -228,7 +238,7 @@ class DataScraper:
         data = page.json()['Data']
         return data
 
-    def news(self, symbols, categories='BTC,Regulation,Altcoin,Blockchain,Mining,Trading,Market', date_before_ts=None):
+    def news(self, symbols, categories='Regulation,Altcoin,Blockchain,Mining,Trading,Market', date_before_ts=None):
         fmt = '%Y-%m-%d %H:%M:%S %Z'
         if len(symbols) > 1:
             symbols_str = ','.join(symbols)
@@ -250,7 +260,7 @@ class DataScraper:
             data = page.json()['Data']
         return data
 
-    def iteratively_scrape_news(self, symbols, categories='BTC,Regulation,Altcoin,Blockchain,Mining,Trading,Market'):
+    def iteratively_scrape_news(self, symbols, categories='Regulation,Altcoin,Blockchain,Mining,Trading,Market'):
         to_ts = self.date_to.timestamp()
         from_ts = self.date_from.timestamp()
         data = self.news(symbols, categories, to_ts)
@@ -279,5 +289,40 @@ class DataScraper:
         data = data[news_len_cutoff::]
         return data
 
+class FormattedData:
 
+    raw_data = None
+
+    def __init__(self, date_from, date_to, ticker, sym_list=None, time_units='min', news_hourly_offset=5):
+        if sym_list is None:
+            sym_list = ['BTC', 'LTC']
+
+        sym_list.insert(0, ticker)
+
+        self.sym_list = sym_list
+        self.ticker = ticker
+        self.date_from = date_from
+        self.date_to = date_to
+        self.time_units = time_units
+
+    def scrape_data(self, date_to=None):
+        # If a value for date_to is entered then the object will attempt to create new data to add to an existing dataset
+        if date_to:
+            date_from = self.date_to
+            self.date_to = date_to
+        else:
+            date_from = self.date_from
+            date_to = self.date_to
+
+        scraper = DataScraper(date_from=date_from, date_to=date_to)
+
+        for sym in self.sym_list:
+
+             current_scrape = scraper.get_historical_price(symbol=sym, unit=self.time_units)
+             if self.raw_data is None:
+                 self.raw_data = current_scrape
+
+             else:
+                 current_scrape = current_scrape.drop(['date'], axis=1)
+                 self.raw_data = pd.concat([self.raw_data, current_scrape], axis=1, join_axes=[self.raw_data.index])
 
