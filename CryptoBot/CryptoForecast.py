@@ -27,7 +27,7 @@ from sklearn.preprocessing import StandardScaler
 import smtplib
 from CryptoBot.CryptoBot_Shared_Functions import convert_time_to_uct
 from CryptoBot.CryptoBot_Shared_Functions import get_current_tz
-
+from CryptoBot.CryptoBot_Shared_Functions import progress_printer
 
 class DataScraper:
 
@@ -87,6 +87,7 @@ class DataScraper:
         return data
 
     def create_data_frame(self, url, symbol, return_time_stamp=False):
+        # This formats data as a pandas dataframe before returning it
         try:
             page = requests.get(url)
             data = page.json()['Data']
@@ -98,15 +99,18 @@ class DataScraper:
         symbol = symbol.upper()
         df = pd.DataFrame(data)
         df = df.add_prefix(symbol + '_')
+
+        # This turns the date column into a column of datetime objects based on timestamps gotten from the symbol + '_time' column (which is dropped before returning the dataframe)
         df.insert(loc=0, column='date', value=[datetime.fromtimestamp(d) for d in df[symbol + '_time']])
 
         if return_time_stamp:
+            # If this option is used the first timestamp is returned for reference, can help with varying time zones
             time_stamps = df[symbol + '_time'].values
             time_stamp = time_stamps[0]
             df = df.drop(columns=[symbol + '_time'])
             return df, time_stamp
 
-        df = df.drop(columns=[symbol + '_time']) #Drop this because the unix timestamp column is no longer needed
+        df = df.drop(columns=[symbol + '_time']) # Drop this because the unix timestamp column is no longer needed
         return df
 
     def daily_price_historical(self, symbol, all_data=True, limit=1):
@@ -203,7 +207,7 @@ class DataScraper:
         data = page.json()['Data']
         return data
 
-    def coin_snapshot_full_by_id(self, symbol, symbol_id_dict={}):#TODO fix the id argument mutability
+    def coin_snapshot_full_by_id(self, symbol, symbol_id_dict={}):
 
         if not symbol_id_dict:
             symbol_id_dict = {
@@ -293,7 +297,7 @@ class FormattedData:
 
     raw_data = None
 
-    def __init__(self, date_from, date_to, ticker, sym_list=None, time_units='min', news_hourly_offset=5):
+    def __init__(self, date_from, date_to, ticker, sym_list=None, time_units='min', suppression=False, news_hourly_offset=5):
         if sym_list is None:
             sym_list = ['BTC', 'LTC']
 
@@ -304,17 +308,21 @@ class FormattedData:
         self.date_from = date_from
         self.date_to = date_to
         self.time_units = time_units
+        self.suppress_output = suppression
+        self.news_hourly_offset = news_hourly_offset # news hourly offset is the cutoff (in hours) for where past news is relevant
 
-    def scrape_data(self, date_to=None):
+    def scrape_data(self):
         # If a value for date_to is entered then the object will attempt to create new data to add to an existing dataset
-        if date_to:
-            date_from = self.date_to
-            self.date_to = date_to
-        else:
-            date_from = self.date_from
-            date_to = self.date_to
+        date_from = self.date_from
+        date_to = self.date_to
+
+        fmt = '%Y-%m-%d %H:%M:%S'
+        datetime_from = datetime.strptime(date_from, fmt)
+        news_datetime = datetime_from-timedelta(hours=self.news_hourly_offset)
+        news_date_from = news_datetime.strftime(fmt)
 
         scraper = DataScraper(date_from=date_from, date_to=date_to)
+        news_scraper = DataScraper(date_from=news_date_from, date_to=date_to)
 
         for sym in self.sym_list:
 
@@ -325,4 +333,144 @@ class FormattedData:
              else:
                  current_scrape = current_scrape.drop(['date'], axis=1)
                  self.raw_data = pd.concat([self.raw_data, current_scrape], axis=1, join_axes=[self.raw_data.index])
+
+        if 'BTC' in self.sym_list:
+            self.raw_news = news_scraper.iteratively_scrape_news(self.sym_list)
+        else:
+            self.raw_news = news_scraper.iteratively_scrape_news(self.sym_list + ['BTC'])
+
+    def format_news_data(self):
+        # n is an argitrary number used to scale the news data
+        news_sentiment = np.array([])
+        news_pub_date = np.array([])
+
+        if self.raw_data is None:
+            raise ValueError('raw_data attribute is not defined')
+
+        for news in self.raw_news:
+            news_sentiment = np.append(news_sentiment, txb(news['title']).sentiment.polarity)
+            news_pub_date = np.append(news_pub_date, news['published_on'])
+
+        return news_sentiment, news_pub_date
+
+    def collect_news_counts_and_sentiments(self, n=4500):
+
+        news_sentiment, news_pub_date = self.format_news_data()
+
+        sentiment_col = np.array([])
+        count_col = np.array([])
+
+        for i in range(0, len(self.raw_data.index)):
+
+            progress_printer(len(self.raw_data.index), i, digit_resolution=2, tsk='News Formatting', supress_output=self.suppress_output)
+
+            t = self.raw_data.date[i]
+            current_ts = convert_time_to_uct(t).timestamp()
+            cutoff_ts = current_ts - self.news_hourly_offset * 3600
+            current_news_mask = np.argwhere((news_pub_date > cutoff_ts) & (news_pub_date < current_ts))
+
+            current_sentiment = 0
+            scaled_count = 0
+            relevant_sentiments = news_sentiment[current_news_mask]
+            relevant_pub_dates = news_pub_date[current_news_mask]
+            for j in range(0, len(relevant_pub_dates)):
+                coeff = n / (n + current_ts - news_pub_date[j])
+                scaled_count += coeff
+                current_sentiment += coeff*relevant_sentiments[j]
+
+            sentiment_col = np.append(sentiment_col, current_sentiment)
+            count_col = np.append(count_col, scaled_count)
+
+        return sentiment_col, count_col
+
+    def merge_raw_data_frames(self):
+        if self.raw_data is None:
+            raise ValueError('raw_data attribute is not defined')
+
+        sentiment_col, count_col = self.collect_news_counts_and_sentiments()
+        news_data_frame = pd.DataFrame({'Sentiment':sentiment_col, 'Count':count_col})
+        self.raw_data = pd.concat([self.raw_data, news_data_frame], axis=1, join_axes=[news_data_frame.index])
+
+    def format_data_for_training_or_testing(self, forecast_offset=30, predicted_quality='high'):
+
+        # Create output for training
+        predicted_quality_vec = self.raw_data[self.ticker + '_' + predicted_quality].values
+        output_vec = predicted_quality_vec[forecast_offset::]
+
+        # Create input for training
+        scaler = StandardScaler()
+        temp_input_arr = self.raw_data.drop(columns='date').values
+        temp_input_arr = temp_input_arr[0:-(forecast_offset), ::]
+        temp_input_arr = scaler.fit_transform(temp_input_arr)
+        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+
+        return output_vec, input_arr
+
+    def format_data_for_train_test_split(self, train_test_split = 0.33, forecast_offset=30, predicted_quality='high'):
+        if (train_test_split >= 1) or (train_test_split <= 0):
+            raise ValueError('train_test_split must be in (0, 1)')
+
+        output_vec, input_arr = self.format_data_for_training_or_testing(forecast_offset=forecast_offset, predicted_quality=predicted_quality)
+
+        training_length = (int(len(input_arr)*(1-train_test_split)))
+        training_input_arr = input_arr[0:training_length, ::, ::]
+        test_input_arr = input_arr[training_length::, ::, ::]
+        training_output_vec = output_vec[0:training_length]
+        test_output_vec = output_vec[training_length::]
+
+        return training_output_vec, test_output_vec, training_input_arr, test_input_arr
+
+    def format_data_for_prediction(self):
+
+        # Create input for training
+        scaler = StandardScaler()
+        temp_input_arr = self.raw_data.drop(columns='date').values
+        temp_input_arr = scaler.fit_transform(temp_input_arr)
+        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+
+        return input_arr
+
+    def format_data(self, data_type, train_test_split = 0.33, forecast_offset=30, predicted_quality='high'):
+        if self.raw_data is None:
+            raise ValueError('raw_data attribute is not defined')
+
+        pred_data = {'training output':None, 'training input':None, 'output':None, 'input':None}
+
+        data_type = data_type.lower()
+
+        if (data_type == 'test') or (data_type == 'train'):
+            output_vec, input_arr = self.format_data_for_training_or_testing(forecast_offset=forecast_offset,
+                                                                             predicted_quality=predicted_quality)
+            pred_data['input'] = input_arr
+            pred_data['output'] = output_vec
+
+        elif (data_type == 'train/test') or (data_type == 'test/train'):
+            training_output_vec, test_output_vec, training_input_arr, test_input_arr = self.format_data_for_train_test_split(train_test_split=train_test_split, forecast_offset=forecast_offset, predicted_quality=predicted_quality)
+            pred_data['training input'] = training_input_arr
+            pred_data['training output'] = training_output_vec
+            pred_data['input'] = test_input_arr
+            pred_data['output'] = test_output_vec
+
+        elif data_type == 'forecast':
+            input_arr = self.format_data_for_prediction()
+            pred_data['input'] = input_arr
+
+        return pred_data
+
+    def save_raw_data(self, file_name=None):
+
+        if len(self.sym_list) > 1:
+            symbols_str = self.ticker + '_ticker_' + ','.join(self.sym_list[1::])
+        else:
+            symbols_str = self.sym_list[0]
+        tz = get_current_tz()
+
+        if file_name is None:
+            file_name = '-' + self.time_units + 'by' + self.time_units + '_symbols_' + symbols_str  + \
+                              '_from_' + self.date_from + tz + '_to_' + self.date_to + tz + '.pickle'
+            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + file_name.replace(
+                ' ', '_')
+
+        with open(file_name, 'wb') as cp_file_handle:
+            pickle.dump(self.raw_data, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 

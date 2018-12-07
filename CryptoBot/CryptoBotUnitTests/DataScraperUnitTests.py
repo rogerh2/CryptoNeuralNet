@@ -3,6 +3,7 @@ from CryptoBot.CryptoForecast import DataScraper
 from CryptoBot.CryptoBot_Shared_Functions import convert_time_to_uct
 from datetime import datetime
 from datetime import timedelta
+import pandas as pd
 
 
 class DataScraperTestCase(unittest.TestCase):
@@ -10,6 +11,29 @@ class DataScraperTestCase(unittest.TestCase):
     def setUp(self):
         self.fmt = '%Y-%m-%d %H:%M:%S'
         self.test_obj = DataScraper("2018-05-15 09:00:00", date_to="2018-05-16 09:00:00", exchange='Coinbase')
+
+    # --Tests for the create_data_frame Method (which actually reads price data from the url and outputs it as a Pandas DataFrame)--
+
+    def test_can_create_proper_data_headers(self):
+        url = 'https://min-api.cryptocompare.com/data/histohour?fsym=BTC&tsym=ETH&limit=30&aggregate=1&e=CCCAGG'
+        symbol = 'ETH'
+
+        df = self.test_obj.create_data_frame(url, symbol)
+
+        for att in ['high', 'low', 'open', 'close', 'volumeto', 'volumefrom']:
+                self.assertIn(symbol + '_' + att, df.columns)
+
+    def test_does_not_output_data_containing_nan(self):
+        url = 'https://min-api.cryptocompare.com/data/histohour?fsym=BTC&tsym=ETH&limit=30&aggregate=1&e=CCCAGG'
+        symbol = 'ETH'
+
+        df = self.test_obj.create_data_frame(url, symbol)
+
+        for data_col in df.columns:
+            data = df[data_col].values
+            self.assertFalse(any(pd.isnull(data)))
+
+    # --Tests for the Price Data Output Method--
 
     def test_can_scrape_hourly_coinbase_prices(self):
         ref_ts = convert_time_to_uct(datetime.strptime("2018-05-16 09:00:00", self.fmt)).timestamp()
@@ -39,6 +63,8 @@ class DataScraperTestCase(unittest.TestCase):
 
         # Ensures that the scraper returs points up to the correct date
         self.assertEqual(ref_ts, convert_time_to_uct(df.date[3000]).timestamp())
+
+    # --Tests for the News Data Output Method--
 
     def test_can_scrape_news_within_specified_limits(self):
         ref_date_from = "2018-11-30 07:01:00"
