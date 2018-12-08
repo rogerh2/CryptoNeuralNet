@@ -1,5 +1,8 @@
 import unittest
+import os
+from pathlib import Path
 from CryptoBot.CryptoForecast import FormattedData
+from CryptoBot.CryptoBot_Shared_Functions import get_current_tz
 from datetime import datetime
 from datetime import timedelta
 import pandas as pd
@@ -7,6 +10,8 @@ import numpy as np
 
 
 class DataFormatterTestCase(unittest.TestCase):
+
+    ref_file_name = 'stand in'
 
     @classmethod #This is a decorator that denotes a class method
     def setUpClass(self):
@@ -27,6 +32,12 @@ class DataFormatterTestCase(unittest.TestCase):
         self.test_obj.scrape_data()
         self.test_obj.merge_raw_data_frames()
         self.sentiment_col, self.count_col = self.test_obj.collect_news_counts_and_sentiments()
+
+        tz = get_current_tz()
+        ref_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbymin__ticker_ETH_aux_BTC,LTC__from_' \
+                        + self.test_obj.date_from + tz + '_to_' + self.test_obj.date_to + tz + '.pickle'
+        self.ref_file_name = ref_file_name.replace(' ', '_')
+
 
     # --Tests for Formatting News Data--
 
@@ -111,7 +122,20 @@ class DataFormatterTestCase(unittest.TestCase):
         input_arr = pred_data['input']
         self.assertSequenceEqual(input_arr.shape, (self.ref_len, len(self.test_obj.raw_data.columns) - 1, 1))
 
-    # TODO write test for saving data
+    # --Tests for Saving Historical Data--
+
+    def test_does_save_raw_data_with_correct_file_name(self):
+
+        self.test_obj.save_raw_data()
+        self.assertTrue(Path(self.ref_file_name).is_file())
+
+    #TODO add test to ensure file is saved properly
+
+    @classmethod
+    def tearDownClass(cls):
+        #This deletes test files
+        if Path(cls.ref_file_name).is_file():
+            os.remove(cls.ref_file_name)
 
 
 

@@ -460,15 +460,15 @@ class FormattedData:
     def save_raw_data(self, file_name=None):
 
         if len(self.sym_list) > 1:
-            symbols_str = self.ticker + '_ticker_' + ','.join(self.sym_list[1::])
+            symbols_str = '__ticker_' + self.ticker + '_aux_' + ','.join(self.sym_list[1::]) + '_'
         else:
             symbols_str = self.sym_list[0]
         tz = get_current_tz()
 
         if file_name is None:
-            file_name = '-' + self.time_units + 'by' + self.time_units + '_symbols_' + symbols_str  + \
+            file_name = self.time_units + 'by' + self.time_units + symbols_str  + \
                               '_from_' + self.date_from + tz + '_to_' + self.date_to + tz + '.pickle'
-            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/Models/DataSets/CryptoPredictDataSet' + file_name.replace(
+            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/' + file_name.replace(
                 ' ', '_')
 
         with open(file_name, 'wb') as cp_file_handle:
