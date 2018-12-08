@@ -1,6 +1,8 @@
-from tzlocal import get_localzone
 import pytz
+import numpy as np
+from tzlocal import get_localzone
 from datetime import datetime
+
 
 def num2str(num, digits):
     # This function formats numbers as strings with the desired number of digits
@@ -43,3 +45,9 @@ def progress_printer(total_len, current_ind, start_ind=0, digit_resolution=1, ts
 
     else:
         pass
+
+def rescale_to_fit(data, data_to_scale_to):
+    standard_data = (data - np.mean(data))/np.std(data)
+    scaled_data = standard_data*np.std(data_to_scale_to) + np.mean(data_to_scale_to)
+
+    return scaled_data

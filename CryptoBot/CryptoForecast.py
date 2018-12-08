@@ -28,6 +28,7 @@ import smtplib
 from CryptoBot.CryptoBot_Shared_Functions import convert_time_to_uct
 from CryptoBot.CryptoBot_Shared_Functions import get_current_tz
 from CryptoBot.CryptoBot_Shared_Functions import progress_printer
+from CryptoBot.CryptoBot_Shared_Functions import rescale_to_fit
 
 class DataScraper:
 
@@ -299,9 +300,9 @@ class FormattedData:
 
     def __init__(self, date_from, date_to, ticker, sym_list=None, time_units='min', suppression=False, news_hourly_offset=5):
         if sym_list is None:
-            sym_list = ['BTC', 'LTC']
-
-        sym_list.insert(0, ticker)
+            sym_list = [ticker]
+        else:
+            sym_list.insert(0, ticker)
 
         self.sym_list = sym_list
         self.ticker = ticker
@@ -474,3 +475,100 @@ class FormattedData:
         with open(file_name, 'wb') as cp_file_handle:
             pickle.dump(self.raw_data, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
+class CryptoModel:
+
+    model = None
+    data_obj = None
+    prediction_length = 30
+    optimization_scheme="adam"
+    loss_func="mean_absolute_percentage_error"
+    bitinfo_list = None
+
+    def __init__(self, date_from, date_to, prediction_ticker, forecast_offset=30, sym_list=None, epochs=500, activ_func='relu', time_units='min', is_leakyrelu=True, suppress_output=False):
+
+        self.date_from = date_from
+        self.date_to = date_to
+        self.prediction_length = forecast_offset
+        self.prediction_ticker = prediction_ticker
+        self.time_units = time_units
+        self.epochs = epochs
+        self.bitinfo_list = sym_list
+        self.activation_func = activ_func
+        self.is_leakyrelu=is_leakyrelu
+        self.suppression = suppress_output
+
+    def create_formatted_data_obj(self):
+        self.data_obj = FormattedData(self.date_from, self.date_to, self.prediction_ticker, sym_list=self.bitinfo_list, time_units='min', suppression=self.suppression)
+        self.data_obj.scrape_data()
+        self.data_obj.merge_raw_data_frames()
+
+    def create_formatted_data(self, data_type, train_test_split = 0.33, forecast_offset=30, predicted_quality='high'):
+        data = self.data_obj.format_data(data_type, train_test_split=train_test_split, forecast_offset=forecast_offset, predicted_quality=predicted_quality)
+
+        return data
+
+    def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):
+        is_leaky = self.is_leakyrelu
+        activ_func = self.activation_func
+        loss = self.loss_func
+        optimizer = self.optimization_scheme
+        self.model = Sequential()
+
+        self.model.add(LSTM(1, input_shape=(inputs.shape[1], inputs.shape[2])))
+        self.model.add(Dropout(dropout))
+
+        if is_leaky:
+            for i in range(0, layer_count):
+                self.model.add(Dense(units=neurons, activation="linear", kernel_initializer='normal'))
+                self.model.add(LeakyReLU(alpha=0.1))
+        else:
+            for i in range(0, layer_count):
+                self.model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
+
+        self.model.add(Dense(units=output_size, activation="linear"))
+        self.model.compile(loss=loss, optimizer=optimizer)
+
+    def train_model(self, training_input, training_output, neuron_count=200, save_model=False, train_saved_model=False, layers=3, batch_size=96):
+        if train_saved_model:
+            print('re-trianing model')
+            self.model.reset_states()
+
+        self.build_model(training_input, neurons=neuron_count, layer_count=layers)
+
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
+
+        hist = self.model.fit(training_input, training_output, epochs=self.epochs,
+                              batch_size=batch_size, verbose=2,
+                              shuffle=False, validation_split=0.25, callbacks=[estop])
+
+        if self.is_leakyrelu & save_model: #TODO add more detail to saves
+            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models' + self.prediction_ticker + 'model_'+ str(layers) + 'layers_' + str(
+                self.prediction_length) + self.data_obj.time_units + '_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_'+ str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs' + str(datetime.now().timestamp()) + '.h5')
+
+        elif save_model:
+            self.model.save(
+                '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models' + self.prediction_ticker + 'model_' + str(layers) + 'layers_' + str(
+                self.prediction_length) + self.data_obj.time_units + '_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs_' + str(layers) + 'layers' + str(datetime.now().timestamp()) + '.h5')
+
+        return hist
+
+    def update_model_training(self, input, output):
+        #This is for live model weight updates
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
+        self.model.reset_states()
+        self.model.fit(input, output, epochs=self.epochs, batch_size=96, verbose=2,
+                              shuffle=False, validation_split=0.25, callbacks=[estop])
+
+    def test_model(self, test_input, test_output, show_plots=True):
+        #TODO add ability to plot with dates and in general make plots pretty (add legend and axis labels etc...)
+        prediction = self.model.predict(test_input)
+
+        if show_plots:
+            prediction_for_plots = rescale_to_fit(prediction, test_output)
+            plt.plot(prediction_for_plots, 'rx--')
+            plt.plot(test_output, 'b.--')
+
+
+        return prediction, test_output
+
+    #TODO add forecast method

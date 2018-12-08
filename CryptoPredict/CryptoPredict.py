@@ -1032,8 +1032,7 @@ class CoinPriceModel:
         self.activation_func = activ_func
         self.is_leakyrelu=is_leakyrelu
 
-    def build_model(self, inputs, neurons, output_size=1,
-                    dropout=0.25, layer_count=3):  #TODO make output_size someing editable outside the class
+    def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):  #TODO make output_size someing editable outside the class
         is_leaky = self.is_leakyrelu
         activ_func = self.activation_func
         loss = self.loss_func

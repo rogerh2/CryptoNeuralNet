@@ -1,12 +1,14 @@
 import unittest
 import os
+import pandas as pd
+import numpy as np
+import pickle
 from pathlib import Path
 from CryptoBot.CryptoForecast import FormattedData
 from CryptoBot.CryptoBot_Shared_Functions import get_current_tz
 from datetime import datetime
 from datetime import timedelta
-import pandas as pd
-import numpy as np
+
 
 
 class DataFormatterTestCase(unittest.TestCase):
@@ -37,7 +39,6 @@ class DataFormatterTestCase(unittest.TestCase):
         ref_file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbymin__ticker_ETH_aux_BTC,LTC__from_' \
                         + self.test_obj.date_from + tz + '_to_' + self.test_obj.date_to + tz + '.pickle'
         self.ref_file_name = ref_file_name.replace(' ', '_')
-
 
     # --Tests for Formatting News Data--
 
@@ -125,17 +126,20 @@ class DataFormatterTestCase(unittest.TestCase):
     # --Tests for Saving Historical Data--
 
     def test_does_save_raw_data_with_correct_file_name(self):
-
         self.test_obj.save_raw_data()
         self.assertTrue(Path(self.ref_file_name).is_file())
 
-    #TODO add test to ensure file is saved properly
+    def test_does_save_correct_raw_data(self):
+        self.test_obj.save_raw_data()
+        with open(self.ref_file_name, 'rb') as ref_file:
+            saved_table = pickle.load(ref_file)
 
-    @classmethod
-    def tearDownClass(cls):
+        pd.testing.assert_frame_equal(saved_table, self.test_obj.raw_data)
+
+    def tearDown(self):
         #This deletes test files
-        if Path(cls.ref_file_name).is_file():
-            os.remove(cls.ref_file_name)
+        if Path(self.ref_file_name).is_file():
+            os.remove(self.ref_file_name)
 
 
 
