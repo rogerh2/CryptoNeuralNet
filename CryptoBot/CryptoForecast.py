@@ -405,21 +405,25 @@ class FormattedData:
         temp_input_arr = scaler.fit_transform(temp_input_arr)
         input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
 
-        return output_vec, input_arr
+        # Create x labels (which are datetime objects)
+        x_labels = self.raw_data.date.values[forecast_offset::]
+
+        return output_vec, input_arr, x_labels
 
     def format_data_for_train_test_split(self, train_test_split = 0.33, forecast_offset=30, predicted_quality='high'):
         if (train_test_split >= 1) or (train_test_split <= 0):
             raise ValueError('train_test_split must be in (0, 1)')
 
-        output_vec, input_arr = self.format_data_for_training_or_testing(forecast_offset=forecast_offset, predicted_quality=predicted_quality)
+        output_vec, input_arr, x_labels = self.format_data_for_training_or_testing(forecast_offset=forecast_offset, predicted_quality=predicted_quality)
 
         training_length = (int(len(input_arr)*(1-train_test_split)))
         training_input_arr = input_arr[0:training_length, ::, ::]
         test_input_arr = input_arr[training_length::, ::, ::]
         training_output_vec = output_vec[0:training_length]
         test_output_vec = output_vec[training_length::]
+        x_labels = x_labels[training_length::]
 
-        return training_output_vec, test_output_vec, training_input_arr, test_input_arr
+        return training_output_vec, test_output_vec, training_input_arr, test_input_arr, x_labels
 
     def format_data_for_prediction(self):
 
@@ -435,22 +439,24 @@ class FormattedData:
         if self.raw_data is None:
             raise ValueError('raw_data attribute is not defined')
 
-        pred_data = {'training output':None, 'training input':None, 'output':None, 'input':None}
+        pred_data = {'training output':None, 'training input':None, 'output':None, 'input':None, 'x labels':None}
 
         data_type = data_type.lower()
 
         if (data_type == 'test') or (data_type == 'train'):
-            output_vec, input_arr = self.format_data_for_training_or_testing(forecast_offset=forecast_offset,
+            output_vec, input_arr, x_labels = self.format_data_for_training_or_testing(forecast_offset=forecast_offset,
                                                                              predicted_quality=predicted_quality)
             pred_data['input'] = input_arr
             pred_data['output'] = output_vec
+            pred_data['x labels'] = x_labels
 
         elif (data_type == 'train/test') or (data_type == 'test/train'):
-            training_output_vec, test_output_vec, training_input_arr, test_input_arr = self.format_data_for_train_test_split(train_test_split=train_test_split, forecast_offset=forecast_offset, predicted_quality=predicted_quality)
+            training_output_vec, test_output_vec, training_input_arr, test_input_arr, x_labels = self.format_data_for_train_test_split(train_test_split=train_test_split, forecast_offset=forecast_offset, predicted_quality=predicted_quality)
             pred_data['training input'] = training_input_arr
             pred_data['training output'] = training_output_vec
             pred_data['input'] = test_input_arr
             pred_data['output'] = test_output_vec
+            pred_data['x labels'] = x_labels
 
         elif data_type == 'forecast':
             input_arr = self.format_data_for_prediction()
@@ -497,15 +503,12 @@ class CryptoModel:
         self.is_leakyrelu=is_leakyrelu
         self.suppression = suppress_output
 
-    def create_formatted_data_obj(self):
+    def create_formatted_data_obj(self, save_data=False):
         self.data_obj = FormattedData(self.date_from, self.date_to, self.prediction_ticker, sym_list=self.bitinfo_list, time_units='min', suppression=self.suppression)
         self.data_obj.scrape_data()
         self.data_obj.merge_raw_data_frames()
-
-    def create_formatted_data(self, data_type, train_test_split = 0.33, forecast_offset=30, predicted_quality='high'):
-        data = self.data_obj.format_data(data_type, train_test_split=train_test_split, forecast_offset=forecast_offset, predicted_quality=predicted_quality)
-
-        return data
+        if save_data:
+            self.data_obj.save_raw_data()
 
     def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):
         is_leaky = self.is_leakyrelu
@@ -532,8 +535,8 @@ class CryptoModel:
         if train_saved_model:
             print('re-trianing model')
             self.model.reset_states()
-
-        self.build_model(training_input, neurons=neuron_count, layer_count=layers)
+        else:
+            self.build_model(training_input, neurons=neuron_count, layer_count=layers)
 
         estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
 
@@ -559,16 +562,55 @@ class CryptoModel:
         self.model.fit(input, output, epochs=self.epochs, batch_size=96, verbose=2,
                               shuffle=False, validation_split=0.25, callbacks=[estop])
 
-    def test_model(self, test_input, test_output, show_plots=True):
+    def test_model(self, test_input, test_output, show_plots=True, x_indices=None):
         #TODO add ability to plot with dates and in general make plots pretty (add legend and axis labels etc...)
         prediction = self.model.predict(test_input)
 
         if show_plots:
+            # Plot the price and the predicted price vs time
             prediction_for_plots = rescale_to_fit(prediction, test_output)
-            plt.plot(prediction_for_plots, 'rx--')
-            plt.plot(test_output, 'b.--')
+            if x_indices is not None:
+                plt.plot(prediction_for_plots, 'rx--')
+                plt.plot(test_output, 'b.--')
+                plt.xlabel('Time (min)')
+            else:
+                pd.DataFrame(data={'Actual': test_output, 'Predicted': prediction_for_plots}, index=x_indices)
+                plt.xlabel('Date/Time')
+
+            plt.title('Predicted Price and Actual Price')
+            plt.ylabel('Price (USD)')
+
+            # Plot the correlation between price and predicted
+            plt.figure()
+            plt.plot(test_output, prediction_for_plots, 'b.')
+            plt.xlabel('measured price')
+            plt.ylabel('predicted price')
+            plt.title('Correlation Between Predicted and Actual Prices')
 
 
-        return prediction, test_output
+        return {'predicted': prediction, 'actual':test_output}
 
-    #TODO add forecast method
+    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=200, save_model=False, train_saved_model=False, layers=3, batch_size=96):
+
+        # TODO add optimize option
+
+        data = self.data_obj.format_data(action, train_test_split=train_test_split, forecast_offset=forecast_offset,
+                                         predicted_quality=predicted_quality)
+
+        if action == 'train':
+            hist = self.train_model(data['input'], data['output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+            return hist
+
+        elif action == 'test':
+            test_data = self.test_model(data['input'], data['output'], show_plots=show_plots, x_indices=data['x labels'])
+            return test_data
+
+        elif action == 'train/test':
+            self.train_model(data['training input'], data['training output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+
+            self.test_model(data['input'], data['output'], show_plots=show_plots, x_indices=data['x labels'])
+            return None
+
+        elif action == 'forecast':
+            prediction = self.model.predict(data['input'])
+            return prediction
