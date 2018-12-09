@@ -103,6 +103,13 @@ class DataFormatterTestCase(unittest.TestCase):
         input_arr = pred_data['input']
         self.assertEqual(len(output_vec), input_arr.shape[0])
 
+    def test_can_create_datetime_arr_of_correct_shape_for_plots(self):
+        test_offset = 30
+        pred_data = self.test_obj.format_data('train', forecast_offset=test_offset)
+        label_vec = pred_data['x labels']
+        output_vec = pred_data['output']
+        self.assertEqual(len(label_vec),len(output_vec))
+
     def test_can_split_for_train_and_test(self):
         test_offset = 30
         pred_data = self.test_obj.format_data('train/test', forecast_offset=test_offset, train_test_split=0.3)

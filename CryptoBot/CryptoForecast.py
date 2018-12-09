@@ -503,10 +503,31 @@ class CryptoModel:
         self.is_leakyrelu=is_leakyrelu
         self.suppression = suppress_output
 
-    def create_formatted_data_obj(self, save_data=False):
+    def create_formatted_data_obj(self, save_data=False, data_set_path=None):
         self.data_obj = FormattedData(self.date_from, self.date_to, self.prediction_ticker, sym_list=self.bitinfo_list, time_units='min', suppression=self.suppression)
-        self.data_obj.scrape_data()
-        self.data_obj.merge_raw_data_frames()
+
+        if data_set_path is None:
+            self.data_obj.scrape_data()
+            self.data_obj.merge_raw_data_frames()
+        else:
+            with open(data_set_path, 'rb') as ds_file:
+                saved_raw_data = pickle.load(ds_file)
+
+            # TODO make this time zone agnostic
+            # The below block removes any extra dates from the saved table
+            fmt = '%Y-%m-%d %H:%M:%S'
+            date_from_object = datetime.strptime(self.date_from, fmt)
+            date_to_object = datetime.strptime(self.date_to, fmt)
+            dates_list = saved_raw_data.date
+
+            start_ind = (dates_list == date_from_object).argmax()
+            stop_ind = (dates_list == date_to_object).argmax() + 1
+
+            saved_raw_data = saved_raw_data[start_ind:stop_ind]
+            saved_raw_data.index = np.arange(len(saved_raw_data))
+
+            self.data_obj.raw_data = saved_raw_data
+
         if save_data:
             self.data_obj.save_raw_data()
 
@@ -545,12 +566,12 @@ class CryptoModel:
                               shuffle=False, validation_split=0.25, callbacks=[estop])
 
         if self.is_leakyrelu & save_model: #TODO add more detail to saves
-            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models' + self.prediction_ticker + 'model_'+ str(layers) + 'layers_' + str(
+            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker + 'model_'+ str(layers) + 'layers_' + str(
                 self.prediction_length) + self.data_obj.time_units + '_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_'+ str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs' + str(datetime.now().timestamp()) + '.h5')
 
         elif save_model:
             self.model.save(
-                '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models' + self.prediction_ticker + 'model_' + str(layers) + 'layers_' + str(
+                '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker + 'model_' + str(layers) + 'layers_' + str(
                 self.prediction_length) + self.data_obj.time_units + '_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs_' + str(layers) + 'layers' + str(datetime.now().timestamp()) + '.h5')
 
         return hist
@@ -563,18 +584,20 @@ class CryptoModel:
                               shuffle=False, validation_split=0.25, callbacks=[estop])
 
     def test_model(self, test_input, test_output, show_plots=True, x_indices=None):
-        #TODO add ability to plot with dates and in general make plots pretty (add legend and axis labels etc...)
         prediction = self.model.predict(test_input)
+        prediction = prediction[::, 0] # For some reason the predictions come out 2D (e.g. [[p1,...,pn]] vs [p1,...,pn]]
 
         if show_plots:
             # Plot the price and the predicted price vs time
             prediction_for_plots = rescale_to_fit(prediction, test_output)
-            if x_indices is not None:
+            if x_indices is None:
                 plt.plot(prediction_for_plots, 'rx--')
                 plt.plot(test_output, 'b.--')
                 plt.xlabel('Time (min)')
             else:
-                pd.DataFrame(data={'Actual': test_output, 'Predicted': prediction_for_plots}, index=x_indices)
+                df = pd.DataFrame(data={'Actual': test_output, 'Predicted': prediction_for_plots}, index=x_indices)
+                df.Predicted.plot(style='rx--')
+                df.Actual.plot(style='b.--')
                 plt.xlabel('Date/Time')
 
             plt.title('Predicted Price and Actual Price')
@@ -587,10 +610,12 @@ class CryptoModel:
             plt.ylabel('predicted price')
             plt.title('Correlation Between Predicted and Actual Prices')
 
+            plt.show()
+
 
         return {'predicted': prediction, 'actual':test_output}
 
-    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=200, save_model=False, train_saved_model=False, layers=3, batch_size=96):
+    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96):
 
         # TODO add optimize option
 
@@ -614,3 +639,12 @@ class CryptoModel:
         elif action == 'forecast':
             prediction = self.model.predict(data['input'])
             return prediction
+
+
+if __name__ == '__main__':
+    file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbymin__ticker_ETH_aux_BTC__from_2018-12-05_21:00:00EST_to_2018-12-08_21:00:00EST.pickle'
+    date_from = '2018-12-05_21:00:00'.replace('_', ' ')
+    date_to = '2018-12-08_21:00:00'.replace('_', ' ')
+    model_obj = CryptoModel(date_from, date_to, 'ETH', sym_list=['BTC'], forecast_offset=30)
+    model_obj.create_formatted_data_obj(save_data=True, data_set_path=file_name)
+    model_obj.model_actions('train/test', train_test_split=0.01)
