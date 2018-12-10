@@ -565,16 +565,18 @@ class CryptoModel:
                               batch_size=batch_size, verbose=2,
                               shuffle=False, validation_split=0.25, callbacks=[estop])
 
-        if self.is_leakyrelu & save_model: #TODO add more detail to saves
-            self.model.save('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker + 'model_'+ str(layers) + 'layers_' + str(
-                self.prediction_length) + self.data_obj.time_units + '_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_'+ str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs' + str(datetime.now().timestamp()) + '.h5')
+        if self.is_leakyrelu: #TODO add more detail to saves
+            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker + 'model_'+ str(layers) + 'layers_' + str(
+                self.prediction_length) + self.data_obj.time_units + '_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_'+ str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs' + str(datetime.now().timestamp()) + '.h5'
 
-        elif save_model:
-            self.model.save(
-                '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker + 'model_' + str(layers) + 'layers_' + str(
-                self.prediction_length) + self.data_obj.time_units + '_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs_' + str(layers) + 'layers' + str(datetime.now().timestamp()) + '.h5')
+        else:
+            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker + 'model_' + str(layers) + 'layers_' + str(
+                self.prediction_length) + self.data_obj.time_units + '_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs_' + str(layers) + 'layers' + str(datetime.now().timestamp()) + '.h5'
 
-        return hist
+        if save_model:
+            self.model.save(file_name)
+
+        return hist, file_name
 
     def update_model_training(self, input, output):
         #This is for live model weight updates
@@ -615,7 +617,29 @@ class CryptoModel:
 
         return {'predicted': prediction, 'actual':test_output}
 
-    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96):
+    def optimize_model(self, training_input, training_output, save_model, neuron_grid, layer_grid, batch_size_grid):
+
+        hist = []
+        single_run_history = []
+        single_models = {}
+        single_val_losses = {}
+
+
+        for neuron_count in neuron_grid:
+            for layers in layer_grid:
+                for batch_size in batch_size_grid:
+                    for i in range(0, 9):
+                        current_hist, current_file_name = self.train_model(training_input, training_output, neuron_count=neuron_count, save_model=False, train_saved_model=False, layers=layers, batch_size=batch_size)
+                        single_models[current_file_name] = self.model
+                        single_val_losses[current_file_name] = current_hist.history['val_loss'][-2]
+                    # TODO finish the optimization (chose the best from the last loop (accounts for random numbers causing high loss runs))
+                    best_val_loss_ind = np.argmin(np.array([single_val_losses.values()]))
+                    hist.append(np.min(np.array([single_val_losses.values()])))
+
+        plt.plot(neuron_grid, hist, 'bo--')
+        plt.show()
+
+    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96, neuron_grid=[65, 70, 75, 80, 85, 90, 95, 100]):
 
         # TODO add optimize option
 
@@ -623,7 +647,7 @@ class CryptoModel:
                                          predicted_quality=predicted_quality)
 
         if action == 'train':
-            hist = self.train_model(data['input'], data['output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+            hist, _ = self.train_model(data['input'], data['output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
             return hist
 
         elif action == 'test':
