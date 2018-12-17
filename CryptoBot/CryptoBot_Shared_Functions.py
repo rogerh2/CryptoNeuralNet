@@ -1,5 +1,6 @@
 import pytz
 import numpy as np
+import scipy.stats
 from tzlocal import get_localzone
 from datetime import datetime
 
@@ -51,3 +52,36 @@ def rescale_to_fit(data, data_to_scale_to):
     scaled_data = standard_data*np.std(data_to_scale_to) + np.mean(data_to_scale_to)
 
     return scaled_data
+
+def create_number_from_bools(*args):
+
+    bool_str = '0b'
+    for arg in args:
+        bool_str += str(int(arg))
+
+    bool_num = eval(bool_str)
+
+    return bool_num
+
+def mean_confidence_interval(data, confidence=0.95):
+    a = data
+    n = len(a)
+    m, se = np.mean(a), scipy.stats.sem(a)
+    h = se * scipy.stats.t.ppf((1 + confidence) / 2., n-1)
+    return m, m-h, m+h
+
+def multiple_choice_question_with_prompt(prompt_str):
+
+    input_val = 'maybe'
+
+    while input_val not in ['yes', 'no']:
+        input_val = input(prompt_str)
+        if input_val == 'yes':
+            bool_val = True
+        elif input_val == 'no':
+            bool_val = False
+
+        if input_val not in ['yes', 'no']:
+            print('Must answer yes or no')
+
+    return bool_val

@@ -29,6 +29,8 @@ from CryptoBot.CryptoBot_Shared_Functions import convert_time_to_uct
 from CryptoBot.CryptoBot_Shared_Functions import get_current_tz
 from CryptoBot.CryptoBot_Shared_Functions import progress_printer
 from CryptoBot.CryptoBot_Shared_Functions import rescale_to_fit
+from CryptoBot.CryptoBot_Shared_Functions import num2str
+from CryptoBot.CryptoBot_Shared_Functions import multiple_choice_question_with_prompt
 
 class DataScraper:
 
@@ -443,7 +445,7 @@ class FormattedData:
 
         data_type = data_type.lower()
 
-        if (data_type == 'test') or (data_type == 'train'):
+        if data_type in ['train', 'test', 'optimize']:
             output_vec, input_arr, x_labels = self.format_data_for_training_or_testing(forecast_offset=forecast_offset,
                                                                              predicted_quality=predicted_quality)
             pred_data['input'] = input_arr
@@ -503,8 +505,21 @@ class CryptoModel:
         self.is_leakyrelu=is_leakyrelu
         self.suppression = suppress_output
 
-    def create_formatted_data_obj(self, save_data=False, data_set_path=None):
-        self.data_obj = FormattedData(self.date_from, self.date_to, self.prediction_ticker, sym_list=self.bitinfo_list, time_units='min', suppression=self.suppression)
+    def create_formatted_data_obj(self, save_data=False, data_set_path=None, hourly_time_offset=None):
+
+        if hourly_time_offset is not None:
+            # This is for making current predictions
+            fmt = '%Y-%m-%d %H:%M:%S'
+            date_to = datetime.now(get_localzone()).strftime(fmt)
+            date_from = (datetime.now(get_localzone()) - timedelta(hours=hourly_time_offset)).strftime(fmt)
+            self.data_obj = FormattedData(date_from, date_to, self.prediction_ticker,
+                                          sym_list=self.bitinfo_list, time_units='min', suppression=self.suppression)
+
+            #Shouls Always scrape data for predictions
+            data_set_path = None
+        else:
+            self.data_obj = FormattedData(self.date_from, self.date_to, self.prediction_ticker,
+                                          sym_list=self.bitinfo_list, time_units='min', suppression=self.suppression)
 
         if data_set_path is None:
             self.data_obj.scrape_data()
@@ -513,7 +528,6 @@ class CryptoModel:
             with open(data_set_path, 'rb') as ds_file:
                 saved_raw_data = pickle.load(ds_file)
 
-            # TODO make this time zone agnostic
             # The below block removes any extra dates from the saved table
             fmt = '%Y-%m-%d %H:%M:%S'
             date_from_object = datetime.strptime(self.date_from, fmt)
@@ -530,6 +544,34 @@ class CryptoModel:
 
         if save_data:
             self.data_obj.save_raw_data()
+
+    def update_formatted_data(self, date_to=None):
+        date_from = self.date_to
+        fmt = '%Y-%m-%d %H:%M:%S'
+        if date_to is None:
+            date_to = datetime.now().strftime(fmt) + '00'
+
+        if date_to != date_from:
+            data_obj_for_update = FormattedData(date_from, date_to, self.prediction_ticker,
+                                 sym_list=self.bitinfo_list, time_units='min', suppression=self.suppression)
+            data_obj_for_update.scrape_data()
+            data_obj_for_update.merge_raw_data_frames()
+            dates_list = self.data_obj.raw_data.date
+            date_from_object = datetime.strptime(date_from, fmt)
+            date_to_object = datetime.strptime(date_to, fmt)
+
+            if np.sum(dates_list == date_to_object) == 0:
+                #This if statement ensures it can't update with old data
+                start_ind = len(dates_list) - (dates_list == date_from_object).argmax()
+                new_raw_data = data_obj_for_update.raw_data[start_ind::]
+                new_raw_data.index = new_raw_data.index + np.max(self.data_obj.raw_data.index.values) + start_ind
+
+                # Update values
+                self.data_obj.raw_data = self.data_obj.raw_data.append(new_raw_data)
+                self.data_obj.date_to = date_to
+                self.date_to = date_to
+
+
 
     def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):
         is_leaky = self.is_leakyrelu
@@ -566,11 +608,11 @@ class CryptoModel:
                               shuffle=False, validation_split=0.25, callbacks=[estop])
 
         if self.is_leakyrelu: #TODO add more detail to saves
-            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker + 'model_'+ str(layers) + 'layers_' + str(
+            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker.upper() + '/' + self.prediction_ticker + 'model_'+ str(layers) + 'layers_' + str(
                 self.prediction_length) + self.data_obj.time_units + '_' + 'leakyreluact_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_'+ str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs' + str(datetime.now().timestamp()) + '.h5'
 
         else:
-            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker + 'model_' + str(layers) + 'layers_' + str(
+            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker.upper() + '/' + self.prediction_ticker + 'model_' + str(layers) + 'layers_' + str(
                 self.prediction_length) + self.data_obj.time_units + '_' + self.activation_func + 'act_' + self.optimization_scheme + 'opt_' + self.loss_func + 'loss_' + str(neuron_count) + 'neurons_' + str(np.max(hist.epoch)) +'epochs_' + str(layers) + 'layers' + str(datetime.now().timestamp()) + '.h5'
 
         if save_model:
@@ -617,33 +659,76 @@ class CryptoModel:
 
         return {'predicted': prediction, 'actual':test_output}
 
-    def optimize_model(self, training_input, training_output, save_model, neuron_grid, layer_grid, batch_size_grid):
+    def optimize_model(self, training_input, training_output, neuron_grid, layer_grid, batch_size_grid, save_model=True):
 
-        hist = []
-        single_run_history = []
-        single_models = {}
-        single_val_losses = {}
+        hist = np.zeros((len(layer_grid), len(neuron_grid)))
+        # The "single" arrays are meant to be used once per run
+        single_models = []
+        single_val_losses = np.array([])
+        single_file_names = []
 
-
-        for neuron_count in neuron_grid:
-            for layers in layer_grid:
+        for i in range(0, len(layer_grid)):
+            for j in range(0, len(neuron_grid)):
                 for batch_size in batch_size_grid:
-                    for i in range(0, 9):
+                    layers = layer_grid[i]
+                    neuron_count = neuron_grid[j]
+                    for k in range(0, 3):
                         current_hist, current_file_name = self.train_model(training_input, training_output, neuron_count=neuron_count, save_model=False, train_saved_model=False, layers=layers, batch_size=batch_size)
-                        single_models[current_file_name] = self.model
-                        single_val_losses[current_file_name] = current_hist.history['val_loss'][-2]
-                    # TODO finish the optimization (chose the best from the last loop (accounts for random numbers causing high loss runs))
-                    best_val_loss_ind = np.argmin(np.array([single_val_losses.values()]))
-                    hist.append(np.min(np.array([single_val_losses.values()])))
+                        single_models.append(self.model)
+                        single_val_losses = np.append(single_val_losses, current_hist.history['val_loss'][-2])
+                        single_file_names.append(current_file_name)
+                    best_val_loss_ind = np.argmin(single_val_losses)
+                    hist[i, j] = (np.min(single_val_losses[best_val_loss_ind]))
+                    if save_model:
+                        single_models[best_val_loss_ind].save(single_file_names[best_val_loss_ind])
 
-        plt.plot(neuron_grid, hist, 'bo--')
-        plt.show()
+                    # Reset the "single" arrays after each run
+                    single_models = []
+                    single_val_losses = np.array([])
+                    single_file_names = []
 
-    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96, neuron_grid=[65, 70, 75, 80, 85, 90, 95, 100]):
+        x_axis_labels = [str(x) for x in neuron_grid]
+        y_axis_labels = [str(y) for y in layer_grid]
 
-        # TODO add optimize option
+        fig, ax = plt.subplots()
+        cax = ax.imshow(hist)
+        ax.set_xticks(np.arange(len(neuron_grid)))
+        ax.set_yticks(np.arange(len(layer_grid)))
+        # label the ticks
+        ax.set_xticklabels(x_axis_labels)
+        ax.set_yticklabels(y_axis_labels)
 
-        data = self.data_obj.format_data(action, train_test_split=train_test_split, forecast_offset=forecast_offset,
+        plt.xlabel('Neuron Count')
+        plt.ylabel('Layer Count')
+        plt.title(self.prediction_ticker.upper() + ' Model Optimization' + '\n From: ' + self.date_from + ' To: ' + self.date_to)
+        fig.colorbar(cax, ticks=[np.min(hist), np.max(hist)])
+
+        # Loop over data dimensions and create text annotations.
+        for i in range(len(layer_grid)):
+            for j in range(len(neuron_grid)):
+                text = ax.text(j, i, num2str(hist[i, j], 3),
+                               ha="center", va="center", color="w")
+
+        plt.savefig('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker.upper() + '/' + self.prediction_ticker.upper() + ' Optimization Grid From: ' + self.date_from + ' To: ' + self.date_to)
+        plt.close()
+
+    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96, neuron_grid=None, batch_size_grid=None, layer_grid=None, hourly_time_offset_for_prediction=2):
+
+        if neuron_grid is None:
+            neuron_grid = [30, 70, 92, 100]
+
+        if layer_grid is None:
+            layer_grid = [1, 3, 5, 9]
+
+        if batch_size_grid is None:
+            batch_size_grid = [batch_size]
+
+        if action == 'forecast':
+            self.create_formatted_data_obj(hourly_time_offset=hourly_time_offset_for_prediction)
+            data = self.data_obj.format_data(action, forecast_offset=forecast_offset,
+                                             predicted_quality=predicted_quality)
+        else:
+            data = self.data_obj.format_data(action, train_test_split=train_test_split, forecast_offset=forecast_offset,
                                          predicted_quality=predicted_quality)
 
         if action == 'train':
@@ -664,11 +749,26 @@ class CryptoModel:
             prediction = self.model.predict(data['input'])
             return prediction
 
+        elif action == 'optimize':
+            self.optimize_model(data['input'], data['output'], neuron_grid, layer_grid, batch_size_grid)
+            return None
+
 
 if __name__ == '__main__':
-    file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbymin__ticker_ETH_aux_BTC__from_2018-12-05_21:00:00EST_to_2018-12-08_21:00:00EST.pickle'
-    date_from = '2018-12-05_21:00:00'.replace('_', ' ')
-    date_to = '2018-12-08_21:00:00'.replace('_', ' ')
-    model_obj = CryptoModel(date_from, date_to, 'ETH', sym_list=['BTC'], forecast_offset=30)
-    model_obj.create_formatted_data_obj(save_data=True, data_set_path=file_name)
-    model_obj.model_actions('train/test', train_test_split=0.01)
+    should_use_existing_data_set_path = multiple_choice_question_with_prompt('Do you want to use an existing dataset? (yes or no)')
+    should_use_existing_model = multiple_choice_question_with_prompt('Do you want to use an existing dataset? (yes or no)')
+
+    if should_use_existing_data_set_path:
+        file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbyminETH_from_2018-12-08_22:00:00EST_to_2018-12-15_21:00:00EST.pickle'
+    if should_use_existing_model:
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30min_leakyreluact_adamopt_mean_absolute_percentage_errorloss_30neurons_15epochs1544938965.984761.h5'
+
+    date_from = '2018-12-09_11:00:00'.replace('_', ' ')
+    date_to = '2018-12-16_09:00:00'.replace('_', ' ')
+    sym_list = ['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+
+    # TODO make user prompt for model actions
+    for sym in sym_list:
+        model_obj = CryptoModel(date_from, date_to, sym, forecast_offset=30)
+        model_obj.create_formatted_data_obj(save_data=True)
+        model_obj.model_actions('optimize')
