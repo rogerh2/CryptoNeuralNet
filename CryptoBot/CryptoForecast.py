@@ -492,7 +492,7 @@ class CryptoModel:
     loss_func="mean_absolute_percentage_error"
     bitinfo_list = None
 
-    def __init__(self, date_from, date_to, prediction_ticker, forecast_offset=30, sym_list=None, epochs=500, activ_func='relu', time_units='min', is_leakyrelu=True, suppress_output=False):
+    def __init__(self, date_from, date_to, prediction_ticker, forecast_offset=30, sym_list=None, epochs=500, activ_func='relu', time_units='min', is_leakyrelu=True, suppress_output=False, model_path=None):
 
         self.date_from = date_from
         self.date_to = date_to
@@ -505,13 +505,18 @@ class CryptoModel:
         self.is_leakyrelu=is_leakyrelu
         self.suppression = suppress_output
 
+        if model_path is not None:
+            self.model = keras.models.load_model(model_path)
+
     def create_formatted_data_obj(self, save_data=False, data_set_path=None, hourly_time_offset=None):
 
         if hourly_time_offset is not None:
             # This is for making current predictions
-            fmt = '%Y-%m-%d %H:%M:%S'
+            fmt = '%Y-%m-%d %H:%M:00'
             date_to = datetime.now(get_localzone()).strftime(fmt)
             date_from = (datetime.now(get_localzone()) - timedelta(hours=hourly_time_offset)).strftime(fmt)
+            self.date_to = date_to
+            self.date_from = date_from
             self.data_obj = FormattedData(date_from, date_to, self.prediction_ticker,
                                           sym_list=self.bitinfo_list, time_units='min', suppression=self.suppression)
 
@@ -547,9 +552,11 @@ class CryptoModel:
 
     def update_formatted_data(self, date_to=None):
         date_from = self.date_to
-        fmt = '%Y-%m-%d %H:%M:%S'
+        fmt = '%Y-%m-%d %H:%M:00'
         if date_to is None:
-            date_to = datetime.now().strftime(fmt) + '00'
+            date_to = datetime.now().strftime(fmt)
+
+        fmt = '%Y-%m-%d %H:%M:%S'
 
         if date_to != date_from:
             data_obj_for_update = FormattedData(date_from, date_to, self.prediction_ticker,
@@ -724,7 +731,10 @@ class CryptoModel:
             batch_size_grid = [batch_size]
 
         if action == 'forecast':
-            self.create_formatted_data_obj(hourly_time_offset=hourly_time_offset_for_prediction)
+            if self.data_obj is None:
+                self.create_formatted_data_obj(hourly_time_offset=hourly_time_offset_for_prediction)
+            else:
+                self.update_formatted_data()
             data = self.data_obj.format_data(action, forecast_offset=forecast_offset,
                                              predicted_quality=predicted_quality)
         else:
@@ -755,20 +765,22 @@ class CryptoModel:
 
 
 if __name__ == '__main__':
-    should_use_existing_data_set_path = multiple_choice_question_with_prompt('Do you want to use an existing dataset? (yes or no)')
-    should_use_existing_model = multiple_choice_question_with_prompt('Do you want to use an existing dataset? (yes or no)')
+    should_use_existing_data_set_path = False
+    should_use_existing_model = True
+    file_name = None
+    model_path = None
 
     if should_use_existing_data_set_path:
         file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbyminETH_from_2018-12-08_22:00:00EST_to_2018-12-15_21:00:00EST.pickle'
     if should_use_existing_model:
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30min_leakyreluact_adamopt_mean_absolute_percentage_errorloss_30neurons_15epochs1544938965.984761.h5'
 
-    date_from = '2018-12-09_11:00:00'.replace('_', ' ')
-    date_to = '2018-12-16_09:00:00'.replace('_', ' ')
-    sym_list = ['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+    date_from = '2017-12-12_11:00:00'.replace('_', ' ')
+    date_to = '2018-12-18_09:00:00'.replace('_', ' ')
+    sym_list = ['ETH']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
 
-    # TODO make user prompt for model actions
     for sym in sym_list:
-        model_obj = CryptoModel(date_from, date_to, sym, forecast_offset=30)
-        model_obj.create_formatted_data_obj(save_data=True)
-        model_obj.model_actions('optimize')
+        model_obj = CryptoModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
+        #model_obj.create_formatted_data_obj(save_data=True)
+        pred = model_obj.model_actions('forecast')
+        print('hello world!')

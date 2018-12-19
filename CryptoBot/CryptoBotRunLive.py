@@ -51,23 +51,19 @@ class SpreadTradeBot:
     def __init__(self, minute_model, api_key, secret_key, passphrase, minute_len=30,
                  prediction_ticker='ETH', bitinfo_list=None, is_sandbox_api=True):
 
-        temp = "2018-05-05 00:00:00 EST"
+        temp1 = "2018-05-05 00:00:00 EST"
+        temp2 = "2018-06-05 00:00:00 EST"
 
-        if bitinfo_list is None:
-            self.bitinfo_list = ['eth']
-        else:
-            self.bitinfo_list = bitinfo_list
-
-        self.cp = CoinPriceModel(temp, temp, days=minute_len, prediction_ticker=prediction_ticker,
-                                 bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=minute_model, need_data_obj=False)
-
+        self.price_model = CryptoModel(temp1, temp2, forecast_offset=minute_len, prediction_ticker=prediction_ticker,
+                                          sym_list=bitinfo_list, time_units='min', model_path=minute_model)
+        self.bitinfo_list = bitinfo_list
         self.minute_length = minute_len
         self.prediction_ticker = prediction_ticker.upper()
         self.prediction = None
         self.price = None
 
         self.product_id = prediction_ticker.upper() + '-USD'
-        self.save_str = 'most_recent' + str(self.cp.prediction_length) + 'currency_' + self.prediction_ticker + '.h5'
+        self.save_str = 'most_recent' + str(self.price_model.prediction_length) + 'currency_' + self.prediction_ticker + '.h5'
 
         if is_sandbox_api:
             self.api_base = 'https://api-public.sandbox.pro.coinbase.com'
@@ -83,13 +79,12 @@ class SpreadTradeBot:
 
     def spread_bot_predict(self):
 
-        if self.price is None:
-            full_minute_prediction, full_minute_price = self.cp.predict(time_units='minutes', show_plots=False)
-        else:
-            full_minute_prediction, full_minute_price = self.cp.predict(time_units='minutes', show_plots=False, old_prediction=self.prediction, is_first_prediction=False)
+        full_minute_prediction = self.price_model.model_actions('forecast')
+        #TODO this assumes that the highs are being predicted, which may not always be the case, get rid of explicit definition!
+        full_minute_price = self.price_model.data_obj.raw_data[self.prediction_ticker + '_high'].values
 
-        self.prediction = full_minute_prediction.values[::, 0]
-        self.price = full_minute_price.values[30::, 0]
+        self.prediction = full_minute_prediction[::, 0]
+        self.price = full_minute_price[30::]
 
     def find_fit_info(self):
         #This method searches the past data to determine what value should be used for the error
@@ -166,7 +161,7 @@ class SpreadTradeBot:
 
     def find_expected_value(self, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
 
-        ind = -self.cp.prediction_length
+        ind = -self.price_model.prediction_length
 
         if is_buy:
             trade_group = [3, 4, 8, 9]
@@ -542,7 +537,6 @@ class SpreadTradeBot:
 
         did_not_set_max_jump_ind = True
         num_minutes = 5 + time_since_last_trade
-        self.max_jump_ind == 0
 
         for i in range(0, len(trade_prices)):
 
@@ -778,13 +772,13 @@ class SpreadTradeBot:
         return last_check, err_counter
 
     def reinitialize_model(self):
-        temp = "2018-05-05 00:00:00 EST"
-        self.cp = CoinPriceModel(temp, temp, days=self.minute_length, prediction_ticker=self.prediction_ticker,
-                                 bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=self.save_str,
-                                 need_data_obj=False)
+        temp1 = "2018-05-05 00:00:00 EST"
+        temp2 = "2018-06-05 00:00:00 EST"
+
+        self.price_model = CryptoModel(temp1, temp2, forecast_offset=self.minute_length, prediction_ticker=self.prediction_ticker,
+                                       sym_list=self.bitinfo_list, time_units='min', model_path=self.save_str)
         self.prediction = None
         self.price = None
-        self.cp.pred_data_obj = None
 
     def trade_loop(self):
         # This method keeps the bot running continuously
@@ -807,7 +801,7 @@ class SpreadTradeBot:
             starting_price) + ' per ' + self.prediction_ticker + 'and a portfolio worth $' + num2str(portfolio_value, 2))
         sleep(1)
         err_counter = 0
-        check_period = 60
+        check_period = 1
         last_plot = 0
         last_buy_msg = ''
         last_sell_msg = ''
@@ -873,15 +867,6 @@ class SpreadTradeBot:
                         print('Sell message: ' + sell_msg)
                         last_sell_msg = sell_msg
 
-                    if True: # self.trade_logic['buy'] != self.trade_logic['sell']:
-                        check_period = 1
-                    else:
-                        check_period = 60
-                        if self.trade_ids['buy'] != '':
-                            unused_msg = self.cancel_old_hodl_order('buy', 0, 0)
-
-                        if self.trade_ids['sell'] != '':
-                            unused_msg = self.cancel_old_hodl_order('sell', 0, 0)
                 except Exception as e:
                     last_check, err_counter = self.print_err_msg('trade', e, err_counter, current_time)
 
@@ -892,27 +877,12 @@ class SpreadTradeBot:
                     last_scrape = 0
                     err_counter = 0
                     last_training_time = current_time
-                    to_date = datetime.now()
-                    from_delta = timedelta(hours=2)
-                    from_date = to_date - from_delta
-                    date_to = to_date.strftime(fmt) + '00 UTC'
-                    date_from = from_date.strftime(fmt) + '00 UTC'
-                    training_data = DataSet(date_from=date_from, date_to=date_to,
-                                            prediction_length=self.cp.prediction_length, bitinfo_list=self.bitinfo_list,
-                                            prediction_ticker=self.prediction_ticker, time_units='minutes')
-                    self.cp.data_obj = training_data
-
-                    self.cp.update_model_training()
-                    self.cp.model.save(self.save_str)
+                    self.price_model.model_actions('train', train_saved_model=True, save_model=False)
+                    self.price_model.model.save(self.save_str)
 
                     # Reinitialize CoinPriceModel
                     self.reinitialize_model()
-                    # temp = "2018-05-05 00:00:00 EST"
-                    # self.cp = CoinPriceModel(temp, temp, days=self.minute_length, prediction_ticker=self.prediction_ticker,
-                    #              bitinfo_list=self.bitinfo_list, time_units='minutes', model_path=self.save_str, need_data_obj=False)
-                    # self.prediction = None
-                    # self.price = None
-                    # self.cp.pred_data_obj = None
+
                 except Exception as e:
                     last_training_time = current_time + 5*60
                     err_counter += 1
@@ -949,11 +919,11 @@ if __name__ == '__main__':
         sandbox_bool = bool(int(sys.argv[5]))
 
     else:
-        minute_path = input('What is the model path?')
-        api_input = input('What is the api key?')
-        secret_input = input('What is the secret key?')
-        passphrase_input = input('What is the passphrase?')
-        sandbox_bool = bool(int(input('Is this for a sandbox?')))
+        minute_path = input('What is the model path? ')
+        api_input = input('What is the api key? ')
+        secret_input = input('What is the secret key? ')
+        passphrase_input = input('What is the passphrase? ')
+        sandbox_bool = bool(int(input('Is this for a sandbox? ')))
 
     print(minute_path)
     print(api_input)
