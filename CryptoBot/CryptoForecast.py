@@ -1,3 +1,7 @@
+import sys
+#sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
+# use the below for AWS
+sys.path.append("home/ubuntu/CryptoNeuralNet")
 import requests
 from requests.auth import AuthBase
 import re
@@ -25,6 +29,15 @@ from keras.layers import LeakyReLU
 from keras import backend as K
 from sklearn.preprocessing import StandardScaler
 import smtplib
+
+#For AWS
+# from CryptoBot_Shared_Functions import convert_time_to_uct
+# from CryptoBot_Shared_Functions import get_current_tz
+# from CryptoBot_Shared_Functions import progress_printer
+# from CryptoBot_Shared_Functions import rescale_to_fit
+# from CryptoBot_Shared_Functions import num2str
+
+#For Local
 from CryptoBot.CryptoBot_Shared_Functions import convert_time_to_uct
 from CryptoBot.CryptoBot_Shared_Functions import get_current_tz
 from CryptoBot.CryptoBot_Shared_Functions import progress_printer
@@ -550,7 +563,7 @@ class CryptoModel:
         if save_data:
             self.data_obj.save_raw_data()
 
-    def update_formatted_data(self, date_to=None):
+    def update_formatted_data(self, date_to=None, save_data=False):
         date_from = self.date_to
         fmt = '%Y-%m-%d %H:%M:00'
         if date_to is None:
@@ -577,6 +590,9 @@ class CryptoModel:
                 self.data_obj.raw_data = self.data_obj.raw_data.append(new_raw_data)
                 self.data_obj.date_to = date_to
                 self.date_to = date_to
+
+        if save_data:
+            self.data_obj.save_raw_data()
 
 
 
@@ -764,6 +780,20 @@ class CryptoModel:
             return None
 
 
+# --Useful Scripts Based on This Class--
+
+def increase_saved_dataset_length(original_ds_path, sym, date_to=None):
+    date_from_search = re.search(r'^.*from_(.*)_to_.*$', original_ds_path).group(1)
+    date_from = date_from_search.replace('_', ' ')
+    date_from = date_from.replace('EST', '')
+    date_to_search = re.search('^.*to_(.*).pickle.*$', original_ds_path).group(1)
+    og_to_date = date_to_search.replace('_', ' ')
+    og_to_date = og_to_date.replace('EST', '')
+
+    model_obj = CryptoModel(date_from, og_to_date, sym, forecast_offset=30)
+    model_obj.create_formatted_data_obj(data_set_path=original_ds_path)
+    model_obj.update_formatted_data(save_data=True, date_to=date_to)
+
 if __name__ == '__main__':
     should_use_existing_data_set_path = False
     should_use_existing_model = True
@@ -773,14 +803,13 @@ if __name__ == '__main__':
     if should_use_existing_data_set_path:
         file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbyminETH_from_2018-12-08_22:00:00EST_to_2018-12-15_21:00:00EST.pickle'
     if should_use_existing_model:
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30min_leakyreluact_adamopt_mean_absolute_percentage_errorloss_30neurons_15epochs1544938965.984761.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/BTC/BTCmodel_3layers_30min_leakyreluact_adamopt_mean_absolute_percentage_errorloss_92neurons_2epochs1545192453.197662.h5'
 
-    date_from = '2017-12-12_11:00:00'.replace('_', ' ')
-    date_to = '2018-12-18_09:00:00'.replace('_', ' ')
-    sym_list = ['ETH']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+    date_from = '2018-12-18_20:00:00'.replace('_', ' ')
+    date_to = '2018-12-18_23:00:00'.replace('_', ' ')
+    sym_list = ['BTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
 
     for sym in sym_list:
         model_obj = CryptoModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
-        #model_obj.create_formatted_data_obj(save_data=True)
-        pred = model_obj.model_actions('forecast')
-        print('hello world!')
+        model_obj.create_formatted_data_obj()
+        pred = model_obj.model_actions('test')

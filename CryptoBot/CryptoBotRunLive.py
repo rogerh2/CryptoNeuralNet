@@ -1,13 +1,16 @@
 import matplotlib
 matplotlib.use('Agg')
 import sys
-#sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
+
+# from CryptoBot.CryptoForecast import CryptoModel
+# from CryptoBot.CryptoBot_Shared_Functions import num2str
+# from CryptoBot.CryptoBot_Shared_Functions import create_number_from_bools
+
 # use the below for AWS
-sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoBot")
-from CryptoBot.CryptoForecast import CryptoModel
-from CryptoBot.CryptoForecast import DataScraper
-from CryptoBot.CryptoBot_Shared_Functions import num2str
-from CryptoBot.CryptoBot_Shared_Functions import create_number_from_bools
+sys.path.append("home/ubuntu/CryptoNeuralNet")
+from CryptoForecast import CryptoModel
+from CryptoBot_Shared_Functions import num2str
+from CryptoBot_Shared_Functions import create_number_from_bools
 
 import cbpro
 import numpy as np
@@ -152,12 +155,6 @@ class SpreadTradeBot:
         # 0000 = 0 N/A, 0001 = 1 increasing \/, 0010 = 2 decreasing \/, 3 = /\/, 0100 = 4 decreasing /\, 5 = \/\, 0110 = 6 \, 1000 = 8
         # increasing /\, 1001 = 9 /
         return shape
-
-    def compare_shapes(self, prediction, actual):
-        pred_shape = self.characterize_shape(prediction)
-        actual_shape = self.characterize_shape(actual)
-
-        return pred_shape == actual_shape
 
     def find_expected_value(self, err, is_buy, const_diff, fit_coeff, fuzziness, fit_offset):
 
@@ -320,39 +317,6 @@ class SpreadTradeBot:
 
         prices = np.array([round(float(x[0]), 2) for x in dict])
         return prices
-
-    def price_loop(self, dict, max_price, min_price, num_trades, order_type):
-        # trade_sign is -1 for buy and +1 for sell
-        # Price loop finds trade prices for spreads based on predicted value
-        # dict is the order dict for the side in question (either asks or bids)
-
-        # spread_prices = diff_arr = np.array([])
-        prices = self.find_dict_info(dict)
-
-        #This allows the bot to take advantage of the full spread
-        min_allowable_price = np.min(prices)
-        max_allowable_price = np.max(prices)
-
-        if (order_type == 'sell'):
-            min_spread = np.round((max_price - min_allowable_price) / (2*num_trades), 2)
-            min_price = min_allowable_price + min_spread
-            if num_trades == 1:
-                return np.array([min_price])
-
-        elif (order_type == 'buy'):
-            min_spread = np.round((max_allowable_price - min_price) / (2*num_trades), 2)
-            max_price = max_allowable_price - min_spread
-            if num_trades == 1:
-                return np.array([max_price])
-
-        price_step = np.round((max_price-min_price)/num_trades, 2)
-
-        if price_step < 0.01:
-            return np.array([])
-
-        spread_prices = np.arange(min_price, max_price, price_step)
-
-        return  spread_prices
 
     def find_trade_size_and_number(self, err, available, current_price, side):
         # This method finds the limit size to choose as well as the number of orders, it tries to keep orders to under
@@ -759,8 +723,8 @@ class SpreadTradeBot:
         msg = current_state
         return msg
 
-    def print_err_msg(self, section_text, e, err_counter, current_time):
-        last_check = current_time + 5 * 60
+    def print_err_msg(self, section_text, e, err_counter):
+        sleep(5*60) #Most errors are connection related, so a short time out is warrented
         err_counter += 1
         print('failed to' + section_text + ' due to error: ' + str(e))
         print('number of consecutive errors: ' + str(err_counter))
@@ -769,7 +733,7 @@ class SpreadTradeBot:
         #print(exc_type, fname, exc_tb.tb_lineno)
         print(traceback.format_exc())
 
-        return last_check, err_counter
+        return err_counter
 
     def reinitialize_model(self):
         temp1 = "2018-05-05 00:00:00 EST"
@@ -819,7 +783,6 @@ class SpreadTradeBot:
                     accnt_data = self.auth_client.get_accounts()
                     sleep(0.4)
                     self.scrape_granular_price()
-                    err_counter = 0
                     last_check = current_time
                     if (current_time > (last_scrape + 65)):
                         price, portfolio_value = self.get_portfolio_value(order_dict, accnt_data)
@@ -830,25 +793,25 @@ class SpreadTradeBot:
                         self.timer['buy'] += 1
                         self.timer['sell'] += 1
 
+                    err_counter = 0
+
 
                 except Exception as e:
-                    last_check, err_counter = self.print_err_msg('find new data', e, err_counter, current_time)
-                    #The most common error found here corrupts the past datset. By reinitializing the issues caused by the error can hopefully be mitigated
-                    self.reinitialize_model()
+                    err_counter = self.print_err_msg('find new data', e, err_counter)
                     continue
 
                 # Plot returns
                 try:
-                    err_counter = 0
                     if (current_time > (last_plot + 5*60)):
                         self.plot_returns(portfolio_returns, portfolio_value, market_returns, price)
                         last_plot = current_time
+                        err_counter = 0
                 except Exception as e:
-                    last_check, err_counter = self.print_err_msg('plot', e, err_counter, current_time)
+                    err_counter = self.print_err_msg('plot', e, err_counter)
+                    continue
 
                 # Make trades
                 try:
-                    err_counter = 0
                     err, fit_coeff, fit_offset, const_diff, fuzziness = self.find_fit_info()
                     buy_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', order_dict, accnt_data)
                     sell_msg = self.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell', order_dict, accnt_data)
@@ -867,30 +830,28 @@ class SpreadTradeBot:
                         print('Sell message: ' + sell_msg)
                         last_sell_msg = sell_msg
 
+                    err_counter = 0
+
                 except Exception as e:
-                    last_check, err_counter = self.print_err_msg('trade', e, err_counter, current_time)
+                    err_counter = self.print_err_msg('trade', e, err_counter)
+                    continue
 
 
             # Update model training
             elif current_time > (last_training_time + 2*3600):
                 try:
                     last_scrape = 0
-                    err_counter = 0
                     last_training_time = current_time
                     self.price_model.model_actions('train', train_saved_model=True, save_model=False)
                     self.price_model.model.save(self.save_str)
 
                     # Reinitialize CoinPriceModel
                     self.reinitialize_model()
+                    err_counter = 0
 
                 except Exception as e:
-                    last_training_time = current_time + 5*60
-                    err_counter += 1
-                    print('failed to update training due to error: ' + str(e))
-                    print('number of consecutive errors: ' + str(err_counter))
-                    exc_type, exc_obj, exc_tb = sys.exc_info()
-                    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                    print(exc_type, fname, exc_tb.tb_lineno)
+                    err_counter = self.print_err_msg('trade', e, err_counter)
+                    continue
 
 
 
@@ -934,7 +895,7 @@ if __name__ == '__main__':
     naive_bot = SpreadTradeBot(minute_model=minute_path,
                                 api_key=api_input,
                                 secret_key=secret_input,
-                                passphrase=passphrase_input, is_sandbox_api=sandbox_bool, minute_len=30)
+                                passphrase=passphrase_input, is_sandbox_api=sandbox_bool, minute_len=30, prediction_ticker='BTC')
 
     naive_bot.trade_loop()
 
