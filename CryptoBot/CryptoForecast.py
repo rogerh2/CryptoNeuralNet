@@ -17,8 +17,7 @@ import pickle
 import base64
 import hashlib
 import hmac
-import cbpro
-import sys
+from cbpro import PublicClient
 from tzlocal import get_localzone
 from textblob import TextBlob as txb
 from keras.models import Sequential
@@ -26,9 +25,7 @@ from keras.layers import Activation, Dense
 from keras.layers import LSTM
 from keras.layers import Dropout
 from keras.layers import LeakyReLU
-from keras import backend as K
 from sklearn.preprocessing import StandardScaler
-import smtplib
 
 #For AWS
 # from CryptoBot_Shared_Functions import convert_time_to_uct
@@ -68,6 +65,8 @@ class DataScraper:
             self.date_to = convert_time_to_uct(datetime.strptime(date_to, fmt))
         else:
             self.date_to = None
+
+    # --Methods for the CryptoCompare API--
 
     def datedelta(self, units):
         d1_ts = time.mktime(self.date_from.timetuple())
@@ -782,7 +781,7 @@ class CryptoModel:
 
 # --Useful Scripts Based on This Class--
 
-def increase_saved_dataset_length(original_ds_path, sym, date_to=None):
+def increase_saved_dataset_length(original_ds_path, sym, date_to=None, forecast_offset=30):
     date_from_search = re.search(r'^.*from_(.*)_to_.*$', original_ds_path).group(1)
     date_from = date_from_search.replace('_', ' ')
     date_from = date_from.replace('EST', '')
@@ -790,7 +789,7 @@ def increase_saved_dataset_length(original_ds_path, sym, date_to=None):
     og_to_date = date_to_search.replace('_', ' ')
     og_to_date = og_to_date.replace('EST', '')
 
-    model_obj = CryptoModel(date_from, og_to_date, sym, forecast_offset=30)
+    model_obj = CryptoModel(date_from, og_to_date, sym, forecast_offset=forecast_offset)
     model_obj.create_formatted_data_obj(data_set_path=original_ds_path)
     model_obj.update_formatted_data(save_data=True, date_to=date_to)
 

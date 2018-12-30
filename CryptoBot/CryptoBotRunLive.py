@@ -636,7 +636,7 @@ class SpreadTradeBot:
             usd_available, available = self.get_available_wallet_contents(accnt_data)
             price = self.determine_trade_price(order_type, order_dict, is_stop=True)
             sign = -1
-            trade_size_lim = 0.01
+            trade_size_lim = 0.001
 
         # -- determine whether the conditions are right to trade --
         jump_num, bound_bool = self.should_update_trade_price(order_type, -sign)
@@ -660,8 +660,8 @@ class SpreadTradeBot:
             # Wait until value is created or the situation has changed to sell
             hodl = True
             trade_reason = 'guess'
-            if available > (balance/num_spread_trades + trade_size_lim):
-                available = balance/num_spread_trades
+            # if available > (balance/num_spread_trades + trade_size_lim):
+            #     available = balance/num_spread_trades
             current_state += 'spread detected'
 
         elif is_extreme_pressure and (sign*price < sign*last_trade_price) and (order_type == 'sell'):
