@@ -18,7 +18,7 @@ def print_err_msg(section_text, e, err_counter):
 
         return err_counter
 
-def get_single_order_book_row(sym, file_name_base, pub_client):
+def get_single_order_book_row(sym, pub_client):
     product_id = sym.upper() + '-USD'
     order_book = pub_client.get_product_order_book(product_id, level=2)
     sleep(0.5)
@@ -28,7 +28,7 @@ def get_single_order_book_row(sym, file_name_base, pub_client):
         return None, None
     bids = order_book['bids']
     asks = order_book['asks']
-    num_order_book_entries = 7 # How far up the order book to scrape
+    num_order_book_entries = 20 # How far up the order book to scrape
     num_cols = 3*2*num_order_book_entries
 
     bid_row = []
@@ -69,9 +69,9 @@ def scrape_and_save_order_books(sym_list, file_name_base='/Users/rjh2nd/PycharmP
         try:
             for sym in sym_list:
                 #TODO get rid of need to repeat processes for every loop
-                file_name = file_name_base + sym + '_historical_order_books.csv'
+                file_name = file_name_base + sym + '_historical_order_books' + unique_id + '.csv'
                 old_row = old_row_dict[sym]
-                new_row, header_names = get_single_order_book_row(sym, file_name_base, public_client)
+                new_row, header_names = get_single_order_book_row(sym, public_client)
                 if new_row is None:
                     # For errors
                     continue
@@ -99,7 +99,7 @@ def scrape_and_save_order_books(sym_list, file_name_base='/Users/rjh2nd/PycharmP
                 if last_fill_side == recent_fill_side:
                     continue
 
-                fill_file_name = file_name_base + sym + '_fills.csv'
+                fill_file_name = file_name_base + sym + '_fills' + unique_id + '.csv'
 
                 save_single_row(fill_file_name, list(recent_fill.values()), list(recent_fill.keys()))
 
@@ -110,4 +110,4 @@ def scrape_and_save_order_books(sym_list, file_name_base='/Users/rjh2nd/PycharmP
 if __name__ == '__main__':
     sym_list = ['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
     print('Begin scraping data')
-    scrape_and_save_order_books(sym_list)
+    scrape_and_save_order_books(sym_list, unique_id='_20entries')
