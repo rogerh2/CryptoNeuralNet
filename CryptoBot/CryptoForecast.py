@@ -404,8 +404,53 @@ class FormattedData:
 
         sentiment_col, count_col = self.collect_news_counts_and_sentiments()
         news_data_frame = pd.DataFrame({'Sentiment':sentiment_col, 'Count':count_col})
-        self.raw_data = pd.concat([self.raw_data, news_data_frame], axis=1, join_axes=[news_data_frame.index])
+        self.raw_data = pd.concat([self.raw_data, news_data_frame], axis=1, join_axes=[news_data_frame.index])\
 
+    def str_list_to_timestamp(self, datetime_str_list):
+        fmt = '%Y-%m-%dT%H:%M:%S.%fZ'
+        utc = pytz.UTC
+        localized_datetime_objects = [utc.localize(datetime.strptime(str, fmt)) for str in datetime_str_list]
+        time_stamps = np.array([dt.timestamp() for dt in localized_datetime_objects])
+
+        return time_stamps
+
+    def normalize_fill_array(self, order_book, fills):
+        # This function takes advantage of the Markovian nature of crypto prices and normalizes the fills by the current
+        # top bid. This is intended to make the predictions homogeneous no matter what the current price is
+        # Note: current setup has prices at every third entry, should change to have identifying headers
+        fill_ind = 0
+        order_book_ts_vals = order_book.ts.values
+        order_book_top_bid_vals = order_book['3'].values # The fills are normalized off the top bid
+
+        fill_ts_vals = fills.time.values
+        fill_price_vals = fills.price.values
+
+
+        current_fill_ts = fill_ts_vals[fill_ind]
+        normalized_fills = np.array([])
+
+        for order_book_ind in range(0, len(order_book_ts_vals)):
+
+            ts = order_book_ts_vals[order_book_ind]
+            current_bid = order_book_top_bid_vals[order_book_ind]
+
+            while ts > current_fill_ts:
+                fill_ind += 1
+                if fill_ind == len(fill_price_vals):
+                    # If there are more order book states after the last fill than this stops early
+                    return normalized_fills
+                current_fill_ts = fill_ts_vals[fill_ind]
+
+            current_fill = fill_price_vals[fill_ind]
+            current_normalized_fill = current_fill/current_bid
+            normalized_fills = np.append(normalized_fills, current_normalized_fill)
+
+
+        return normalized_fills
+
+    # TODO write function to normalize order book prices (per row) based on the first price entry and to remove the first column (as it is now full of just ones)
+
+    # TODO edit format functions to accept preexisting output arrays (for use with the orderbook + fill data)
     def format_data_for_training_or_testing(self, forecast_offset=30, predicted_quality='high'):
 
         # Create output for training

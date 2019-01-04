@@ -143,6 +143,29 @@ class DataFormatterTestCase(unittest.TestCase):
 
         pd.testing.assert_frame_equal(saved_table, self.test_obj.raw_data)
 
+    # --Tests for Formatting Historical Order Book Data--
+
+    def test_does_convert_list_of_strs_to_timestamps(self):
+        fmt = '%Y-%m-%dT%H:%M:%S.%fZ'
+        time_strs = ['2018-12-30T23:24:03.242Z', '2018-12-30T23:27:37.905Z', '2018-12-30T23:29:09.619Z',
+                     '2018-12-30T23:30:56.929Z', '2018-12-30T23:31:52.7Z', '2018-12-30T23:33:28.299Z',
+                     '2018-12-30T23:33:58.814Z', '2018-12-30T23:34:20.894Z', '2018-12-30T23:35:10.975Z',
+                     '2018-12-30T23:35:43.04Z']
+        true_answer = np.array([1546212243.242, 1546212457.905, 1546212549.619, 1546212656.929, 1546212712.7, 1546212808.299, 1546212838.814, 1546212860.894, 1546212910.975, 1546212943.04])
+        ans = self.test_obj.str_list_to_timestamp(time_strs)
+
+        for i in range(0, len(true_answer)):
+            self.assertEqual(ans[i], true_answer[i])
+
+    def test_does_normalize_fills_according_to_first_bid(self):
+        test_order_book = pd.DataFrame({'ts': [1, 2, 3, 4, 5, 6], '3': [1, 2, 3, 4, 5, 6]})
+        test_fills = pd.DataFrame({'time': [2.5, 2.75, 3.5, 5.5], 'price': [2, 4, 9, 20]})
+        true_ans = np.array([2, 1, 3, 5, 4])
+        ans = self.test_obj.normalize_fill_array(test_order_book, test_fills)
+
+        np.testing.assert_array_equal(ans, true_ans)
+
+
     def tearDown(self):
         #This deletes test files
         if Path(self.ref_file_name).is_file():
