@@ -92,6 +92,9 @@ def scrape_and_save_order_books(sym_list, file_name_base='/Users/rjh2nd/PycharmP
                 prod_id = sym.upper() + '-USD'
                 recent_fill = list(islice(public_client.get_product_trades(product_id=prod_id), 1))[0]
                 sleep(0.5)
+                if type(recent_fill) == str:
+                    print('Error: recent_fill is a str, recent_fill = ' + recent_fill)
+                    continue
                 recent_fill_side = recent_fill['side']
                 last_fill_side = old_fill_dict[sym]
                 old_fill_dict[sym] = recent_fill_side
@@ -104,7 +107,7 @@ def scrape_and_save_order_books(sym_list, file_name_base='/Users/rjh2nd/PycharmP
                 save_single_row(fill_file_name, list(recent_fill.values()), list(recent_fill.keys()))
 
         except Exception as e:
-            err_counter = print_err_msg('get last fill', e, err_counter)
+            err_counter = print_err_msg(' get last fill for ' + sym, e, err_counter)
 
 
 if __name__ == '__main__':

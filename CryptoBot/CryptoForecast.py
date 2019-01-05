@@ -414,6 +414,23 @@ class FormattedData:
 
         return time_stamps
 
+    def normalize_order_book_row(self, base_value, full_row):
+        i = 6
+
+        normalized_row = full_row.values
+
+        while i < (len(full_row.columns)):
+            col_title = str(i)
+            order_price = full_row[col_title]
+            normalized_order_price = order_price/base_value
+            normalized_row[0, i] = normalized_order_price
+            i += 3
+
+        normalized_row = full_row.values
+
+        return  normalized_row
+
+
     def normalize_fill_array(self, order_book, fills):
         # This function takes advantage of the Markovian nature of crypto prices and normalizes the fills by the current
         # top bid. This is intended to make the predictions homogeneous no matter what the current price is
@@ -438,17 +455,24 @@ class FormattedData:
                 fill_ind += 1
                 if fill_ind == len(fill_price_vals):
                     # If there are more order book states after the last fill than this stops early
-                    return normalized_fills
+                    return normalized_fills, normalized_order_book
                 current_fill_ts = fill_ts_vals[fill_ind]
 
             current_fill = fill_price_vals[fill_ind]
             current_normalized_fill = current_fill/current_bid
             normalized_fills = np.append(normalized_fills, current_normalized_fill)
 
+            current_order_book_row = order_book[order_book.index==order_book_ind]
+            normalized_order_book_row = self.normalize_order_book_row(current_bid, current_order_book_row)
+            if order_book_ind == 0:
+                normalized_order_book = normalized_order_book_row
+            else:
+                normalized_order_book = np.vstack((normalized_order_book, normalized_order_book_row))
 
-        return normalized_fills
 
-    # TODO write function to normalize order book prices (per row) based on the first price entry and to remove the first column (as it is now full of just ones)
+
+        return normalized_fills, normalized_order_book
+
 
     # TODO edit format functions to accept preexisting output arrays (for use with the orderbook + fill data)
     def format_data_for_training_or_testing(self, forecast_offset=30, predicted_quality='high'):
