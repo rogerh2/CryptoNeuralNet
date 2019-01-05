@@ -161,16 +161,16 @@ class DataFormatterTestCase(unittest.TestCase):
         test_order_book = pd.DataFrame({'ts': [1, 2, 3, 4, 5, 6], '3': [1, 2, 3, 4, 5, 6], '6': [2, 4, 6, 8, 10, 12]})
         test_fills = pd.DataFrame({'time': [2.5, 2.75, 3.5, 5.5], 'price': [2, 4, 9, 20]})
         true_ans = np.array([2, 1, 3, 5, 4])
-        ans, _ = self.test_obj.normalize_fill_array(test_order_book, test_fills)
+        ans, _ = self.test_obj.normalize_fill_array_and_order_book(test_order_book, test_fills)
 
         np.testing.assert_array_equal(ans, true_ans)
 
     def test_does_normalize_order_book_row_according_to_frist_bid(self):
-        test_order_book = pd.DataFrame({'ts': [1, 2, 3, 4, 5, 6], '0': [4, 8, 12, 16, 20, 12], '1': [4, 8, 12, 16, 20, 12], '2': [4, 8, 12, 16, 20, 12], '3': [2, 4, 6, 8, 10, 6], '4': [4, 8, 12, 16, 20, 12], '5': [4, 8, 12, 16, 20, 12], '6': [4, 8, 12, 16, 20, 12]})
+        test_order_book = pd.DataFrame({'ts': [1, 2, 3, 4, 5, 6], '0': [4, 8, 12, 16, 20, 12], '1': [4, 8, 12, 16, 20, 12], '2': [4, 8, 12, 16, 20, 12], '3': [2, 4, 6, 8, 10, 6], '4': [4, 8, 12, 16, 20, 12], '5': [4, 8, 12, 16, 20, 12], '6': [6, 12, 18, 24, 30, 12]})
         test_fills = pd.DataFrame({'time': [2.5, 2.75, 3.5, 5.5], 'price': [2, 4, 9, 20]})
-        true_ans = np.array([2, 2, 2, 2, 2])
-        _, full_ans = self.test_obj.normalize_fill_array(test_order_book, test_fills)
-        ans = full_ans[::, 6]
+        true_ans = np.array([3, 3, 3, 3, 3])
+        _, full_ans = self.test_obj.normalize_fill_array_and_order_book(test_order_book, test_fills)
+        ans = full_ans[::, -1]
 
         np.testing.assert_array_equal(ans, true_ans)
 

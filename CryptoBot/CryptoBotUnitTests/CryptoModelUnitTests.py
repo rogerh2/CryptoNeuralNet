@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import pickle
 from pathlib import Path
-from CryptoBot.CryptoForecast import CryptoModel
+from CryptoBot.CryptoForecast import CryptoPriceModel
 from CryptoBot.CryptoBot_Shared_Functions import get_current_tz
 import keras
 from datetime import datetime
@@ -21,7 +21,7 @@ class CryptoModelTestCase(unittest.TestCase):
         self.ref_len = 3001
         date_from = (datetime.now() - timedelta(minutes=minute_diff)).strftime('%Y-%m-%d %H:%M:') + '00'
 
-        self.test_obj = CryptoModel(date_from, date_to, 'ETH')
+        self.test_obj = CryptoPriceModel(date_from, date_to, 'ETH')
         self.test_obj.create_formatted_data_obj()
 
     # --Tests for Model Functions--
@@ -52,7 +52,7 @@ class CryptoModelTestCase(unittest.TestCase):
         date_to = (datetime.now() - timedelta(minutes=30)).strftime(fmt) + '00'
         date_from = (datetime.now() - timedelta(minutes=90)).strftime(fmt) + '00'
 
-        test_obj = CryptoModel(date_from, date_to, 'ETH')
+        test_obj = CryptoPriceModel(date_from, date_to, 'ETH')
         test_obj.create_formatted_data_obj()
         test_obj.update_formatted_data(date_to=new_date_to)
 

@@ -2,15 +2,15 @@ import matplotlib
 matplotlib.use('Agg')
 import sys
 
-# from CryptoBot.CryptoForecast import CryptoModel
-# from CryptoBot.CryptoBot_Shared_Functions import num2str
-# from CryptoBot.CryptoBot_Shared_Functions import create_number_from_bools
+from CryptoBot.CryptoForecast import CryptoPriceModel
+from CryptoBot.CryptoBot_Shared_Functions import num2str
+from CryptoBot.CryptoBot_Shared_Functions import create_number_from_bools
 
 # use the below for AWS
 sys.path.append("home/ubuntu/CryptoNeuralNet")
-from CryptoForecast import CryptoModel
-from CryptoBot_Shared_Functions import num2str
-from CryptoBot_Shared_Functions import create_number_from_bools
+# from CryptoForecast import CryptoPriceModel
+# from CryptoBot_Shared_Functions import num2str
+# from CryptoBot_Shared_Functions import create_number_from_bools
 
 import cbpro
 import numpy as np
@@ -57,8 +57,8 @@ class SpreadTradeBot:
         temp1 = "2018-05-05 00:00:00 EST"
         temp2 = "2018-06-05 00:00:00 EST"
 
-        self.price_model = CryptoModel(temp1, temp2, forecast_offset=minute_len, prediction_ticker=prediction_ticker,
-                                          sym_list=bitinfo_list, time_units='min', model_path=minute_model)
+        self.price_model = CryptoPriceModel(temp1, temp2, forecast_offset=minute_len, prediction_ticker=prediction_ticker,
+                                            sym_list=bitinfo_list, time_units='min', model_path=minute_model)
         self.bitinfo_list = bitinfo_list
         self.minute_length = minute_len
         self.prediction_ticker = prediction_ticker.upper()
@@ -739,8 +739,8 @@ class SpreadTradeBot:
         temp1 = "2018-05-05 00:00:00 EST"
         temp2 = "2018-06-05 00:00:00 EST"
 
-        self.price_model = CryptoModel(temp1, temp2, forecast_offset=self.minute_length, prediction_ticker=self.prediction_ticker,
-                                       sym_list=self.bitinfo_list, time_units='min', model_path=self.save_str)
+        self.price_model = CryptoPriceModel(temp1, temp2, forecast_offset=self.minute_length, prediction_ticker=self.prediction_ticker,
+                                            sym_list=self.bitinfo_list, time_units='min', model_path=self.save_str)
         self.prediction = None
         self.price = None
 

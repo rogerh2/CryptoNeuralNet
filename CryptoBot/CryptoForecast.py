@@ -427,11 +427,11 @@ class FormattedData:
             i += 3
 
         normalized_row = full_row.values
+        normalized_row = np.delete(normalized_row, [3])
 
         return  normalized_row
 
-
-    def normalize_fill_array(self, order_book, fills):
+    def normalize_fill_array_and_order_book(self, order_book, fills):
         # This function takes advantage of the Markovian nature of crypto prices and normalizes the fills by the current
         # top bid. This is intended to make the predictions homogeneous no matter what the current price is
         # Note: current setup has prices at every third entry, should change to have identifying headers
@@ -463,6 +463,7 @@ class FormattedData:
             normalized_fills = np.append(normalized_fills, current_normalized_fill)
 
             current_order_book_row = order_book[order_book.index==order_book_ind]
+            current_order_book_row = current_order_book_row.drop(['ts'], axis=1)
             normalized_order_book_row = self.normalize_order_book_row(current_bid, current_order_book_row)
             if order_book_ind == 0:
                 normalized_order_book = normalized_order_book_row
@@ -472,7 +473,6 @@ class FormattedData:
 
 
         return normalized_fills, normalized_order_book
-
 
     # TODO edit format functions to accept preexisting output arrays (for use with the orderbook + fill data)
     def format_data_for_training_or_testing(self, forecast_offset=30, predicted_quality='high'):
@@ -564,7 +564,7 @@ class FormattedData:
         with open(file_name, 'wb') as cp_file_handle:
             pickle.dump(self.raw_data, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-class CryptoModel:
+class CryptoPriceModel:
 
     model = None
     data_obj = None
@@ -661,8 +661,6 @@ class CryptoModel:
 
         if save_data:
             self.data_obj.save_raw_data()
-
-
 
     def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):
         is_leaky = self.is_leakyrelu
@@ -847,8 +845,7 @@ class CryptoModel:
             self.optimize_model(data['input'], data['output'], neuron_grid, layer_grid, batch_size_grid)
             return None
 
-
-# --Useful Scripts Based on This Class--
+# --Useful Scripts Based on This CryptoPriceModel--
 
 def increase_saved_dataset_length(original_ds_path, sym, date_to=None, forecast_offset=30):
     date_from_search = re.search(r'^.*from_(.*)_to_.*$', original_ds_path).group(1)
@@ -858,7 +855,7 @@ def increase_saved_dataset_length(original_ds_path, sym, date_to=None, forecast_
     og_to_date = date_to_search.replace('_', ' ')
     og_to_date = og_to_date.replace('EST', '')
 
-    model_obj = CryptoModel(date_from, og_to_date, sym, forecast_offset=forecast_offset)
+    model_obj = CryptoPriceModel(date_from, og_to_date, sym, forecast_offset=forecast_offset)
     model_obj.create_formatted_data_obj(data_set_path=original_ds_path)
     model_obj.update_formatted_data(save_data=True, date_to=date_to)
 
@@ -878,6 +875,6 @@ if __name__ == '__main__':
     sym_list = ['BTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
 
     for sym in sym_list:
-        model_obj = CryptoModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
+        model_obj = CryptoPriceModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
         model_obj.create_formatted_data_obj()
         pred = model_obj.model_actions('test')
