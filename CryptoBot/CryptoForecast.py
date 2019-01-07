@@ -474,7 +474,7 @@ class FormattedData:
 
         return normalized_fills, normalized_order_book
 
-    # TODO edit format functions to accept preexisting output arrays (for use with the orderbook + fill data)
+    # TODO edit format functions to accept preexisting output arrays (for use with the orderbook + fill data)?
     def format_data_for_training_or_testing(self, forecast_offset=30, predicted_quality='high'):
 
         # Create output for training
@@ -562,7 +562,155 @@ class FormattedData:
                 ' ', '_')
 
         with open(file_name, 'wb') as cp_file_handle:
-            pickle.dump(self.raw_data, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+            pickle.dump(self.raw_data, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)\
+
+class FormattedCoinbaseProData:
+
+    time_units = 'fill'
+    historical_order_books = None
+    historical_fills = None
+
+    def __init__(self, historical_order_books_path=None, historical_fills_path=None):
+
+        if historical_order_books_path is not None:
+            self.historical_order_books = pd.read_csv(historical_order_books_path)
+        if historical_fills_path is not None:
+            self.historical_fills = pd.read_csv(historical_fills_path)
+
+    def str_list_to_timestamp(self, datetime_str_list):
+        fmt = '%Y-%m-%dT%H:%M:%S.%fZ'
+        utc = pytz.UTC
+        for i in range(0, len(datetime_str_list)):
+            current_date_str = datetime_str_list[i]
+            if '.' not in current_date_str:
+                new_date_str = current_date_str[0:-1] + '.000Z'
+                datetime_str_list[i] = new_date_str
+
+
+        localized_datetime_objects = [utc.localize(datetime.strptime(str, fmt)) for str in datetime_str_list]
+        time_stamps = np.array([dt.timestamp() for dt in localized_datetime_objects])
+
+        return time_stamps
+
+    def normalize_order_book_row(self, base_value, full_row):
+        i = 6
+
+        normalized_row = full_row.values
+
+        while i < (len(full_row.columns)):
+            col_title = str(i)
+            order_price = full_row[col_title]
+            normalized_order_price = order_price/base_value
+            normalized_row[0, i] = normalized_order_price
+            i += 3
+
+        normalized_row = full_row.values
+        normalized_row = np.delete(normalized_row, [3])
+
+        return  normalized_row
+
+    def normalize_fill_array_and_order_book(self):
+        # This function takes advantage of the Markovian nature of crypto prices and normalizes the fills by the current
+        # top bid. This is intended to make the predictions homogeneous no matter what the current price is
+        # Note: current setup has prices at every third entry, should change to have identifying headers
+
+        order_book = self.historical_order_books
+        fills = self.historical_fills
+
+        fill_ind = 0
+        order_book_ts_vals = order_book.ts.values
+        order_book_top_bid_vals = order_book['3'].values # The fills are normalized off the top bid
+
+        fill_ts_vals = self.str_list_to_timestamp(fills.time.values)
+        fill_price_vals = fills.price.values
+
+
+        current_fill_ts = fill_ts_vals[fill_ind]
+        normalized_fills = np.array([])
+
+        for order_book_ind in range(0, len(order_book_ts_vals)):
+
+            progress_printer(len(order_book_ts_vals), order_book_ind)
+
+            ts = order_book_ts_vals[order_book_ind]
+            current_bid = order_book_top_bid_vals[order_book_ind]
+
+            while ts > current_fill_ts:
+                fill_ind += 1
+                if fill_ind == len(fill_price_vals):
+                    # If there are more order book states after the last fill than this stops early
+                    return normalized_fills, normalized_order_book
+                current_fill_ts = fill_ts_vals[fill_ind]
+
+            current_fill = fill_price_vals[fill_ind]
+            current_normalized_fill = current_fill/current_bid
+            normalized_fills = np.append(normalized_fills, current_normalized_fill)
+
+            current_order_book_row = order_book[order_book.index==order_book_ind]
+            current_order_book_row = current_order_book_row.drop(['ts'], axis=1)
+            normalized_order_book_row = self.normalize_order_book_row(current_bid, current_order_book_row)
+            if order_book_ind == 0:
+                normalized_order_book = normalized_order_book_row
+            else:
+                normalized_order_book = np.vstack((normalized_order_book, normalized_order_book_row))
+
+
+
+        return normalized_fills, normalized_order_book
+
+    def format_data_for_training_or_testing(self):
+        output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
+        # Create x labels (which are datetime objects)
+        x_axis_time_stamps = self.historical_order_books.ts.values[0:len(output_vec)]
+        x_labels = np.array([datetime.fromtimestamp(ts) for ts in x_axis_time_stamps])
+        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+
+        return output_vec, input_arr, x_labels
+
+    def format_data_for_train_test_split(self, train_test_split):
+        if (train_test_split >= 1) or (train_test_split <= 0):
+            raise ValueError('train_test_split must be in (0, 1)')
+
+        output_vec, input_arr, x_labels = self.format_data_for_training_or_testing()
+
+        training_length = (int(len(input_arr)*(1-train_test_split)))
+        training_input_arr = input_arr[0:training_length, ::, ::]
+        test_input_arr = input_arr[training_length::, ::, ::]
+        training_output_vec = output_vec[0:training_length]
+        test_output_vec = output_vec[training_length::]
+        x_labels = x_labels[training_length::]
+
+        return training_output_vec, test_output_vec, training_input_arr, test_input_arr, x_labels
+
+    def format_data(self, data_type, train_test_split=0.33):
+
+        if (self.historical_order_books is None) or (self.historical_fills is None):
+            raise ValueError('Historical data not defined')
+
+        pred_data = {'training output':None, 'training input':None, 'output':None, 'input':None, 'x labels':None}
+
+        data_type = data_type.lower()
+
+        if data_type in ['train', 'test', 'optimize']:
+            output_vec, input_arr, x_labels = self.format_data_for_training_or_testing()
+            pred_data['input'] = input_arr
+            pred_data['output'] = output_vec
+            pred_data['x labels'] = x_labels
+
+        elif (data_type == 'train/test') or (data_type == 'test/train'):
+            training_output_vec, test_output_vec, training_input_arr, test_input_arr, x_labels = self.format_data_for_train_test_split(train_test_split=train_test_split)
+            pred_data['training input'] = training_input_arr
+            pred_data['training output'] = training_output_vec
+            pred_data['input'] = test_input_arr
+            pred_data['output'] = test_output_vec
+            pred_data['x labels'] = x_labels
+
+        elif data_type == 'forecast':
+            _, temp_input_arr = self.normalize_fill_array_and_order_book()
+            input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+            pred_data['input'] = input_arr
+
+        return pred_data
 
 class CryptoPriceModel:
 
@@ -845,6 +993,83 @@ class CryptoPriceModel:
             self.optimize_model(data['input'], data['output'], neuron_grid, layer_grid, batch_size_grid)
             return None
 
+class CryptoFillsModel(CryptoPriceModel):
+
+    def __init__(self, date_from, date_to, prediction_ticker, forecast_offset=30, sym_list=None, epochs=500, activ_func='relu', time_units='min', is_leakyrelu=True, suppress_output=False, model_path=None):
+
+        super(CryptoFillsModel, self).__init__(date_from, date_to, prediction_ticker, forecast_offset, sym_list, epochs, activ_func, time_units, is_leakyrelu, suppress_output, model_path)
+
+    def create_formatted_cbpro_data(self, order_book_path, fill_path):
+        self.data_obj = FormattedCoinbaseProData(historical_order_books_path=order_book_path, historical_fills_path=fill_path)
+
+    def test_model(self, test_input, test_output, show_plots=True, x_indices=None):
+        prediction = self.model.predict(test_input)
+        prediction = prediction[::, 0] # For some reason the predictions come out 2D (e.g. [[p1,...,pn]] vs [p1,...,pn]]
+
+        if show_plots:
+            # Plot the price and the predicted price vs time
+            prediction_for_plots = prediction
+            if x_indices is None:
+                plt.plot(prediction_for_plots, 'rx--')
+                plt.plot(test_output, 'b.--')
+                plt.xlabel('Time (min)')
+            else:
+                df = pd.DataFrame(data={'Actual': test_output, 'Predicted': prediction_for_plots}, index=x_indices)
+                df.Predicted.plot(style='rx--')
+                df.Actual.plot(style='b.--')
+                plt.xlabel('Date/Time')
+
+            plt.title('Predicted Price and Actual Price')
+            plt.ylabel('Price (USD)')
+
+            # Plot the correlation between price and predicted
+            plt.figure()
+            plt.plot(test_output, prediction_for_plots, 'b.')
+            plt.xlabel('measured price')
+            plt.ylabel('predicted price')
+            plt.title('Correlation Between Predicted and Actual Prices')
+
+            plt.show()
+
+
+        return {'predicted': prediction, 'actual':test_output}
+
+    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96, neuron_grid=None, batch_size_grid=None, layer_grid=None, hourly_time_offset_for_prediction=2):
+
+        if neuron_grid is None:
+            neuron_grid = [30, 70, 92, 100]
+
+        if layer_grid is None:
+            layer_grid = [1, 3, 5, 9]
+
+        if batch_size_grid is None:
+            batch_size_grid = [batch_size]
+
+        # TODO add ability to update data for forecasting
+        data = self.data_obj.format_data(action, train_test_split=train_test_split)
+
+        if action == 'train':
+            hist, _ = self.train_model(data['input'], data['output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+            return hist
+
+        elif action == 'test':
+            test_data = self.test_model(data['input'], data['output'], show_plots=show_plots, x_indices=data['x labels'])
+            return test_data
+
+        elif action == 'train/test':
+            self.train_model(data['training input'], data['training output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+
+            self.test_model(data['input'], data['output'], show_plots=show_plots, x_indices=data['x labels'])
+            return None
+
+        elif action == 'forecast':
+            prediction = self.model.predict(data['input'])
+            return prediction
+
+        elif action == 'optimize':
+            self.optimize_model(data['input'], data['output'], neuron_grid, layer_grid, batch_size_grid)
+            return None
+
 # --Useful Scripts Based on This CryptoPriceModel--
 
 def increase_saved_dataset_length(original_ds_path, sym, date_to=None, forecast_offset=30):
@@ -860,21 +1085,38 @@ def increase_saved_dataset_length(original_ds_path, sym, date_to=None, forecast_
     model_obj.update_formatted_data(save_data=True, date_to=date_to)
 
 if __name__ == '__main__':
-    should_use_existing_data_set_path = False
-    should_use_existing_model = True
-    file_name = None
-    model_path = None
 
-    if should_use_existing_data_set_path:
-        file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbyminETH_from_2018-12-08_22:00:00EST_to_2018-12-15_21:00:00EST.pickle'
-    if should_use_existing_model:
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/BTC/BTCmodel_3layers_30min_leakyreluact_adamopt_mean_absolute_percentage_errorloss_92neurons_2epochs1545192453.197662.h5'
+    obj_type = 'CoinFillModel'
 
-    date_from = '2018-12-18_20:00:00'.replace('_', ' ')
-    date_to = '2018-12-18_23:00:00'.replace('_', ' ')
-    sym_list = ['BTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+    # For CoinPriceModel
+    if obj_type == 'CoinPriceModel':
+        should_use_existing_data_set_path = False
+        should_use_existing_model = True
+        file_name = None
+        model_path = None
 
-    for sym in sym_list:
-        model_obj = CryptoPriceModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
-        model_obj.create_formatted_data_obj()
-        pred = model_obj.model_actions('test')
+        if should_use_existing_data_set_path:
+            file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/minbyminETH_from_2018-12-08_22:00:00EST_to_2018-12-15_21:00:00EST.pickle'
+        if should_use_existing_model:
+            model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/BTC/BTCmodel_3layers_30min_leakyreluact_adamopt_mean_absolute_percentage_errorloss_92neurons_2epochs1545192453.197662.h5'
+
+        date_from = '2018-12-18_20:00:00'.replace('_', ' ')
+        date_to = '2018-12-18_23:00:00'.replace('_', ' ')
+        sym_list = ['BTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+
+        for sym in sym_list:
+            model_obj = CryptoPriceModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
+            model_obj.create_formatted_data_obj()
+            pred = model_obj.model_actions('test')
+
+    elif obj_type == 'CoinFillModel':
+
+        date_from = '2018-12-18_20:00:00'.replace('_', ' ')
+        date_to = '2018-12-18_23:00:00'.replace('_', ' ')
+        sym_list = ['ETH']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1546808340.941765.h5'
+
+        for sym in sym_list:
+            model_obj = CryptoFillsModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
+            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_20entries_1.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_20entries_1.csv')
+            pred = model_obj.model_actions('test')
