@@ -592,20 +592,45 @@ class FormattedCoinbaseProData:
 
         return time_stamps
 
-    def normalize_order_book_row(self, base_value, full_row):
-        i = 6
-
-        normalized_row = full_row.values
+    def average_orderbook_features(self, start_col, full_row):
+        i = start_col
+        full_values = np.array([])
 
         while i < (len(full_row.columns)):
             col_title = str(i)
-            order_price = full_row[col_title]
-            normalized_order_price = order_price/base_value
-            normalized_row[0, i] = normalized_order_price
+            full_values = np.append(full_values, full_row[col_title])
             i += 3
 
+        ans = np.sum(full_values)
+
+        return ans
+
+    def normalize_order_book_row(self, price_base_value, full_row):
+        i = 0
+        # TODO get rid of cringy repition
         normalized_row = full_row.values
-        normalized_row = np.delete(normalized_row, [3])
+        size_base_value = self.average_orderbook_features(1, full_row)
+        num_orders_base_value = self.average_orderbook_features(2, full_row)
+
+
+        while i < (len(full_row.columns)):
+            price_col_title = str(i)
+            size_col_title = str(i + 1)
+            num_orders_col_title = str(i + 2)
+
+            order_price = full_row[price_col_title]
+            order_size = full_row[size_col_title]
+            order_num = full_row[num_orders_col_title]
+
+            normalized_order_price = order_price / price_base_value
+            normalized_row[0, i] = normalized_order_price
+            normalized_size = order_size / size_base_value
+            normalized_row[0, i + 1] = normalized_size
+            normalized_order_num = order_num / num_orders_base_value
+            normalized_row[0, i + 2] = normalized_order_num
+            i += 3
+
+        #normalized_row = np.delete(normalized_row, [0])
 
         return  normalized_row
 
@@ -619,7 +644,7 @@ class FormattedCoinbaseProData:
 
         fill_ind = 0
         order_book_ts_vals = order_book.ts.values
-        order_book_top_bid_vals = order_book['3'].values # The fills are normalized off the top bid
+        order_book_top_bid_vals = order_book['0'].values # The fills are normalized off the top bid
 
         fill_ts_vals = self.str_list_to_timestamp(fills.time.values)
         fill_price_vals = fills.price.values
@@ -638,28 +663,54 @@ class FormattedCoinbaseProData:
             while ts > current_fill_ts:
                 fill_ind += 1
                 if fill_ind == len(fill_price_vals):
+                    # TODO delete this and formalize
+                    with open(
+                            '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle',
+                            'wb') as cp_file_handle:
+                        pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+                    with open(
+                            '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle',
+                            'wb') as cp_file_handle:
+                        pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
                     # If there are more order book states after the last fill than this stops early
                     return normalized_fills, normalized_order_book
                 current_fill_ts = fill_ts_vals[fill_ind]
 
+            current_order_book_row = order_book[order_book.index == order_book_ind]
+            current_order_book_row = current_order_book_row.drop(['ts'], axis=1)
+            price_base_val = self.average_orderbook_features(0, current_order_book_row)
+
             current_fill = fill_price_vals[fill_ind]
-            current_normalized_fill = current_fill/current_bid
+            current_normalized_fill = current_fill/price_base_val#current_bid
             normalized_fills = np.append(normalized_fills, current_normalized_fill)
 
-            current_order_book_row = order_book[order_book.index==order_book_ind]
-            current_order_book_row = current_order_book_row.drop(['ts'], axis=1)
-            normalized_order_book_row = self.normalize_order_book_row(current_bid, current_order_book_row)
+
+            normalized_order_book_row = self.normalize_order_book_row(price_base_val, current_order_book_row)
+
             if order_book_ind == 0:
                 normalized_order_book = normalized_order_book_row
             else:
                 normalized_order_book = np.vstack((normalized_order_book, normalized_order_book_row))
 
+        # TODO delete this and formalize
+        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'wb') as cp_file_handle:
+            pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
+        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'wb') as cp_file_handle:
+            pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         return normalized_fills, normalized_order_book
 
     def format_data_for_training_or_testing(self):
         output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
+        # TODO delete this and formalize, also uncomment the above
+        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'rb') as ds_file:
+        #     temp_input_arr = pickle.load(ds_file)
+        #
+        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'rb') as ds_file:
+        #     output_vec = pickle.load(ds_file)
+
         # Create x labels (which are datetime objects)
         x_axis_time_stamps = self.historical_order_books.ts.values[0:len(output_vec)]
         x_labels = np.array([datetime.fromtimestamp(ts) for ts in x_axis_time_stamps])
@@ -838,7 +889,7 @@ class CryptoPriceModel:
         else:
             self.build_model(training_input, neurons=neuron_count, layer_count=layers)
 
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=0, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.1, patience=5, verbose=0, mode='auto')
 
         hist = self.model.fit(training_input, training_output, epochs=self.epochs,
                               batch_size=batch_size, verbose=2,
@@ -1001,6 +1052,9 @@ class CryptoFillsModel(CryptoPriceModel):
 
     def create_formatted_cbpro_data(self, order_book_path, fill_path):
         self.data_obj = FormattedCoinbaseProData(historical_order_books_path=order_book_path, historical_fills_path=fill_path)
+        # TODO setup proper date_to and date_from attributes based on fills (use format)
+        # self.date_from = self.data_obj.historical_fills.time.values[0]
+        # self.date_to = self.data_obj.historical_fills.time.values[-1]
 
     def test_model(self, test_input, test_output, show_plots=True, x_indices=None):
         prediction = self.model.predict(test_input)
@@ -1101,7 +1155,7 @@ if __name__ == '__main__':
             model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/BTC/BTCmodel_3layers_30min_leakyreluact_adamopt_mean_absolute_percentage_errorloss_92neurons_2epochs1545192453.197662.h5'
 
         date_from = '2018-12-18_20:00:00'.replace('_', ' ')
-        date_to = '2018-12-18_23:00:00'.replace('_', ' ')
+        date_to = '2019-01-01_09:11:00'.replace('_', ' ')
         sym_list = ['BTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
 
         for sym in sym_list:
@@ -1111,12 +1165,12 @@ if __name__ == '__main__':
 
     elif obj_type == 'CoinFillModel':
 
-        date_from = '2018-12-18_20:00:00'.replace('_', ' ')
+        date_from = '2018-12-30_18:24:00'.replace('_', ' ')
         date_to = '2018-12-18_23:00:00'.replace('_', ' ')
-        sym_list = ['ETH']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+        sym_list = ['BTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1546808340.941765.h5'
 
         for sym in sym_list:
-            model_obj = CryptoFillsModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
-            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_20entries_1.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_20entries_1.csv')
-            pred = model_obj.model_actions('test')
+            model_obj = CryptoFillsModel(date_from, date_to, sym, forecast_offset=30)
+            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_20entries.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_20entries.csv')
+            pred = model_obj.model_actions('train/test', neuron_count=10, layers=1, batch_size=96)
