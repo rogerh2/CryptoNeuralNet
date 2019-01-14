@@ -111,6 +111,6 @@ def scrape_and_save_order_books(sym_list, file_name_base='/Users/rjh2nd/PycharmP
 
 
 if __name__ == '__main__':
-    sym_list = ['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+    sym_list = ['LTC']
     print('Begin scraping data')
-    scrape_and_save_order_books(sym_list, unique_id='_20entries_1')
+    scrape_and_save_order_books(sym_list, unique_id='_granular')

@@ -601,7 +601,21 @@ class FormattedCoinbaseProData:
             full_values = np.append(full_values, full_row[col_title])
             i += 3
 
-        ans = np.sum(full_values)
+        ans = np.mean(full_values)
+
+        return ans
+
+    def price_at_max_order_size(self, full_row):
+        i = 1
+        full_values = np.array([])
+
+        while i < (len(full_row.columns)):
+            col_title = str(i)
+            full_values = np.append(full_values, full_row[col_title])
+            i += 3
+
+        max_size_ind = np.argmax(full_values)
+        ans = full_row[str(3 * (max_size_ind))]
 
         return ans
 
@@ -649,9 +663,10 @@ class FormattedCoinbaseProData:
         fill_ts_vals = self.str_list_to_timestamp(fills.time.values)
         fill_price_vals = fills.price.values
 
-
         current_fill_ts = fill_ts_vals[fill_ind]
+        current_fill = fill_price_vals[fill_ind]
         normalized_fills = np.array([])
+        last_current_bid = 0
 
         for order_book_ind in range(0, len(order_book_ts_vals)):
 
@@ -659,8 +674,10 @@ class FormattedCoinbaseProData:
 
             ts = order_book_ts_vals[order_book_ind]
             current_bid = order_book_top_bid_vals[order_book_ind]
+            if current_bid == last_current_bid:
+                continue
 
-            while ts > current_fill_ts:
+            while (ts > current_fill_ts) or (np.abs(current_fill - current_bid) < 0.05):
                 fill_ind += 1
                 if fill_ind == len(fill_price_vals):
                     # TODO delete this and formalize
@@ -676,22 +693,26 @@ class FormattedCoinbaseProData:
                     # If there are more order book states after the last fill than this stops early
                     return normalized_fills, normalized_order_book
                 current_fill_ts = fill_ts_vals[fill_ind]
+                current_fill = fill_price_vals[fill_ind]
 
             current_order_book_row = order_book[order_book.index == order_book_ind]
             current_order_book_row = current_order_book_row.drop(['ts'], axis=1)
-            price_base_val = self.average_orderbook_features(0, current_order_book_row)
+            fill_base_val = current_bid #self.price_at_max_order_size(current_order_book_row)
+            #price_base_val = self.average_orderbook_features(0, current_order_book_row)
 
             current_fill = fill_price_vals[fill_ind]
-            current_normalized_fill = current_fill/price_base_val#current_bid
+            current_normalized_fill = current_fill#/fill_base_val#current_bid
             normalized_fills = np.append(normalized_fills, current_normalized_fill)
 
 
-            normalized_order_book_row = self.normalize_order_book_row(price_base_val, current_order_book_row)
+            normalized_order_book_row = current_order_book_row #self.normalize_order_book_row(price_base_val, current_order_book_row)
 
             if order_book_ind == 0:
                 normalized_order_book = normalized_order_book_row
             else:
                 normalized_order_book = np.vstack((normalized_order_book, normalized_order_book_row))
+
+            last_current_bid = current_bid
 
         # TODO delete this and formalize
         with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'wb') as cp_file_handle:
@@ -703,17 +724,27 @@ class FormattedCoinbaseProData:
         return normalized_fills, normalized_order_book
 
     def format_data_for_training_or_testing(self):
-        output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
+        # output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
         # TODO delete this and formalize, also uncomment the above
-        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'rb') as ds_file:
-        #     temp_input_arr = pickle.load(ds_file)
-        #
-        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'rb') as ds_file:
-        #     output_vec = pickle.load(ds_file)
+        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'rb') as ds_file:
+            temp_input_arr = pickle.load(ds_file)
+
+        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'rb') as ds_file:
+            output_vec = pickle.load(ds_file)
+
+        #output_vec = (output_vec - np.min(output_vec))/(np.max(output_vec) - np.min(output_vec))
+
+        output_mask = np.diff(output_vec) > 0.001
+        output_mask = np.append(np.array([True]), output_mask)
+        temp_input_arr = temp_input_arr[output_mask, ::]
+        output_vec = output_vec[output_mask]
+
+        scaler = StandardScaler()
 
         # Create x labels (which are datetime objects)
         x_axis_time_stamps = self.historical_order_books.ts.values[0:len(output_vec)]
         x_labels = np.array([datetime.fromtimestamp(ts) for ts in x_axis_time_stamps])
+        temp_input_arr = scaler.fit_transform(temp_input_arr)
         input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
 
         return output_vec, input_arr, x_labels
@@ -870,6 +901,7 @@ class CryptoPriceModel:
 
         self.model.add(LSTM(1, input_shape=(inputs.shape[1], inputs.shape[2])))
         self.model.add(Dropout(dropout))
+        self.model.add(Activation('sigmoid'))
 
         if is_leaky:
             for i in range(0, layer_count):
@@ -889,7 +921,7 @@ class CryptoPriceModel:
         else:
             self.build_model(training_input, neurons=neuron_count, layer_count=layers)
 
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.1, patience=5, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.1, patience=20, verbose=0, mode='auto')
 
         hist = self.model.fit(training_input, training_output, epochs=self.epochs,
                               batch_size=batch_size, verbose=2,
@@ -1062,7 +1094,7 @@ class CryptoFillsModel(CryptoPriceModel):
 
         if show_plots:
             # Plot the price and the predicted price vs time
-            prediction_for_plots = prediction
+            prediction_for_plots = rescale_to_fit(prediction, test_output) #prediction #
             if x_indices is None:
                 plt.plot(prediction_for_plots, 'rx--')
                 plt.plot(test_output, 'b.--')
@@ -1167,10 +1199,10 @@ if __name__ == '__main__':
 
         date_from = '2018-12-30_18:24:00'.replace('_', ' ')
         date_to = '2018-12-18_23:00:00'.replace('_', ' ')
-        sym_list = ['BTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+        sym_list = ['LTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1546808340.941765.h5'
 
         for sym in sym_list:
             model_obj = CryptoFillsModel(date_from, date_to, sym, forecast_offset=30)
-            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_20entries.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_20entries.csv')
-            pred = model_obj.model_actions('train/test', neuron_count=10, layers=1, batch_size=96)
+            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
+            pred = model_obj.model_actions('train/test', neuron_count=30, layers=3, batch_size=96)
