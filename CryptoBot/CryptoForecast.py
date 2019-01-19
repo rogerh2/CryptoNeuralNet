@@ -734,7 +734,7 @@ class FormattedCoinbaseProData:
 
         #output_vec = (output_vec - np.min(output_vec))/(np.max(output_vec) - np.min(output_vec))
 
-        output_mask = np.diff(output_vec) > 0.001
+        output_mask = np.abs(np.diff(output_vec)) > 0.02
         output_mask = np.append(np.array([True]), output_mask)
         temp_input_arr = temp_input_arr[output_mask, ::]
         output_vec = output_vec[output_mask]
@@ -742,7 +742,7 @@ class FormattedCoinbaseProData:
         scaler = StandardScaler()
 
         # Create x labels (which are datetime objects)
-        x_axis_time_stamps = self.historical_order_books.ts.values[0:len(output_vec)]
+        x_axis_time_stamps = self.historical_order_books.ts.values[0:len(output_mask)][output_mask]
         x_labels = np.array([datetime.fromtimestamp(ts) for ts in x_axis_time_stamps])
         temp_input_arr = scaler.fit_transform(temp_input_arr)
         input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
@@ -921,7 +921,7 @@ class CryptoPriceModel:
         else:
             self.build_model(training_input, neurons=neuron_count, layer_count=layers)
 
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.1, patience=20, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.1, patience=10, verbose=0, mode='auto')
 
         hist = self.model.fit(training_input, training_output, epochs=self.epochs,
                               batch_size=batch_size, verbose=2,
@@ -1205,4 +1205,4 @@ if __name__ == '__main__':
         for sym in sym_list:
             model_obj = CryptoFillsModel(date_from, date_to, sym, forecast_offset=30)
             model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
-            pred = model_obj.model_actions('train/test', neuron_count=30, layers=3, batch_size=96)
+            pred = model_obj.model_actions('train/test', neuron_count=20, layers=3, batch_size=96)
