@@ -25,6 +25,7 @@ from keras.layers import Activation, Dense
 from keras.layers import LSTM
 from keras.layers import Dropout
 from keras.layers import LeakyReLU
+from keras import backend as K
 from sklearn.preprocessing import StandardScaler
 
 #For AWS
@@ -617,32 +618,39 @@ class FormattedCoinbaseProData:
         max_size_ind = np.argmax(full_values)
         ans = full_row[str(3 * (max_size_ind))]
 
-        return ans
+        return ans, max_size_ind
 
     def normalize_order_book_row(self, price_base_value, full_row):
         i = 0
         # TODO get rid of cringy repition
-        normalized_row = full_row.values
-        size_base_value = self.average_orderbook_features(1, full_row)
-        num_orders_base_value = self.average_orderbook_features(2, full_row)
+        all_values = full_row.values
+        normalized_row = np.array([])
+        _, max_size_ind = self.price_at_max_order_size(full_row)
+        normalized_row = np.append(normalized_row, all_values[0, 0:2])
+        normalized_row = np.append(normalized_row, all_values[0, 60:62])
+        normalized_row = np.append(normalized_row, all_values[0, max_size_ind:(max_size_ind+2)])
+        normalized_row = np.array([normalized_row])
 
-
-        while i < (len(full_row.columns)):
-            price_col_title = str(i)
-            size_col_title = str(i + 1)
-            num_orders_col_title = str(i + 2)
-
-            order_price = full_row[price_col_title]
-            order_size = full_row[size_col_title]
-            order_num = full_row[num_orders_col_title]
-
-            normalized_order_price = order_price / price_base_value
-            normalized_row[0, i] = normalized_order_price
-            normalized_size = order_size / size_base_value
-            normalized_row[0, i + 1] = normalized_size
-            normalized_order_num = order_num / num_orders_base_value
-            normalized_row[0, i + 2] = normalized_order_num
-            i += 3
+        # size_base_value = self.average_orderbook_features(1, full_row)
+        # num_orders_base_value = self.average_orderbook_features(2, full_row)
+        #
+        #
+        # while i < (len(full_row.columns)):
+        #     price_col_title = str(i)
+        #     size_col_title = str(i + 1)
+        #     num_orders_col_title = str(i + 2)
+        #
+        #     order_price = full_row[price_col_title]
+        #     order_size = full_row[size_col_title]
+        #     order_num = full_row[num_orders_col_title]
+        #
+        #     normalized_order_price = order_price / price_base_value
+        #     normalized_row[0, i] = normalized_order_price
+        #     normalized_size = order_size / size_base_value
+        #     normalized_row[0, i + 1] = normalized_size
+        #     normalized_order_num = order_num / num_orders_base_value
+        #     normalized_row[0, i + 2] = normalized_order_num
+        #     i += 3
 
         #normalized_row = np.delete(normalized_row, [0])
 
@@ -659,6 +667,7 @@ class FormattedCoinbaseProData:
         fill_ind = 0
         order_book_ts_vals = order_book.ts.values
         order_book_top_bid_vals = order_book['0'].values # The fills are normalized off the top bid
+        order_book_top_ask_vals = order_book['60'].values  # The fills are normalized off the top bid
 
         fill_ts_vals = self.str_list_to_timestamp(fills.time.values)
         fill_price_vals = fills.price.values
@@ -667,6 +676,7 @@ class FormattedCoinbaseProData:
         current_fill = fill_price_vals[fill_ind]
         normalized_fills = np.array([])
         last_current_bid = 0
+        last_current_ask = 0
 
         for order_book_ind in range(0, len(order_book_ts_vals)):
 
@@ -674,10 +684,11 @@ class FormattedCoinbaseProData:
 
             ts = order_book_ts_vals[order_book_ind]
             current_bid = order_book_top_bid_vals[order_book_ind]
-            if current_bid == last_current_bid:
+            current_ask = order_book_top_ask_vals[order_book_ind]
+            if (current_bid == last_current_bid) and (current_ask == last_current_ask):
                 continue
 
-            while (ts > current_fill_ts) or (np.abs(current_fill - current_bid) < 0.05):
+            while (ts > current_fill_ts) or (current_fill-np.abs(fill_price_vals[fill_ind-1]) < 0.0005*current_fill):
                 fill_ind += 1
                 if fill_ind == len(fill_price_vals):
                     # TODO delete this and formalize
@@ -701,11 +712,11 @@ class FormattedCoinbaseProData:
             #price_base_val = self.average_orderbook_features(0, current_order_book_row)
 
             current_fill = fill_price_vals[fill_ind]
-            current_normalized_fill = current_fill#/fill_base_val#current_bid
+            current_normalized_fill = current_fill#/current_bid - 1
             normalized_fills = np.append(normalized_fills, current_normalized_fill)
 
 
-            normalized_order_book_row = current_order_book_row #self.normalize_order_book_row(price_base_val, current_order_book_row)
+            normalized_order_book_row = current_order_book_row.values #self.normalize_order_book_row(1, current_order_book_row)#current_order_book_row #
 
             if order_book_ind == 0:
                 normalized_order_book = normalized_order_book_row
@@ -713,6 +724,7 @@ class FormattedCoinbaseProData:
                 normalized_order_book = np.vstack((normalized_order_book, normalized_order_book_row))
 
             last_current_bid = current_bid
+            last_current_ask = current_ask
 
         # TODO delete this and formalize
         with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'wb') as cp_file_handle:
@@ -736,13 +748,13 @@ class FormattedCoinbaseProData:
 
         output_mask = np.abs(np.diff(output_vec)) > 0.02
         output_mask = np.append(np.array([True]), output_mask)
-        temp_input_arr = temp_input_arr[output_mask, ::]
-        output_vec = output_vec[output_mask]
+        temp_input_arr = temp_input_arr#[output_mask, ::]
+        output_vec = output_vec#[output_mask]
 
         scaler = StandardScaler()
 
         # Create x labels (which are datetime objects)
-        x_axis_time_stamps = self.historical_order_books.ts.values[0:len(output_mask)][output_mask]
+        x_axis_time_stamps = self.historical_order_books.ts.values[0:len(output_vec)]
         x_labels = np.array([datetime.fromtimestamp(ts) for ts in x_axis_time_stamps])
         temp_input_arr = scaler.fit_transform(temp_input_arr)
         input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
@@ -892,6 +904,16 @@ class CryptoPriceModel:
         if save_data:
             self.data_obj.save_raw_data()
 
+    def custom_loss_func(self, y_true, y_pred):
+
+        all_diffs = K.abs(y_true) - K.abs(y_pred)
+        in_range_diffs = all_diffs*K.cast(K.greater_equal(all_diffs, 0), 'float32')
+        out_range_diffs = all_diffs*K.cast(K.less(all_diffs, 0), 'float32')
+
+        err = K.abs(K.sum(in_range_diffs) + K.constant(2)*K.sum(out_range_diffs)/K.mean(y_true))
+
+        return err
+
     def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):
         is_leaky = self.is_leakyrelu
         activ_func = self.activation_func
@@ -912,7 +934,7 @@ class CryptoPriceModel:
                 self.model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
 
         self.model.add(Dense(units=output_size, activation="linear"))
-        self.model.compile(loss=loss, optimizer=optimizer)
+        self.model.compile(loss=self.loss_func, optimizer=optimizer) #loss, optimizer=optimizer)
 
     def train_model(self, training_input, training_output, neuron_count=200, save_model=False, train_saved_model=False, layers=3, batch_size=96):
         if train_saved_model:
@@ -921,11 +943,11 @@ class CryptoPriceModel:
         else:
             self.build_model(training_input, neurons=neuron_count, layer_count=layers)
 
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.1, patience=10, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=7, verbose=0, mode='auto')
 
         hist = self.model.fit(training_input, training_output, epochs=self.epochs,
                               batch_size=batch_size, verbose=2,
-                              shuffle=False, validation_split=0.25, callbacks=[estop])
+                              shuffle=True, validation_split=0.25, callbacks=[estop])
 
         if self.is_leakyrelu: #TODO add more detail to saves
             file_name = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker.upper() + '/' + self.prediction_ticker + 'model_'+ str(layers) + 'layers_' + str(
@@ -1094,7 +1116,7 @@ class CryptoFillsModel(CryptoPriceModel):
 
         if show_plots:
             # Plot the price and the predicted price vs time
-            prediction_for_plots = rescale_to_fit(prediction, test_output) #prediction #
+            prediction_for_plots = prediction #rescale_to_fit(prediction, test_output) #
             if x_indices is None:
                 plt.plot(prediction_for_plots, 'rx--')
                 plt.plot(test_output, 'b.--')
@@ -1199,10 +1221,10 @@ if __name__ == '__main__':
 
         date_from = '2018-12-30_18:24:00'.replace('_', ' ')
         date_to = '2018-12-18_23:00:00'.replace('_', ' ')
-        sym_list = ['LTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+        sym_list = ['ETH']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1546808340.941765.h5'
 
         for sym in sym_list:
             model_obj = CryptoFillsModel(date_from, date_to, sym, forecast_offset=30)
             model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
-            pred = model_obj.model_actions('train/test', neuron_count=20, layers=3, batch_size=96)
+            pred = model_obj.model_actions('train/test', neuron_count=60, layers=1, batch_size=256, save_model=True, train_test_split=0.1)
