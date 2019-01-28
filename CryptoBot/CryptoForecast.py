@@ -756,6 +756,8 @@ class FormattedCoinbaseProData:
         # Create x labels (which are datetime objects)
         x_axis_time_stamps = self.historical_order_books.ts.values[0:len(output_vec)]
         x_labels = np.array([datetime.fromtimestamp(ts) for ts in x_axis_time_stamps])
+
+        # Use standard scalar on input
         temp_input_arr = scaler.fit_transform(temp_input_arr)
         input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
 
@@ -1100,15 +1102,30 @@ class CryptoPriceModel:
 
 class CryptoFillsModel(CryptoPriceModel):
 
-    def __init__(self, date_from, date_to, prediction_ticker, forecast_offset=30, sym_list=None, epochs=500, activ_func='relu', time_units='min', is_leakyrelu=True, suppress_output=False, model_path=None):
+    def __init__(self, prediction_ticker, forecast_offset=30, sym_list=None, epochs=500, activ_func='relu', time_units='min', is_leakyrelu=True, suppress_output=False, model_path=None):
 
-        super(CryptoFillsModel, self).__init__(date_from, date_to, prediction_ticker, forecast_offset, sym_list, epochs, activ_func, time_units, is_leakyrelu, suppress_output, model_path)
+        super(CryptoFillsModel, self).__init__('2000-01-01 00:00:00', '2001-01-01 00:00:00', prediction_ticker, forecast_offset, sym_list, epochs, activ_func, time_units, is_leakyrelu, suppress_output, model_path)
 
     def create_formatted_cbpro_data(self, order_book_path, fill_path):
         self.data_obj = FormattedCoinbaseProData(historical_order_books_path=order_book_path, historical_fills_path=fill_path)
         # TODO setup proper date_to and date_from attributes based on fills (use format)
-        # self.date_from = self.data_obj.historical_fills.time.values[0]
-        # self.date_to = self.data_obj.historical_fills.time.values[-1]
+        from_fmt = '%Y-%m-%dT%H:%M:%S.%fZ' # Format given from coinbase
+        to_fmt = '%Y-%m-%d %H:%M:%S' # Format to save
+
+        # Format in UTC time
+        utc = pytz.UTC
+        utc_date_from_obj = utc.localize(datetime.strptime(self.data_obj.historical_fills.time.values[0], from_fmt))
+        utc_date_to_obj = utc.localize(datetime.strptime(self.data_obj.historical_fills.time.values[-1], from_fmt))
+
+        # Cast to local time zone
+        tz = get_localzone()
+        date_from_obj = utc_date_from_obj.astimezone(tz)
+        date_to_obj = utc_date_to_obj.astimezone(tz)
+
+        # Save as str
+        self.date_from = date_from_obj.strftime(to_fmt)
+        self.date_to = date_to_obj.strftime(to_fmt)
+
 
     def test_model(self, test_input, test_output, show_plots=True, x_indices=None):
         prediction = self.model.predict(test_input)
@@ -1225,6 +1242,6 @@ if __name__ == '__main__':
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1546808340.941765.h5'
 
         for sym in sym_list:
-            model_obj = CryptoFillsModel(date_from, date_to, sym, forecast_offset=30)
+            model_obj = CryptoFillsModel(sym, forecast_offset=30)
             model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
             pred = model_obj.model_actions('train/test', neuron_count=60, layers=1, batch_size=256, save_model=True, train_test_split=0.1)
