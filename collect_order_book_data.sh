@@ -1,1 +1,0 @@
-python3 -u CustomDataAggregator.py 6xwfNRFTt6cAAAAAAABoJBNbq4ZhM6xp0H_o-PMDZOJzig4FguujLxljzYgd5Vlr > cryptopredict.log 2>&1
