@@ -1,13 +1,5 @@
 import unittest
-import os
-import pandas as pd
-import numpy as np
-import pickle
-from pathlib import Path
 from CryptoBot.BackTest import BackTestExchange
-import keras
-from datetime import datetime
-from datetime import timedelta
 
 class BackTestExchangeTestCase(unittest.TestCase):
     test_obj = BackTestExchange(
