@@ -6,7 +6,7 @@ import keras
 # from datetime import timedelta
 # from time import sleep
 import pandas as pd
-
+import CryptoBot.CryptoForecast as cf
 
 class BackTestExchange:
     orders = {'bids': {}, 'asks': {}}
@@ -108,11 +108,23 @@ class BackTestPortfolio:
                 self.exchange.remove_order(side, old_id)
 
 class BackTestBot:
+    current_price = {'asks':None, 'bids':None}
 
-    def __init__(self, model_path, strategy, historical_order_books_path):
+    def __init__(self, model_path, strategy, historical_order_books_path, historical_fills_path):
         # strategy is a function that tells to bot to either buy or sell or hold, and at what price
         self.strategy = strategy
-        self.model = keras.models.load_model(model_path)
+        self.model = cf.CryptoFillsModel('ETH', model_path=model_path)
+        self.model.create_formatted_cbpro_data(historical_order_books_path, historical_fills_path)
         self.portfolio = BackTestPortfolio(historical_order_books_path)
 
-    # TODO Finish This Class
+    def get_order_book(self, ind):
+        order_book_df = self.portfolio.exchange.get_current_book(ind)
+        order_book = np.array([])
+        for i in range(0, 120):
+            order_book = np.append(order_book, order_book_df[str(int(i))].values[0])
+        self.order_book = order_book
+
+    def update_current_price(self, ind):
+        for side in ['asks', 'bids']:
+            top_order = self.portfolio.exchange.get_top_order(ind, 'asks')
+            self.current_price[side] = top_order

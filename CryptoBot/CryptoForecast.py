@@ -692,15 +692,15 @@ class FormattedCoinbaseProData:
                 fill_ind += 1
                 if fill_ind == len(fill_price_vals):
                     # TODO delete this and formalize
-                    with open(
-                            '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle',
-                            'wb') as cp_file_handle:
-                        pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-                    with open(
-                            '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle',
-                            'wb') as cp_file_handle:
-                        pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    # with open(
+                    #         '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle',
+                    #         'wb') as cp_file_handle:
+                    #     pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    #
+                    # with open(
+                    #         '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle',
+                    #         'wb') as cp_file_handle:
+                    #     pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
                     # If there are more order book states after the last fill than this stops early
                     return normalized_fills, normalized_order_book
                 current_fill_ts = fill_ts_vals[fill_ind]
@@ -727,22 +727,22 @@ class FormattedCoinbaseProData:
             last_current_ask = current_ask
 
         # TODO delete this and formalize
-        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'wb') as cp_file_handle:
-            pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'wb') as cp_file_handle:
-            pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'wb') as cp_file_handle:
+        #     pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+        #
+        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'wb') as cp_file_handle:
+        #     pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         return normalized_fills, normalized_order_book
 
     def format_data_for_training_or_testing(self):
-        # output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
+        output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
         # TODO delete this and formalize, also uncomment the above
-        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'rb') as ds_file:
-            temp_input_arr = pickle.load(ds_file)
-
-        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'rb') as ds_file:
-            output_vec = pickle.load(ds_file)
+        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'rb') as ds_file:
+        #     temp_input_arr = pickle.load(ds_file)
+        #
+        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'rb') as ds_file:
+        #     output_vec = pickle.load(ds_file)
 
         #output_vec = (output_vec - np.min(output_vec))/(np.max(output_vec) - np.min(output_vec))
 
@@ -1102,16 +1102,16 @@ class CryptoPriceModel:
 
 class CryptoFillsModel(CryptoPriceModel):
 
-    def __init__(self, prediction_ticker, forecast_offset=30, sym_list=None, epochs=500, activ_func='relu', time_units='min', is_leakyrelu=True, suppress_output=False, model_path=None):
+    def __init__(self, prediction_ticker, epochs=500, activ_func='relu', is_leakyrelu=True, suppress_output=False, model_path=None):
 
-        super(CryptoFillsModel, self).__init__('2000-01-01 00:00:00', '2001-01-01 00:00:00', prediction_ticker, forecast_offset, sym_list, epochs, activ_func, time_units, is_leakyrelu, suppress_output, model_path)
+        super(CryptoFillsModel, self).__init__('2000-01-01 00:00:00', '2001-01-01 00:00:00', prediction_ticker, 30, None, epochs, activ_func, 'min', is_leakyrelu, suppress_output, model_path)
 
     def create_formatted_cbpro_data(self, order_book_path, fill_path):
         self.data_obj = FormattedCoinbaseProData(historical_order_books_path=order_book_path, historical_fills_path=fill_path)
-        # TODO setup proper date_to and date_from attributes based on fills (use format)
         from_fmt = '%Y-%m-%dT%H:%M:%S.%fZ' # Format given from coinbase
         to_fmt = '%Y-%m-%d %H:%M:%S' # Format to save
 
+        # TODO allow a from and to date to in __init__ and filter orderbook based upon that
         # Format in UTC time
         utc = pytz.UTC
         utc_date_from_obj = utc.localize(datetime.strptime(self.data_obj.historical_fills.time.values[0], from_fmt))
@@ -1125,7 +1125,6 @@ class CryptoFillsModel(CryptoPriceModel):
         # Save as str
         self.date_from = date_from_obj.strftime(to_fmt)
         self.date_to = date_to_obj.strftime(to_fmt)
-
 
     def test_model(self, test_input, test_output, show_plots=True, x_indices=None):
         prediction = self.model.predict(test_input)
@@ -1188,7 +1187,8 @@ class CryptoFillsModel(CryptoPriceModel):
             return None
 
         elif action == 'forecast':
-            prediction = self.model.predict(data['input'])
+            raw_prediction = self.model.predict(data['input'])
+            prediction = raw_prediction[::, 0]
             return prediction
 
         elif action == 'optimize':
