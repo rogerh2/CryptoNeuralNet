@@ -660,21 +660,31 @@ class FormattedCoinbaseProData:
         # This function takes advantage of the Markovian nature of crypto prices and normalizes the fills by the current
         # top bid. This is intended to make the predictions homogeneous no matter what the current price is
         # Note: current setup has prices at every third entry, should change to have identifying headers
+        fills = self.historical_fills
+        normalized_order_book = None
+
+        if fills is not None:
+            fill_ind = 0
+            fill_ts_vals = self.str_list_to_timestamp(fills.time.values)
+            fill_price_vals = fills.price.values
+
+            current_fill_ts = fill_ts_vals[fill_ind]
+            current_fill = fill_price_vals[fill_ind]
+            normalized_fills = np.array([])
+        else:
+            fill_ind = 0
+            fill_ts_vals = None
+            fill_price_vals = None
+
+            current_fill_ts = None
+            current_fill = None
+            normalized_fills = np.array([])
 
         order_book = self.historical_order_books
-        fills = self.historical_fills
-
-        fill_ind = 0
         order_book_ts_vals = order_book.ts.values
         order_book_top_bid_vals = order_book['0'].values # The fills are normalized off the top bid
         order_book_top_ask_vals = order_book['60'].values  # The fills are normalized off the top bid
 
-        fill_ts_vals = self.str_list_to_timestamp(fills.time.values)
-        fill_price_vals = fills.price.values
-
-        current_fill_ts = fill_ts_vals[fill_ind]
-        current_fill = fill_price_vals[fill_ind]
-        normalized_fills = np.array([])
         last_current_bid = 0
         last_current_ask = 0
 
@@ -688,33 +698,34 @@ class FormattedCoinbaseProData:
             if (current_bid == last_current_bid) and (current_ask == last_current_ask):
                 continue
 
-            while (ts > current_fill_ts) or (current_fill-np.abs(fill_price_vals[fill_ind-1]) < 0.0005*current_fill):
-                fill_ind += 1
-                if fill_ind == len(fill_price_vals):
-                    # TODO delete this and formalize
-                    # with open(
-                    #         '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle',
-                    #         'wb') as cp_file_handle:
-                    #     pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
-                    #
-                    # with open(
-                    #         '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle',
-                    #         'wb') as cp_file_handle:
-                    #     pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
-                    # If there are more order book states after the last fill than this stops early
-                    return normalized_fills, normalized_order_book
-                current_fill_ts = fill_ts_vals[fill_ind]
+            if fills is not None:
+                while (ts > current_fill_ts) or (current_fill-np.abs(fill_price_vals[fill_ind-1]) < 0.0005*current_fill):
+                    fill_ind += 1
+                    if fill_ind == len(fill_price_vals):
+                        # TODO delete this and formalize
+                        # with open(
+                        #         '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle',
+                        #         'wb') as cp_file_handle:
+                        #     pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+                        #
+                        # with open(
+                        #         '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle',
+                        #         'wb') as cp_file_handle:
+                        #     pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
+                        # If there are more order book states after the last fill than this stops early
+                        return normalized_fills, normalized_order_book
+                    current_fill_ts = fill_ts_vals[fill_ind]
+                    current_fill = fill_price_vals[fill_ind]
+
+                fill_base_val = current_bid #self.price_at_max_order_size(current_order_book_row)
+                #price_base_val = self.average_orderbook_features(0, current_order_book_row)
+
                 current_fill = fill_price_vals[fill_ind]
+                current_normalized_fill = current_fill#/current_bid - 1
+                normalized_fills = np.append(normalized_fills, current_normalized_fill)
 
             current_order_book_row = order_book[order_book.index == order_book_ind]
             current_order_book_row = current_order_book_row.drop(['ts'], axis=1)
-            fill_base_val = current_bid #self.price_at_max_order_size(current_order_book_row)
-            #price_base_val = self.average_orderbook_features(0, current_order_book_row)
-
-            current_fill = fill_price_vals[fill_ind]
-            current_normalized_fill = current_fill#/current_bid - 1
-            normalized_fills = np.append(normalized_fills, current_normalized_fill)
-
 
             normalized_order_book_row = current_order_book_row.values #self.normalize_order_book_row(1, current_order_book_row)#current_order_book_row #
 
@@ -780,8 +791,8 @@ class FormattedCoinbaseProData:
 
     def format_data(self, data_type, train_test_split=0.33):
 
-        if (self.historical_order_books is None) or (self.historical_fills is None):
-            raise ValueError('Historical data not defined')
+        if (self.historical_order_books is None):
+            raise ValueError('Historical order book data not defined')
 
         pred_data = {'training output':None, 'training input':None, 'output':None, 'input':None, 'x labels':None}
 
@@ -1106,25 +1117,27 @@ class CryptoFillsModel(CryptoPriceModel):
 
         super(CryptoFillsModel, self).__init__('2000-01-01 00:00:00', '2001-01-01 00:00:00', prediction_ticker, 30, None, epochs, activ_func, 'min', is_leakyrelu, suppress_output, model_path)
 
-    def create_formatted_cbpro_data(self, order_book_path, fill_path):
+    def create_formatted_cbpro_data(self, order_book_path=None, fill_path=None):
         self.data_obj = FormattedCoinbaseProData(historical_order_books_path=order_book_path, historical_fills_path=fill_path)
-        from_fmt = '%Y-%m-%dT%H:%M:%S.%fZ' # Format given from coinbase
-        to_fmt = '%Y-%m-%d %H:%M:%S' # Format to save
 
-        # TODO allow a from and to date to in __init__ and filter orderbook based upon that
-        # Format in UTC time
-        utc = pytz.UTC
-        utc_date_from_obj = utc.localize(datetime.strptime(self.data_obj.historical_fills.time.values[0], from_fmt))
-        utc_date_to_obj = utc.localize(datetime.strptime(self.data_obj.historical_fills.time.values[-1], from_fmt))
+        if order_book_path is not None:
+            from_fmt = '%Y-%m-%dT%H:%M:%S.%fZ'  # Format given from coinbase
+            to_fmt = '%Y-%m-%d %H:%M:%S'  # Format to save
 
-        # Cast to local time zone
-        tz = get_localzone()
-        date_from_obj = utc_date_from_obj.astimezone(tz)
-        date_to_obj = utc_date_to_obj.astimezone(tz)
+            # TODO allow a from and to date to in __init__ and filter orderbook based upon that
+            # Format in UTC time
+            utc = pytz.UTC
+            utc_date_from_obj = utc.localize(datetime.strptime(self.data_obj.historical_fills.time.values[0], from_fmt))
+            utc_date_to_obj = utc.localize(datetime.strptime(self.data_obj.historical_fills.time.values[-1], from_fmt))
 
-        # Save as str
-        self.date_from = date_from_obj.strftime(to_fmt)
-        self.date_to = date_to_obj.strftime(to_fmt)
+            # Cast to local time zone
+            tz = get_localzone()
+            date_from_obj = utc_date_from_obj.astimezone(tz)
+            date_to_obj = utc_date_to_obj.astimezone(tz)
+
+            # Save as str
+            self.date_from = date_from_obj.strftime(to_fmt)
+            self.date_to = date_to_obj.strftime(to_fmt)
 
     def test_model(self, test_input, test_output, show_plots=True, x_indices=None):
         prediction = self.model.predict(test_input)
@@ -1242,6 +1255,6 @@ if __name__ == '__main__':
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1546808340.941765.h5'
 
         for sym in sym_list:
-            model_obj = CryptoFillsModel(sym, forecast_offset=30)
+            model_obj = CryptoFillsModel(sym)
             model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
             pred = model_obj.model_actions('train/test', neuron_count=60, layers=1, batch_size=256, save_model=True, train_test_split=0.1)
