@@ -8,10 +8,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import CryptoBot.CryptoForecast as cf
 from CryptoBot.CryptoStrategies import Strategy
+from CryptoBot.CryptoBot_Shared_Functions import progress_printer
 
 class BackTestExchange:
     orders = {'bids': {}, 'asks': {}}
     time = 0
+    min_order = {'bids': 0.01, 'asks': 0.01}
 
     def __init__(self, order_book_path):
         if order_book_path is not None:
@@ -46,7 +48,7 @@ class BackTestExchange:
             raise ValueError(side + ' is not a valid orderbook side')
         top_opposing_order = self.get_top_order(opposing_side)
 
-        if coeff*price >= coeff*top_opposing_order:
+        if (coeff*price >= coeff*top_opposing_order) and (size > self.min_order[side]):
             # This ensures the order is only placed onto the appropiate order book side
             this_side_orders = self.orders[side]
             if len(this_side_orders) > 0:
@@ -130,7 +132,7 @@ class BackTestBot:
     def __init__(self, model_path, strategy):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         self.strategy = strategy
-        self.model = cf.CryptoFillsModel('ETH', model_path=model_path)
+        self.model = cf.CryptoFillsModel('ETH', model_path=model_path, suppress_output=True)
         self.model.create_formatted_cbpro_data()
         self.portfolio = BackTestPortfolio()
 
@@ -185,35 +187,42 @@ class BackTestBot:
         order_book = self.get_order_book()
         prediction = self.predict()
         decision = self.strategy.determine_move(prediction, order_book) # returns None for hold
-        side = decision['side']
-        available = self.portfolio.get_amnt_available(side)
-        size = available*decision['size coeff']
         if decision is not None:
+            side = decision['side']
+            available = self.portfolio.get_amnt_available(side)
+            size = available * decision['size coeff']/decision['price']
             self.place_order(decision['price'], side, size)
 
 
-def run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.33):
+def run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.05):
 
     bot = BackTestBot(model_path, strategy)
     bot.load_model_data(historical_order_books_path, historical_fills_path, train_test_split)
     times = np.array(bot.portfolio.exchange.order_books.index)
     portfolio_history = np.array([])  # This will track the bot progress
+    price_history = np.array([])
 
     for time in times:
+        progress_printer(len(times), time)
         bot.portfolio.exchange.time = time
         bot.trade_action()
         val = bot.get_full_portfolio_value()
         portfolio_history = np.append(portfolio_history, val)
+        price_history = np.append(price_history, bot.portfolio.exchange.get_top_order('bids'))
+        bot.portfolio.exchange.update_fill_status()
+        bot.portfolio.update_value()
 
-    return portfolio_history
+    return portfolio_history, price_history
 
 
 if __name__ == "__main__":
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/BTC/BTCmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_70neurons_4epochs1546857397.855116.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_66epochs1549944377.09207.h5'
     strategy = Strategy()
-    historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/BTC_historical_order_books_20entries.csv'
-    historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/BTC_fills_20entries.csv'
+    historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_20entries.csv'
+    historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_20entries.csv'
 
-    algorithm_returns = run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path)
+    algorithm_returns, market_returns = run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path)
 
-    plt.plot(algorithm_returns)
+    plt.plot(algorithm_returns, '--.r')
+    plt.plot(100*market_returns/market_returns[0], '--xb')
+    plt.show()

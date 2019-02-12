@@ -378,7 +378,7 @@ class FormattedData:
 
         for i in range(0, len(self.raw_data.index)):
 
-            progress_printer(len(self.raw_data.index), i, digit_resolution=2, tsk='News Formatting', supress_output=self.suppress_output)
+            progress_printer(len(self.raw_data.index), i, digit_resolution=2, tsk='News Formatting', suppress_output=self.suppress_output)
 
             t = self.raw_data.date[i]
             current_ts = convert_time_to_uct(t).timestamp()
@@ -571,12 +571,24 @@ class FormattedCoinbaseProData:
     historical_order_books = None
     historical_fills = None
 
-    def __init__(self, historical_order_books_path=None, historical_fills_path=None):
+    def __init__(self, historical_order_books_path=None, historical_fills_path=None, suppress_output=False):
+
+        self.suppress_output = suppress_output
 
         if historical_order_books_path is not None:
-            self.historical_order_books = pd.read_csv(historical_order_books_path)
+            historical_order_books = pd.read_csv(historical_order_books_path)
+            if 'Unnamed: 0' in historical_order_books.columns.values:
+                # Some data files have the above header containing the indices, this gets rid of it
+                self.historical_order_books = historical_order_books.drop(['Unnamed: 0'], axis=1)
+            else:
+                self.historical_order_books = historical_order_books
         if historical_fills_path is not None:
-            self.historical_fills = pd.read_csv(historical_fills_path)
+            historical_fills = pd.read_csv(historical_fills_path)
+            if 'Unnamed: 0' in historical_fills.columns.values:
+                # Some data files have the above header containing the indices, this gets rid of it
+                self.historical_fills = historical_fills.drop(['Unnamed: 0'], axis=1)
+            else:
+                self.historical_fills = historical_fills
 
     def str_list_to_timestamp(self, datetime_str_list):
         fmt = '%Y-%m-%dT%H:%M:%S.%fZ'
@@ -690,7 +702,7 @@ class FormattedCoinbaseProData:
 
         for order_book_ind in range(0, len(order_book_ts_vals)):
 
-            progress_printer(len(order_book_ts_vals), order_book_ind)
+            progress_printer(len(order_book_ts_vals), order_book_ind, suppress_output=self.suppress_output)
 
             ts = order_book_ts_vals[order_book_ind]
             current_bid = order_book_top_bid_vals[order_book_ind]
@@ -724,7 +736,7 @@ class FormattedCoinbaseProData:
                 current_normalized_fill = current_fill#/current_bid - 1
                 normalized_fills = np.append(normalized_fills, current_normalized_fill)
 
-            current_order_book_row = order_book[order_book.index == order_book_ind]
+            current_order_book_row = order_book[order_book.index == (order_book_ind + order_book.index[0])]
             current_order_book_row = current_order_book_row.drop(['ts'], axis=1)
 
             normalized_order_book_row = current_order_book_row.values #self.normalize_order_book_row(1, current_order_book_row)#current_order_book_row #
@@ -1118,7 +1130,7 @@ class CryptoFillsModel(CryptoPriceModel):
         super(CryptoFillsModel, self).__init__('2000-01-01 00:00:00', '2001-01-01 00:00:00', prediction_ticker, 30, None, epochs, activ_func, 'min', is_leakyrelu, suppress_output, model_path)
 
     def create_formatted_cbpro_data(self, order_book_path=None, fill_path=None):
-        self.data_obj = FormattedCoinbaseProData(historical_order_books_path=order_book_path, historical_fills_path=fill_path)
+        self.data_obj = FormattedCoinbaseProData(historical_order_books_path=order_book_path, historical_fills_path=fill_path, suppress_output=self.suppression)
 
         if order_book_path is not None:
             from_fmt = '%Y-%m-%dT%H:%M:%S.%fZ'  # Format given from coinbase
@@ -1256,5 +1268,5 @@ if __name__ == '__main__':
 
         for sym in sym_list:
             model_obj = CryptoFillsModel(sym)
-            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
-            pred = model_obj.model_actions('train/test', neuron_count=60, layers=1, batch_size=256, save_model=True, train_test_split=0.1)
+            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_20entries_1.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_20entries_1.csv')
+            pred = model_obj.model_actions('train/test', neuron_count=60, layers=1, batch_size=96, save_model=True, train_test_split=0.1)
