@@ -17,7 +17,12 @@ class BackTestExchange:
 
     def __init__(self, order_book_path):
         if order_book_path is not None:
-            self.order_books = pd.read_csv(order_book_path)
+            historical_order_books = pd.read_csv(order_book_path)
+            if 'Unnamed: 0' in historical_order_books.columns.values:
+                # Some data files have the above header containing the indices, this gets rid of it
+                self.order_books = historical_order_books.drop(['Unnamed: 0'], axis=1)
+            else:
+                self.order_books = historical_order_books
         # self.model = keras.models.load_model(model_path)
 
     def get_top_order(self, side):
@@ -128,6 +133,7 @@ class BackTestPortfolio:
 class BackTestBot:
     current_price = {'asks': None, 'bids': None}
     fills = None
+    prior_prediction = None
 
     def __init__(self, model_path, strategy):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
@@ -138,8 +144,14 @@ class BackTestBot:
 
     def load_model_data(self, historical_order_books_path, historical_fills_path, train_test_split):
         # Load all data
-        historical_order_books = pd.read_csv(historical_order_books_path)
         historical_fills = pd.read_csv(historical_fills_path)
+        historical_order_books = pd.read_csv(historical_order_books_path)
+        if 'Unnamed: 0' in historical_order_books.columns.values:
+            # Some data files have the above header containing the indices, this gets rid of it
+            historical_order_books = historical_order_books.drop(['Unnamed: 0'], axis=1)
+        if 'Unnamed: 0' in historical_fills.columns.values:
+            # Some data files have the above header containing the indices, this gets rid of it
+            historical_fills = historical_fills.drop(['Unnamed: 0'], axis=1)
 
         # Filter data so that only test data remains
         training_length = (int(len(historical_order_books) * (1 - train_test_split)))
@@ -147,7 +159,6 @@ class BackTestBot:
         fills_ts_values = self.model.data_obj.str_list_to_timestamp(historical_fills.time.values)
         historical_fills_mask =  fills_ts_values > order_books.ts.values[0]
         self.fills = historical_fills[historical_fills_mask].values[0, ::]
-
         order_books = order_books.reset_index(drop=True)
 
         # Add filtered data to objects
@@ -171,8 +182,13 @@ class BackTestBot:
     def predict(self):
         self.model.data_obj.historical_order_books = self.get_order_book()
         prediction = self.model.model_actions('forecast')
+        if self.prior_prediction:
+            prediction_del = prediction - self.prior_prediction
+        else:
+            prediction_del = 0
+        self.prior_prediction = prediction
 
-        return prediction
+        return prediction_del
 
     def get_full_portfolio_value(self):
         self.update_current_price()
@@ -194,7 +210,7 @@ class BackTestBot:
             self.place_order(decision['price'], side, size)
 
 
-def run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.05):
+def run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.1):
 
     bot = BackTestBot(model_path, strategy)
     bot.load_model_data(historical_order_books_path, historical_fills_path, train_test_split)
@@ -216,12 +232,12 @@ def run_backtest(model_path, strategy, historical_order_books_path, historical_f
 
 
 if __name__ == "__main__":
-    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_66epochs1549944377.09207.h5'
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_9epochs1550020276.369253.h5'
     strategy = Strategy()
-    historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_20entries.csv'
-    historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_20entries.csv'
+    historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular.csv'
+    historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular.csv'
 
-    algorithm_returns, market_returns = run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path)
+    algorithm_returns, market_returns = run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.03)
 
     plt.plot(algorithm_returns, '--.r')
     plt.plot(100*market_returns/market_returns[0], '--xb')

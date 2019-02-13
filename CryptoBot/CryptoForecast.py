@@ -1268,5 +1268,5 @@ if __name__ == '__main__':
 
         for sym in sym_list:
             model_obj = CryptoFillsModel(sym)
-            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_20entries_1.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_20entries_1.csv')
+            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
             pred = model_obj.model_actions('train/test', neuron_count=60, layers=1, batch_size=96, save_model=True, train_test_split=0.1)
