@@ -759,13 +759,13 @@ class FormattedCoinbaseProData:
         return normalized_fills, normalized_order_book
 
     def format_data_for_training_or_testing(self):
-        output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
+        # output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
         # TODO delete this and formalize, also uncomment the above
-        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'rb') as ds_file:
-        #     temp_input_arr = pickle.load(ds_file)
-        #
-        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'rb') as ds_file:
-        #     output_vec = pickle.load(ds_file)
+        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/granular_test_books.pickle', 'rb') as ds_file:
+            temp_input_arr = pickle.load(ds_file)
+
+        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/granular_test_fills.pickle', 'rb') as ds_file:
+            output_vec = pickle.load(ds_file)
 
         #output_vec = (output_vec - np.min(output_vec))/(np.max(output_vec) - np.min(output_vec))
 
@@ -968,7 +968,7 @@ class CryptoPriceModel:
         else:
             self.build_model(training_input, neurons=neuron_count, layer_count=layers)
 
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=7, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=0, mode='auto')
 
         hist = self.model.fit(training_input, training_output, epochs=self.epochs,
                               batch_size=batch_size, verbose=2,
@@ -1264,9 +1264,9 @@ if __name__ == '__main__':
         date_from = '2018-12-30_18:24:00'.replace('_', ' ')
         date_to = '2018-12-18_23:00:00'.replace('_', ' ')
         sym_list = ['ETH']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
-        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_100neurons_4epochs1546808340.941765.h5'
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_9epochs1550020276.369253.h5'
 
         for sym in sym_list:
-            model_obj = CryptoFillsModel(sym)
+            model_obj = CryptoFillsModel(sym, epochs=5, model_path=model_path)
             model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
-            pred = model_obj.model_actions('train/test', neuron_count=60, layers=1, batch_size=96, save_model=True, train_test_split=0.1)
+            pred = model_obj.model_actions('test', neuron_count=60, layers=3, batch_size=256, save_model=True, train_test_split=0.1)

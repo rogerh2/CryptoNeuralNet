@@ -1,13 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-# import pickle
-# import keras
-# from datetime import datetime
-# from datetime import timedelta
-# from time import sleep
 import pandas as pd
+from multiprocessing import Process
+from multiprocessing import Pool
+from multiprocessing import Queue
 import CryptoBot.CryptoForecast as cf
 from CryptoBot.CryptoStrategies import Strategy
+from time import time
+import multiprocessing, logging
 from CryptoBot.CryptoBot_Shared_Functions import progress_printer
 
 class BackTestExchange:
@@ -134,6 +134,7 @@ class BackTestBot:
     current_price = {'asks': None, 'bids': None}
     fills = None
     prior_prediction = None
+    order_books = None
 
     def __init__(self, model_path, strategy):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
@@ -169,6 +170,13 @@ class BackTestBot:
     def get_order_book(self):
         order_book = self.portfolio.exchange.get_current_book()
 
+        if self.order_books is None:
+            self.order_books = order_book
+        else:
+            if len(self.order_books.index) >= 30:
+                self.order_books = self.order_books.drop([0])
+            self.order_books = self.order_books.append(order_book, ignore_index=True)
+
         return order_book
 
     def update_current_price(self):
@@ -180,15 +188,18 @@ class BackTestBot:
         self.portfolio.exchange.place_order(price, side, size)
 
     def predict(self):
-        self.model.data_obj.historical_order_books = self.get_order_book()
-        prediction = self.model.model_actions('forecast')
+        order_book = self.get_order_book()
+        self.model.data_obj.historical_order_books = self.order_books
+        full_prediction = self.model.model_actions('forecast')
+        #TODO factor in past predictions
+        prediction = full_prediction[-1]
         if self.prior_prediction:
             prediction_del = prediction - self.prior_prediction
         else:
             prediction_del = 0
         self.prior_prediction = prediction
 
-        return prediction_del
+        return prediction_del, order_book
 
     def get_full_portfolio_value(self):
         self.update_current_price()
@@ -199,27 +210,59 @@ class BackTestBot:
 
         return full_value
 
+    def cancel_out_of_bound_orders(self, side, price):
+        orders = self.portfolio.exchange.orders[side]
+        keys_to_delete = []
+        for id in orders.keys():
+            if orders[id]['price'] != price:
+                keys_to_delete.append(id)
+
+        for id in keys_to_delete:
+            self.portfolio.exchange.remove_order(side, id)
+
     def trade_action(self):
-        order_book = self.get_order_book()
-        prediction = self.predict()
+        prediction, order_book = self.predict()
         decision = self.strategy.determine_move(prediction, order_book) # returns None for hold
         if decision is not None:
             side = decision['side']
+            price = decision['price']
             available = self.portfolio.get_amnt_available(side)
             size = available * decision['size coeff']/decision['price']
-            self.place_order(decision['price'], side, size)
+            self.cancel_out_of_bound_orders(side, price)
+            self.place_order(price, side, size)
 
 
-def run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.1):
+class MultiProcessingBackTestBot(BackTestBot):
 
-    bot = BackTestBot(model_path, strategy)
-    bot.load_model_data(historical_order_books_path, historical_fills_path, train_test_split)
-    times = np.array(bot.portfolio.exchange.order_books.index)
+    def __init__(self, model_path, strategy, predictions):
+        BackTestBot.__init__(self, model_path, strategy)
+        self.predictions = predictions
+
+    def predict(self):
+        # Keras's predict method does not support multiprocessing
+        # TODO look for ways to hack keras for multiprocessing compatability
+        order_book = self.get_order_book()
+        full_prediction = self.predictions[0:self.order_books.shape[0]]
+        #TODO factor in past predictions
+        prediction = full_prediction[-1]
+        if self.prior_prediction:
+            prediction_del = prediction - self.prior_prediction
+        else:
+            prediction_del = 0
+        self.prior_prediction = prediction
+
+        return prediction_del, order_book
+
+
+def run_backtest(bot, data_queue, order_books, proc_id=0):
+
+    times = np.array(order_books.index) - order_books.index[0]
     portfolio_history = np.array([])  # This will track the bot progress
     price_history = np.array([])
 
     for time in times:
-        progress_printer(len(times), time)
+        # TODO utilize multiprocessing library for 4X speedup
+        #progress_printer(len(times), time)
         bot.portfolio.exchange.time = time
         bot.trade_action()
         val = bot.get_full_portfolio_value()
@@ -228,16 +271,86 @@ def run_backtest(model_path, strategy, historical_order_books_path, historical_f
         bot.portfolio.exchange.update_fill_status()
         bot.portfolio.update_value()
 
+    data_queue.put((portfolio_history, proc_id), block=False)
+
+def update_and_join_processes(procs, queue):
+    data = [i for i in range(0, len(procs))]
+
+    for proc in procs:
+        proc.join()
+        print('Ending segment')
+
+    while not queue.empty():
+        temp_data = queue.get()
+        data[temp_data[1]] = temp_data # Puts the segments in order
+
+    return data
+
+
+def run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.1, num_processes=1):
+
+    # --Instantiate master bot which formats all data for the multiprocessing bots--
+    bot = BackTestBot(model_path, strategy)
+    bot.load_model_data(historical_order_books_path, historical_fills_path, train_test_split)
+    order_books = bot.portfolio.exchange.order_books
+    fills = bot.fills
+    bot.model.data_obj.historical_order_books = order_books # The bot will make all predictions before the processing starts
+    all_predictions = bot.model.model_actions('forecast')
+
+    # --Instantiate variables for process tracking--
+    procs = []
+    bots = []
+    portfolio_history = np.array([])  # This will track the bot progress
+    price_history = order_books['0'].values
+    queue = Queue()
+    order_book_chunks = np.array_split(order_books, num_processes)
+    fill_chunks = np.array_split(fills, num_processes)
+    prediction_chunks = np.array_split(all_predictions, num_processes)
+
+    # --Setup logging for multuprocessing --
+    logger = multiprocessing.log_to_stderr()
+    logger.setLevel(logging.INFO) # For some reason Pycharm does not recognize SUBDEBUG, however, it is valid
+
+    # --Start processing--
+    start_time = time()
+    for proc_id in range(0, num_processes):
+        # Create temp bot
+        bots.append(MultiProcessingBackTestBot(model_path, strategy, prediction_chunks[proc_id]))
+        current_books = order_book_chunks[proc_id]
+        current_fills = fill_chunks[proc_id]
+        bots[proc_id].portfolio.exchange.order_books = current_books
+        bots[proc_id].fills = current_fills
+        proc = Process(target=run_backtest, args=(bots[proc_id], queue, current_books, proc_id))
+        procs.append(proc)
+        print('Starting segment: ' + str(proc_id))
+        proc.start()
+
+    data = update_and_join_processes(procs, queue)
+
+    # P = Pool(num_processes)
+    # P.map()
+
+    for hist in data:
+        portfolio_history = np.append(portfolio_history, hist[0])
+    run_time = time() - start_time
+    print(str(run_time))
+
     return portfolio_history, price_history
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_9epochs1550020276.369253.h5'
     strategy = Strategy()
-    historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular.csv'
-    historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular.csv'
+    historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_short.csv'
+    historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_short.csv'
 
-    algorithm_returns, market_returns = run_backtest(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.03)
+    algorithm_returns, market_returns = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.008, num_processes=8)
 
     plt.plot(algorithm_returns, '--.r')
     plt.plot(100*market_returns/market_returns[0], '--xb')

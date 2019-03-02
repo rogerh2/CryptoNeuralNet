@@ -28,6 +28,7 @@ def concat_csv_files(file_paths_list, new_file_path):
     for file_path in file_paths_list:
         print('Now loading file ' + str(file_num) + ' of ' + str(len(file_paths_list)))
         current_df = pd.read_csv(file_path)
+        file_num += 1
         if final_df is None:
             final_df = current_df
         else:
