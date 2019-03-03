@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from multiprocessing import Process
-from multiprocessing import Pool
 from multiprocessing import Queue
 import CryptoBot.CryptoForecast as cf
 from CryptoBot.CryptoStrategies import Strategy
@@ -231,6 +230,13 @@ class BackTestBot:
             self.cancel_out_of_bound_orders(side, price)
             self.place_order(price, side, size)
 
+    def reset(self):
+        self.portfolio.value = {'USD': 100, 'SYM': 0, 'USD Hold': 0, 'SYM Hold': 0}
+        self.portfolio.exchange.orders = {'bids': {}, 'asks': {}}
+        self.current_price = {'asks': None, 'bids': None}
+        self.fills = None
+        self.prior_prediction = None
+        self.order_books = None
 
 class MultiProcessingBackTestBot(BackTestBot):
 
@@ -253,27 +259,52 @@ class MultiProcessingBackTestBot(BackTestBot):
 
         return prediction_del, order_book
 
-
 def run_backtest(bot, data_queue, order_books, proc_id=0):
 
     times = np.array(order_books.index) - order_books.index[0]
     portfolio_history = np.array([])  # This will track the bot progress
-    price_history = np.array([])
+    sym_start_portfolio_history = np.array([])
 
-    for time in times:
-        # TODO utilize multiprocessing library for 4X speedup
+    sym_start_portfolio = {'USD': 0, 'SYM': 1, 'USD Hold': 0, 'SYM Hold': 0}
+
+    bot.portfolio.value = sym_start_portfolio
+    sym_run = True
+    ind = 0
+    order_id = 0 # This allows segments of the history to be pushed early to avoid clogging the queue
+    # TODO give ability to push segments of the portfolio history early to avoid clogging the queue
+
+    while ind < len(times):
+        time = times[ind]
+        ind += 1
         #progress_printer(len(times), time)
         bot.portfolio.exchange.time = time
         bot.trade_action()
         val = bot.get_full_portfolio_value()
-        portfolio_history = np.append(portfolio_history, val)
-        price_history = np.append(price_history, bot.portfolio.exchange.get_top_order('bids'))
+        # --This loop allows the bot to simulate what would happen if the last segment ended holding crypto--
+        if sym_run:
+            sym_start_portfolio_history = np.append(sym_start_portfolio_history, val)
+            sym_val =  bot.portfolio.value['SYM']
+            if sym_val <= 0:
+                sym_run = False
+                ind = 0
+                bot.reset()
+        else:
+            portfolio_history = np.append(portfolio_history, val)
         bot.portfolio.exchange.update_fill_status()
         bot.portfolio.update_value()
 
-    data_queue.put((portfolio_history, proc_id), block=False)
+        if sym_run & (ind == len(times)):
+            sym_run = False
+            ind = 0
+            bot.reset()
 
-def update_and_join_processes(procs, queue):
+    sym_val = bot.portfolio.value['SYM']
+    did_end_on_usd = sym_val <= 0 # This lets the program know which beginning to use
+
+    # TODO update to use libraries
+    data_queue.put((portfolio_history, proc_id, sym_start_portfolio_history, did_end_on_usd), block=False)
+
+def update_and_order_processes(procs, queue):
     data = [i for i in range(0, len(procs))]
 
     for proc in procs:
@@ -286,6 +317,27 @@ def update_and_join_processes(procs, queue):
 
     return data
 
+def stitch_trade_histories(data):
+    last_segment_did_end_on_usd = True
+    last_segment_end_value = 100
+    portfolio_history = np.array([])  # This will track the bot progress
+
+    for entry in data:
+        if last_segment_did_end_on_usd:
+            current_portfolio_history = entry[0]
+            norm_coeff = last_segment_end_value / entry[0][0]
+        else:
+            usd_portfolio_history = entry[0]
+            sym_start_history = entry[2]
+            norm_coeff = last_segment_end_value / entry[2][0]
+            current_portfolio_history = np.append(sym_start_history, usd_portfolio_history[len(sym_start_history)::])
+
+        portfolio_history = np.append(portfolio_history, norm_coeff*current_portfolio_history)
+
+        last_segment_did_end_on_usd = entry[3]
+        last_segment_end_value = portfolio_history[-1]
+
+    return portfolio_history
 
 def run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.1, num_processes=1):
 
@@ -325,22 +377,13 @@ def run_backtests_in_parallel(model_path, strategy, historical_order_books_path,
         print('Starting segment: ' + str(proc_id))
         proc.start()
 
-    data = update_and_join_processes(procs, queue)
+    data = update_and_order_processes(procs, queue)
 
-    # P = Pool(num_processes)
-    # P.map()
-
-    for hist in data:
-        portfolio_history = np.append(portfolio_history, hist[0])
+    portfolio_history = stitch_trade_histories(data)
     run_time = time() - start_time
     print(str(run_time))
 
     return portfolio_history, price_history
-
-
-
-
-
 
 
 
@@ -350,7 +393,7 @@ if __name__ == "__main__":
     historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_short.csv'
     historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_short.csv'
 
-    algorithm_returns, market_returns = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.008, num_processes=8)
+    algorithm_returns, market_returns = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.004, num_processes=8)
 
     plt.plot(algorithm_returns, '--.r')
     plt.plot(100*market_returns/market_returns[0], '--xb')
