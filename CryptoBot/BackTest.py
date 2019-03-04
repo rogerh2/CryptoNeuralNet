@@ -294,7 +294,7 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
             portfolio_history = np.append(portfolio_history, val)
 
         if ind > next_put_ind:
-            data_queue.put((portfolio_history, proc_id, sym_start_portfolio_history, None, order_id),
+            data_queue.put({'USD': portfolio_history, 'process id': proc_id, 'SYM': sym_start_portfolio_history, 'end state': None, 'seg id': order_id},
                            block=False)
             next_put_ind += put_ind_limit
             portfolio_history = np.array([])
@@ -347,6 +347,7 @@ def update_and_order_processes(procs, queue):
             proc.join(timeout=1)
             while not queue.empty():
                 temp_data = queue.get()
+
                 if data[temp_data['process id']] is None:
                     data[temp_data['process id']] = {temp_data['seg id']: temp_data}  # Puts the segments in order
                 else:
