@@ -272,6 +272,8 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
     ind = 0
     order_id = 0 # This allows segments of the history to be pushed early to avoid clogging the queue
     # TODO give ability to push segments of the portfolio history early to avoid clogging the queue
+    put_ind_limit = 1200
+    next_put_ind = 1200
 
     while ind < len(times):
         time = times[ind]
@@ -290,6 +292,15 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
                 bot.reset()
         else:
             portfolio_history = np.append(portfolio_history, val)
+
+        if ind > next_put_ind:
+            data_queue.put((portfolio_history, proc_id, sym_start_portfolio_history, None, order_id),
+                           block=False)
+            next_put_ind += put_ind_limit
+            portfolio_history = np.array([])
+            sym_start_portfolio_history = np.array([])
+            order_id += 1
+
         bot.portfolio.exchange.update_fill_status()
         bot.portfolio.update_value()
 
@@ -301,19 +312,53 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
     sym_val = bot.portfolio.value['SYM']
     did_end_on_usd = sym_val <= 0 # This lets the program know which beginning to use
 
-    # TODO update to use libraries
-    data_queue.put((portfolio_history, proc_id, sym_start_portfolio_history, did_end_on_usd), block=False)
+    # TODO update to use dictionaries
+    data_queue.put({'USD': portfolio_history, 'process id': proc_id, 'SYM': sym_start_portfolio_history, 'end state': did_end_on_usd, 'seg id': order_id}, block=False)
+
+def stitch_process_segments(data):
+    num_entries = len(data.keys())
+    portfolio_history = np.array([])  # This will track the bot progress
+    sym_start_portfolio_history = np.array([])
+    new_data = {'USD': None, 'process id': data[0]['process id'], 'SYM': None, 'end state': data[0]['end state']}
+    for key in range(0, num_entries):
+        current_data = data[key]
+        portfolio_history = np.append(portfolio_history, current_data['USD'])
+        sym_start_portfolio_history = np.append(sym_start_portfolio_history, current_data['SYM'])
+
+    new_data['USD'] = portfolio_history
+    new_data['SYM'] = sym_start_portfolio_history
+
+    return new_data
+
 
 def update_and_order_processes(procs, queue):
-    data = [i for i in range(0, len(procs))]
+    data = [None for i in range(0, len(procs))]
+    stop_loop = True
 
-    for proc in procs:
-        proc.join()
-        print('Ending segment')
+    while stop_loop:
 
-    while not queue.empty():
-        temp_data = queue.get()
-        data[temp_data[1]] = temp_data # Puts the segments in order
+        stop_loop = np.any([( not x is None) for x in procs])
+
+        for i in range(0, len(procs)):
+            proc = procs[i]
+            if proc is None:
+                continue
+
+            proc.join(timeout=1)
+            while not queue.empty():
+                temp_data = queue.get()
+                if data[temp_data['process id']] is None:
+                    data[temp_data['process id']] = {temp_data['seg id']: temp_data}  # Puts the segments in order
+                else:
+                    data[temp_data['process id']][temp_data['seg id']] = temp_data
+            if not proc.is_alive():
+                procs[i] = None
+                print('Removing process ' + str(i))
+
+    for j in range(0, len(data)):
+        print(str(j))
+        new_entry = stitch_process_segments(data[j])
+        data[j] = new_entry
 
     return data
 
@@ -324,17 +369,17 @@ def stitch_trade_histories(data):
 
     for entry in data:
         if last_segment_did_end_on_usd:
-            current_portfolio_history = entry[0]
-            norm_coeff = last_segment_end_value / entry[0][0]
+            current_portfolio_history = entry['USD']
+            norm_coeff = last_segment_end_value / entry['USD'][0]
         else:
-            usd_portfolio_history = entry[0]
-            sym_start_history = entry[2]
-            norm_coeff = last_segment_end_value / entry[2][0]
+            usd_portfolio_history = entry['USD']
+            sym_start_history = entry['SYM']
+            norm_coeff = last_segment_end_value / entry['SYM'][0]
             current_portfolio_history = np.append(sym_start_history, usd_portfolio_history[len(sym_start_history)::])
 
         portfolio_history = np.append(portfolio_history, norm_coeff*current_portfolio_history)
 
-        last_segment_did_end_on_usd = entry[3]
+        last_segment_did_end_on_usd = entry['end state']
         last_segment_end_value = portfolio_history[-1]
 
     return portfolio_history
@@ -393,7 +438,7 @@ if __name__ == "__main__":
     historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_short.csv'
     historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_short.csv'
 
-    algorithm_returns, market_returns = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.004, num_processes=8)
+    algorithm_returns, market_returns = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.01, num_processes=4)
 
     plt.plot(algorithm_returns, '--.r')
     plt.plot(100*market_returns/market_returns[0], '--xb')
