@@ -1267,6 +1267,10 @@ if __name__ == '__main__':
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_9epochs1550020276.369253.h5'
 
         for sym in sym_list:
-            model_obj = CryptoFillsModel(sym, epochs=5, model_path=model_path)
-            model_obj.create_formatted_cbpro_data(order_book_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv', fill_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv')
-            pred = model_obj.model_actions('test', neuron_count=60, layers=3, batch_size=256, save_model=True, train_test_split=0.1)
+            # order_books = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv'
+            # fills = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv'
+            order_books = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/CryptoBotUnitTests/UnitTestData/SYM_historical_order_books_20entries.csv'
+            fills = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/CryptoBotUnitTests/UnitTestData/SYM_fills_20entries.csv'
+            model_obj = CryptoFillsModel(sym, epochs=2, model_path=model_path)
+            model_obj.create_formatted_cbpro_data(order_book_path=order_books, fill_path=fills)
+            pred = model_obj.model_actions('train', neuron_count=60, layers=3, batch_size=256, save_model=True, train_test_split=0.1)

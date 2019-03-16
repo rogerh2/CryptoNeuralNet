@@ -7,7 +7,8 @@ import CryptoBot.CryptoForecast as cf
 from CryptoBot.CryptoStrategies import Strategy
 from time import time
 import multiprocessing, logging
-from CryptoBot.CryptoBot_Shared_Functions import progress_printer
+import pickle
+from CryptoBot.CryptoBot_Shared_Functions import rescale_to_fit
 
 class BackTestExchange:
     orders = {'bids': {}, 'asks': {}}
@@ -190,8 +191,12 @@ class BackTestBot:
         order_book = self.get_order_book()
         self.model.data_obj.historical_order_books = self.order_books
         full_prediction = self.model.model_actions('forecast')
-        #TODO factor in past predictions
-        prediction = full_prediction[-1]
+        prices = self.order_books['0'].values
+        if len(prices) > 5:
+            scaled_prediction = rescale_to_fit(full_prediction, prices)
+            prediction = np.mean(scaled_prediction[-5::])
+        else:
+            prediction = 0
         if self.prior_prediction:
             prediction_del = prediction - self.prior_prediction
         else:
@@ -221,14 +226,16 @@ class BackTestBot:
 
     def trade_action(self):
         prediction, order_book = self.predict()
-        decision = self.strategy.determine_move(prediction, order_book) # returns None for hold
+        decision = self.strategy.determine_move(prediction, order_book, self.portfolio) # returns None for hold
         if decision is not None:
             side = decision['side']
             price = decision['price']
             available = self.portfolio.get_amnt_available(side)
             size = available * decision['size coeff']/decision['price']
-            self.cancel_out_of_bound_orders(side, price)
+            #self.cancel_out_of_bound_orders(side, price)
             self.place_order(price, side, size)
+
+        return prediction
 
     def reset(self):
         self.portfolio.value = {'USD': 100, 'SYM': 0, 'USD Hold': 0, 'SYM Hold': 0}
@@ -246,11 +253,14 @@ class MultiProcessingBackTestBot(BackTestBot):
 
     def predict(self):
         # Keras's predict method does not support multiprocessing
-        # TODO look for ways to hack keras for multiprocessing compatability
         order_book = self.get_order_book()
         full_prediction = self.predictions[0:self.order_books.shape[0]]
-        #TODO factor in past predictions
-        prediction = full_prediction[-1]
+        prices = self.order_books['0'].values
+        if len(prices) > 5:
+            scaled_prediction = rescale_to_fit(full_prediction, prices)
+            prediction = np.mean(scaled_prediction[-5::])
+        else:
+            prediction = 0
         if self.prior_prediction:
             prediction_del = prediction - self.prior_prediction
         else:
@@ -264,6 +274,7 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
     times = np.array(order_books.index) - order_books.index[0]
     portfolio_history = np.array([])  # This will track the bot progress
     sym_start_portfolio_history = np.array([])
+    predictions = np.array([])
 
     sym_start_portfolio = {'USD': 0, 'SYM': 1, 'USD Hold': 0, 'SYM Hold': 0}
 
@@ -271,16 +282,17 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
     sym_run = True
     ind = 0
     order_id = 0 # This allows segments of the history to be pushed early to avoid clogging the queue
-    # TODO give ability to push segments of the portfolio history early to avoid clogging the queue
     put_ind_limit = 1200
-    next_put_ind = 1200
+    next_put_ind = put_ind_limit
+    did_sym_run_end_on_usd = None
 
+    # TODO edit so that any orders remaining across segments can be used to determine the path of the next segment
     while ind < len(times):
         time = times[ind]
         ind += 1
         #progress_printer(len(times), time)
         bot.portfolio.exchange.time = time
-        bot.trade_action()
+        prediction = bot.trade_action()
         val = bot.get_full_portfolio_value()
         # --This loop allows the bot to simulate what would happen if the last segment ended holding crypto--
         if sym_run:
@@ -292,13 +304,15 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
                 bot.reset()
         else:
             portfolio_history = np.append(portfolio_history, val)
+        predictions = np.append(predictions, prediction)
 
         if ind > next_put_ind:
-            data_queue.put({'USD': portfolio_history, 'process id': proc_id, 'SYM': sym_start_portfolio_history, 'end state': None, 'seg id': order_id},
+            data_queue.put({'USD': portfolio_history, 'process id': proc_id, 'SYM': sym_start_portfolio_history, 'end state': None, 'sym run end state': None, 'seg id': order_id, 'predictions': predictions},
                            block=False)
             next_put_ind += put_ind_limit
             portfolio_history = np.array([])
             sym_start_portfolio_history = np.array([])
+            predictions = np.array([])
             order_id += 1
 
         bot.portfolio.exchange.update_fill_status()
@@ -307,26 +321,47 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
         if sym_run & (ind == len(times)):
             sym_run = False
             ind = 0
-            bot.reset()
+            sym_val = bot.portfolio.value['SYM']
+            usd_val = bot.portfolio.value['USD']
+            did_sym_run_end_on_usd = sym_val <= usd_val
+
 
     sym_val = bot.portfolio.value['SYM']
-    did_end_on_usd = sym_val <= 0 # This lets the program know which beginning to use
+    usd_val = bot.portfolio.value['USD']
+    did_end_on_usd = sym_val <= usd_val  # This lets the program know which beginning to use
+    if did_sym_run_end_on_usd is None:
+        did_sym_run_end_on_usd = did_end_on_usd
 
-    # TODO update to use dictionaries
-    data_queue.put({'USD': portfolio_history, 'process id': proc_id, 'SYM': sym_start_portfolio_history, 'end state': did_end_on_usd, 'seg id': order_id}, block=False)
+
+    data_queue.put({'USD': portfolio_history, 'process id': proc_id, 'SYM': sym_start_portfolio_history, 'end state': did_end_on_usd, 'sym run end state': did_sym_run_end_on_usd, 'seg id': order_id, 'predictions': predictions}, block=False)
 
 def stitch_process_segments(data):
     num_entries = len(data.keys())
-    portfolio_history = np.array([])  # This will track the bot progress
-    sym_start_portfolio_history = np.array([])
-    new_data = {'USD': None, 'process id': data[0]['process id'], 'SYM': None, 'end state': data[0]['end state']}
-    for key in range(0, num_entries):
-        current_data = data[key]
-        portfolio_history = np.append(portfolio_history, current_data['USD'])
-        sym_start_portfolio_history = np.append(sym_start_portfolio_history, current_data['SYM'])
+    new_data = {'process id': data[0]['process id']}
+    all_keys = data[0].keys()
 
-    new_data['USD'] = portfolio_history
-    new_data['SYM'] = sym_start_portfolio_history
+    for key in all_keys:
+        if key in new_data.keys():
+            continue
+        new_data[key] = np.array([])
+
+    print(new_data.keys())
+
+    for ind in range(0, num_entries):
+        current_data = data[ind]
+
+        if current_data['end state'] is not None:
+            # The end state is None for all but one entry
+            new_data['end state'] = current_data['end state']
+
+        if current_data['sym run end state'] is not None:
+            # The end state is None for all but one entry
+            new_data['sym run end state'] = current_data['sym run end state']
+
+        for key in all_keys:
+            if key in ['process id', 'end state', 'sym run end state']:
+                continue
+            new_data[key] = np.append(new_data[key], current_data[key])
 
     return new_data
 
@@ -372,15 +407,17 @@ def stitch_trade_histories(data):
         if last_segment_did_end_on_usd:
             current_portfolio_history = entry['USD']
             norm_coeff = last_segment_end_value / entry['USD'][0]
+            end_key = 'end state'
         else:
             usd_portfolio_history = entry['USD']
             sym_start_history = entry['SYM']
             norm_coeff = last_segment_end_value / entry['SYM'][0]
             current_portfolio_history = np.append(sym_start_history, usd_portfolio_history[len(sym_start_history)::])
+            end_key = 'sym run end state'
 
         portfolio_history = np.append(portfolio_history, norm_coeff*current_portfolio_history)
 
-        last_segment_did_end_on_usd = entry['end state']
+        last_segment_did_end_on_usd = entry[end_key]
         last_segment_end_value = portfolio_history[-1]
 
     return portfolio_history
@@ -434,6 +471,8 @@ def run_backtests_in_parallel(model_path, strategy, historical_order_books_path,
 
 
 if __name__ == "__main__":
+
+
     model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_1layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_9epochs1550020276.369253.h5'
     strategy = Strategy()
     historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_short.csv'
