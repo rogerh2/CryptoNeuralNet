@@ -196,9 +196,10 @@ class BackTestBot:
             scaled_prediction = rescale_to_fit(full_prediction, prices)
             prediction = np.mean(scaled_prediction[-5::])
         else:
-            prediction = 0
-        if self.prior_prediction:
-            prediction_del = prediction - self.prior_prediction
+            prediction = full_prediction[-1]
+
+        if self.prior_prediction is not None:
+            prediction_del = prediction - self.prior_prediction + self.order_books['0'].values[0]
         else:
             prediction_del = 0
         self.prior_prediction = prediction
@@ -256,13 +257,15 @@ class MultiProcessingBackTestBot(BackTestBot):
         order_book = self.get_order_book()
         full_prediction = self.predictions[0:self.order_books.shape[0]]
         prices = self.order_books['0'].values
-        if len(prices) > 5:
+        int_len = 10
+        if len(prices) > int_len:
             scaled_prediction = rescale_to_fit(full_prediction, prices)
-            prediction = np.mean(scaled_prediction[-5::])
+            prediction = scaled_prediction[-1]
         else:
-            prediction = 0
-        if self.prior_prediction:
-            prediction_del = prediction - self.prior_prediction
+            prediction = full_prediction[-1]
+
+        if self.prior_prediction is not None:
+            prediction_del = prediction - self.prior_prediction + prices[-1]
         else:
             prediction_del = 0
         self.prior_prediction = prediction
@@ -304,7 +307,7 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
                 bot.reset()
         else:
             portfolio_history = np.append(portfolio_history, val)
-        predictions = np.append(predictions, prediction)
+            predictions = np.append(predictions, prediction)
 
         if ind > next_put_ind:
             data_queue.put({'USD': portfolio_history, 'process id': proc_id, 'SYM': sym_start_portfolio_history, 'end state': None, 'sym run end state': None, 'seg id': order_id, 'predictions': predictions},
@@ -402,6 +405,7 @@ def stitch_trade_histories(data):
     last_segment_did_end_on_usd = True
     last_segment_end_value = 100
     portfolio_history = np.array([])  # This will track the bot progress
+    predictions = np.array([])
 
     for entry in data:
         if last_segment_did_end_on_usd:
@@ -416,11 +420,12 @@ def stitch_trade_histories(data):
             end_key = 'sym run end state'
 
         portfolio_history = np.append(portfolio_history, norm_coeff*current_portfolio_history)
+        predictions = np.append(predictions, entry['predictions'])
 
         last_segment_did_end_on_usd = entry[end_key]
         last_segment_end_value = portfolio_history[-1]
 
-    return portfolio_history
+    return portfolio_history, predictions
 
 def run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.1, num_processes=1):
 
@@ -462,11 +467,11 @@ def run_backtests_in_parallel(model_path, strategy, historical_order_books_path,
 
     data = update_and_order_processes(procs, queue)
 
-    portfolio_history = stitch_trade_histories(data)
+    portfolio_history, predictions = stitch_trade_histories(data)
     run_time = time() - start_time
     print(str(run_time))
 
-    return portfolio_history, price_history
+    return portfolio_history, price_history, predictions
 
 
 
@@ -478,8 +483,19 @@ if __name__ == "__main__":
     historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_short.csv'
     historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_short.csv'
 
-    algorithm_returns, market_returns = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.01, num_processes=4)
+    algorithm_returns, market_returns, predictions = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.01, num_processes=8)
 
-    plt.plot(algorithm_returns, '--.r')
-    plt.plot(100*market_returns/market_returns[0], '--xb')
+    plt.plot(algorithm_returns, '--.r', label='algorithm')
+    plt.plot(100*market_returns/market_returns[0], '--xb', label='market')
+    plt.legend()
+    plt.title('Returns')
+    plt.ylabel('Value (%)')
+
+    plt.figure()
+    plt.plot(predictions, '--.r', label='prediction')
+    plt.plot(market_returns, '--xb', label='market')
+    plt.legend()
+    plt.title('Price')
+    plt.ylabel('Price ($)')
+
     plt.show()
