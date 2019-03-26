@@ -593,7 +593,8 @@ class FormattedCoinbaseProData:
     def str_list_to_timestamp(self, datetime_str_list):
         fmt = '%Y-%m-%dT%H:%M:%S.%fZ'
         utc = pytz.UTC
-        for i in range(0, len(datetime_str_list)):
+        total_len = len(datetime_str_list)
+        for i in range(0, total_len):
             current_date_str = datetime_str_list[i]
             if '.' not in current_date_str:
                 new_date_str = current_date_str[0:-1] + '.000Z'
@@ -700,6 +701,9 @@ class FormattedCoinbaseProData:
         last_current_bid = 0
         last_current_ask = 0
 
+        test_books = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books_031919.pickle'
+        test_fills = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills_031919.pickle'
+
         for order_book_ind in range(0, len(order_book_ts_vals)):
 
             progress_printer(len(order_book_ts_vals), order_book_ind, suppress_output=self.suppress_output)
@@ -716,12 +720,12 @@ class FormattedCoinbaseProData:
                     if fill_ind == len(fill_price_vals):
                         # TODO delete this and formalize
                         # with open(
-                        #         '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle',
+                        #         test_books,
                         #         'wb') as cp_file_handle:
                         #     pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
                         #
                         # with open(
-                        #         '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle',
+                        #         test_fills,
                         #         'wb') as cp_file_handle:
                         #     pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
                         # If there are more order book states after the last fill than this stops early
@@ -750,22 +754,22 @@ class FormattedCoinbaseProData:
             last_current_ask = current_ask
 
         # TODO delete this and formalize
-        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books.pickle', 'wb') as cp_file_handle:
+        # with open(test_books, 'wb') as cp_file_handle:
         #     pickle.dump(normalized_order_book, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
         #
-        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills.pickle', 'wb') as cp_file_handle:
+        # with open(test_fills, 'wb') as cp_file_handle:
         #     pickle.dump(normalized_fills, cp_file_handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         return normalized_fills, normalized_order_book
 
     def format_data_for_training_or_testing(self):
-        # output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
+        output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
         # TODO delete this and formalize, also uncomment the above
-        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/granular_test_books.pickle', 'rb') as ds_file:
-            temp_input_arr = pickle.load(ds_file)
-
-        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/granular_test_fills.pickle', 'rb') as ds_file:
-            output_vec = pickle.load(ds_file)
+        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books_031919.pickle', 'rb') as ds_file:
+        #     temp_input_arr = pickle.load(ds_file)
+        #
+        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills_031919.pickle', 'rb') as ds_file:
+        #     output_vec = pickle.load(ds_file)
 
         #output_vec = (output_vec - np.min(output_vec))/(np.max(output_vec) - np.min(output_vec))
 
@@ -961,14 +965,14 @@ class CryptoPriceModel:
         self.model.add(Dense(units=output_size, activation="linear"))
         self.model.compile(loss=self.loss_func, optimizer=optimizer) #loss, optimizer=optimizer)
 
-    def train_model(self, training_input, training_output, neuron_count=200, save_model=False, train_saved_model=False, layers=3, batch_size=96):
+    def train_model(self, training_input, training_output, neuron_count=200, save_model=False, train_saved_model=False, layers=3, batch_size=96, training_patience=2):
         if train_saved_model:
             print('re-trianing model')
             self.model.reset_states()
         else:
             self.build_model(training_input, neurons=neuron_count, layer_count=layers)
 
-        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=0, mode='auto')
+        estop = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=training_patience, verbose=0, mode='auto')
 
         hist = self.model.fit(training_input, training_output, epochs=self.epochs,
                               batch_size=batch_size, verbose=2,
@@ -1026,7 +1030,7 @@ class CryptoPriceModel:
 
         return {'predicted': prediction, 'actual':test_output}
 
-    def optimize_model(self, training_input, training_output, neuron_grid, layer_grid, batch_size_grid, save_model=True):
+    def optimize_model(self, training_input, training_output, neuron_grid, layer_grid, batch_size_grid, save_model=True, patience=2):
 
         hist = np.zeros((len(layer_grid), len(neuron_grid)))
         # The "single" arrays are meant to be used once per run
@@ -1040,7 +1044,7 @@ class CryptoPriceModel:
                     layers = layer_grid[i]
                     neuron_count = neuron_grid[j]
                     for k in range(0, 3):
-                        current_hist, current_file_name = self.train_model(training_input, training_output, neuron_count=neuron_count, save_model=False, train_saved_model=False, layers=layers, batch_size=batch_size)
+                        current_hist, current_file_name = self.train_model(training_input, training_output, neuron_count=neuron_count, save_model=False, train_saved_model=False, layers=layers, batch_size=batch_size, training_patience=patience)
                         single_models.append(self.model)
                         single_val_losses = np.append(single_val_losses, current_hist.history['val_loss'][-2])
                         single_file_names.append(current_file_name)
@@ -1079,7 +1083,7 @@ class CryptoPriceModel:
         plt.savefig('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/' + self.prediction_ticker.upper() + '/' + self.prediction_ticker.upper() + ' Optimization Grid From: ' + self.date_from + ' To: ' + self.date_to)
         plt.close()
 
-    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96, neuron_grid=None, batch_size_grid=None, layer_grid=None, hourly_time_offset_for_prediction=2):
+    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96, neuron_grid=None, batch_size_grid=None, layer_grid=None, hourly_time_offset_for_prediction=2, patience=2):
 
         if neuron_grid is None:
             neuron_grid = [30, 70, 92, 100]
@@ -1102,7 +1106,7 @@ class CryptoPriceModel:
                                          predicted_quality=predicted_quality)
 
         if action == 'train':
-            hist, _ = self.train_model(data['input'], data['output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+            hist, _ = self.train_model(data['input'], data['output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size, training_patience=patience)
             return hist
 
         elif action == 'test':
@@ -1110,7 +1114,7 @@ class CryptoPriceModel:
             return test_data
 
         elif action == 'train/test':
-            self.train_model(data['training input'], data['training output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+            self.train_model(data['training input'], data['training output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size, training_patience=patience)
 
             self.test_model(data['input'], data['output'], show_plots=show_plots, x_indices=data['x labels'])
             return None
@@ -1120,7 +1124,7 @@ class CryptoPriceModel:
             return prediction
 
         elif action == 'optimize':
-            self.optimize_model(data['input'], data['output'], neuron_grid, layer_grid, batch_size_grid)
+            self.optimize_model(data['input'], data['output'], neuron_grid, layer_grid, batch_size_grid, patience=patience)
             return None
 
 class CryptoFillsModel(CryptoPriceModel):
@@ -1183,7 +1187,7 @@ class CryptoFillsModel(CryptoPriceModel):
 
         return {'predicted': prediction, 'actual':test_output}
 
-    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96, neuron_grid=None, batch_size_grid=None, layer_grid=None, hourly_time_offset_for_prediction=2):
+    def model_actions(self, action, train_test_split = 0.33, forecast_offset=30, predicted_quality='high', show_plots=True, neuron_count=92, save_model=False, train_saved_model=False, layers=3, batch_size=96, neuron_grid=None, batch_size_grid=None, layer_grid=None, hourly_time_offset_for_prediction=2, patience=2):
 
         if neuron_grid is None:
             neuron_grid = [30, 70, 92, 100]
@@ -1198,7 +1202,7 @@ class CryptoFillsModel(CryptoPriceModel):
         data = self.data_obj.format_data(action, train_test_split=train_test_split)
 
         if action == 'train':
-            hist, _ = self.train_model(data['input'], data['output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+            hist, _ = self.train_model(data['input'], data['output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size, training_patience=patience)
             return hist
 
         elif action == 'test':
@@ -1206,7 +1210,7 @@ class CryptoFillsModel(CryptoPriceModel):
             return test_data
 
         elif action == 'train/test':
-            self.train_model(data['training input'], data['training output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size)
+            self.train_model(data['training input'], data['training output'], neuron_count=neuron_count, save_model=save_model, train_saved_model=train_saved_model, layers=layers, batch_size=batch_size, training_patience=patience)
 
             self.test_model(data['input'], data['output'], show_plots=show_plots, x_indices=data['x labels'])
             return None
@@ -1217,7 +1221,7 @@ class CryptoFillsModel(CryptoPriceModel):
             return prediction
 
         elif action == 'optimize':
-            self.optimize_model(data['input'], data['output'], neuron_grid, layer_grid, batch_size_grid)
+            self.optimize_model(data['input'], data['output'], neuron_grid, layer_grid, batch_size_grid, patience=patience)
             return None
 
 # --Useful Scripts Based on This CryptoPriceModel--
@@ -1269,8 +1273,8 @@ if __name__ == '__main__':
         for sym in sym_list:
             # order_books = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_historical_order_books_granular.csv'
             # fills = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv'
-            order_books = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/CryptoBotUnitTests/UnitTestData/SYM_historical_order_books_20entries.csv'
-            fills = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/CryptoBotUnitTests/UnitTestData/SYM_fills_20entries.csv'
-            model_obj = CryptoFillsModel(sym, epochs=2, model_path=model_path)
+            order_books = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_031919.csv'
+            fills = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_031919.csv'
+            model_obj = CryptoFillsModel(sym, model_path=model_path, epochs=15)
             model_obj.create_formatted_cbpro_data(order_book_path=order_books, fill_path=fills)
-            pred = model_obj.model_actions('train', neuron_count=60, layers=3, batch_size=256, save_model=True, train_test_split=0.1)
+            pred = model_obj.model_actions('train/test', neuron_count=60, layers=3, batch_size=256, save_model=True, train_test_split=0.1, patience=10)

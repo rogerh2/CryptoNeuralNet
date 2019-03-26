@@ -31,18 +31,23 @@ def convert_time_to_uct(naive_date_from, tz_str=None):
     utc_date = sys_tz_date_from.astimezone(utc)
     return utc_date
 
-def progress_printer(total_len, current_ind, start_ind=0, digit_resolution=1, tsk='Task', suppress_output=False):
+def progress_printer(total_len, current_ind, start_ind=0, digit_resolution=1, print_resolution=None, tsk='Task', suppress_output=False):
+
+    if print_resolution is None:
+        # Print resolutions is the number of digits to print whereas digit resolution is how small of changes should be
+        # registered, in most cases these are the same
+        print_resolution = digit_resolution
 
     if not suppress_output:
         progress_percent = 100*(current_ind-start_ind)/(total_len-start_ind)
         resolution = 10**-(digit_resolution+2)
 
         if 1 >= (total_len - start_ind)*resolution:
-            print (tsk + ' is ' + num2str(progress_percent, digit_resolution) + '% Complete')
+            print (tsk + ' is ' + num2str(progress_percent, print_resolution) + '% Complete')
         else:
             relevant_inds = range(start_ind, total_len, round((total_len - start_ind)*resolution))
             if current_ind in relevant_inds:
-                print(tsk + ' is ' + num2str(progress_percent, digit_resolution) + '% Complete')
+                print(tsk + ' is ' + num2str(progress_percent, print_resolution) + '% Complete')
 
     else:
         pass
@@ -85,3 +90,10 @@ def multiple_choice_question_with_prompt(prompt_str):
             print('Must answer yes or no')
 
     return bool_val
+
+def fit_to_data(data, data_to_scale_to):
+    coeff = np.polyfit(data, data_to_scale_to, 3)
+    fit_data = coeff[1]*data + coeff[0]
+    predict_point = fit_data[-1]
+
+    return predict_point

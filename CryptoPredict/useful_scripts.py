@@ -51,6 +51,6 @@ if __name__ == "__main__":
 
 
     concat_csv_files(csv_fills_list,
-                     '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular.csv')
+                     '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_031919.csv')
     concat_csv_files(csv_order_books_list,
-                     '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular.csv')
+                     '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_031919.csv')
