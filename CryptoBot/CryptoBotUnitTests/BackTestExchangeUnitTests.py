@@ -28,6 +28,7 @@ class BackTestExchangeTestCase(unittest.TestCase):
 
         self.assertEqual(price, self.test_obj.orders[side][0]['price'], 'Incorrect price')
         self.assertEqual(size, self.test_obj.orders[side][0]['size'], 'Incorrect size')
+        self.assertTrue(self.test_obj.orders[side][0]['is maker'], 'Maker order placed as taker')
 
         self.test_obj.remove_order(side, 0)
         self.assertEqual(len(self.test_obj.orders[side]), 0, 'Did not remove order')
@@ -41,6 +42,39 @@ class BackTestExchangeTestCase(unittest.TestCase):
 
         self.assertEqual(price, self.test_obj.orders[side][0]['price'], 'Incorrect price')
         self.assertEqual(size, self.test_obj.orders[side][0]['size'], 'Incorrect size')
+        self.assertTrue(self.test_obj.orders[side][0]['is maker'], 'Maker order placed as taker')
+
+        self.test_obj.remove_order(side, 0)
+        self.assertEqual(len(self.test_obj.orders[side]), 0, 'Did not remove order')
+
+    def test_places_ask_as_taker_with_post_only_disabled_and_removes_order(self):
+        post_price = 100
+        fill_price = 102
+        size = 1
+        side = 'asks'
+        self.test_obj.time = 3
+        self.test_obj.place_order(post_price, side, size, post_only=False)
+
+        self.assertEqual(fill_price, self.test_obj.orders[side][0]['price'], 'Incorrect price')
+        self.assertEqual(size, self.test_obj.orders[side][0]['size'], 'Incorrect size')
+        self.assertTrue(self.test_obj.orders[side][0]['filled'], 'Order placed as taker did not fill')
+        self.assertFalse(self.test_obj.orders[side][0]['is maker'], 'Taker order placed as maker')
+
+        self.test_obj.remove_order(side, 0)
+        self.assertEqual(len(self.test_obj.orders[side]), 0, 'Did not remove order')
+
+    def test_places_bid_as_taker_with_post_only_disabled_and_removes_order(self):
+        post_price = 106
+        fill_price = 105
+        size = 1
+        side = 'bids'
+        self.test_obj.time = 3
+        self.test_obj.place_order(post_price, side, size, post_only=False)
+
+        self.assertEqual(fill_price, self.test_obj.orders[side][0]['price'], 'Incorrect price')
+        self.assertEqual(size, self.test_obj.orders[side][0]['size'], 'Incorrect size')
+        self.assertTrue(self.test_obj.orders[side][0]['filled'], 'Order placed as taker did not fill')
+        self.assertFalse(self.test_obj.orders[side][0]['is maker'], 'Taker order placed as maker')
 
         self.test_obj.remove_order(side, 0)
         self.assertEqual(len(self.test_obj.orders[side]), 0, 'Did not remove order')
@@ -54,7 +88,7 @@ class BackTestExchangeTestCase(unittest.TestCase):
 
         self.assertEqual(len(self.test_obj.orders[side]), 0, 'Placed bid on ask book')
 
-    def test_will_not_place_ask_on_ask_book(self):
+    def test_will_not_place_ask_on_bid_book(self):
         price = 90
         size = 1
         side = 'asks'

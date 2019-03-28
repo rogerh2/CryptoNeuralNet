@@ -42,10 +42,38 @@ class BackTestExchange:
         current_order_book_row = self.order_books.iloc[[ind]]
         return current_order_book_row
 
-    def place_order(self, price, side, size):
-        # TODO implement taker orders (maybe make this a place_maker_order method and have a place_taker_order method)
+    def create_new_order_id(self, this_side_orders):
+        if len(this_side_orders) > 0:
+            existing_ids = np.array(list(this_side_orders.keys()))
+            new_order_id = np.max(existing_ids) + 1
+        else:
+            new_order_id = 0
+
+        return new_order_id
+
+    def place_maker_order(self, price, side, size, coeff, top_opposing_order):
         new_order_id = None
 
+        if (coeff*price >= coeff*top_opposing_order) and (size > self.min_order[side]):
+            # This ensures the order is only placed onto the appropiate order book side
+            this_side_orders = self.orders[side]
+            new_order_id = self.create_new_order_id(this_side_orders)
+            this_side_orders[new_order_id] = {'size': size, 'price': price, 'filled': False, 'is maker':True}
+
+        return new_order_id
+
+    def place_post_only_disabled_order(self, price, side, size, coeff, top_opposing_order):
+        new_order_id = self.place_maker_order(price, side, size, coeff, top_opposing_order)
+
+        if (new_order_id is None) and (size > self.min_order[side]):
+            this_side_orders = self.orders[side]
+            new_order_id = self.create_new_order_id(this_side_orders)
+            this_side_orders[new_order_id] = {'size': size, 'price':  top_opposing_order, 'filled': True, 'is maker':False}
+
+
+        return new_order_id
+
+    def place_order(self, price, side, size, post_only=True):
         if side == 'asks':
             coeff = 1
             opposing_side = 'bids'
@@ -56,15 +84,10 @@ class BackTestExchange:
             raise ValueError(side + ' is not a valid orderbook side')
         top_opposing_order = self.get_top_order(opposing_side)
 
-        if (coeff*price >= coeff*top_opposing_order) and (size > self.min_order[side]):
-            # This ensures the order is only placed onto the appropiate order book side
-            this_side_orders = self.orders[side]
-            if len(this_side_orders) > 0:
-                existing_ids = np.array(list(this_side_orders.keys()))
-                new_order_id = np.max(existing_ids) + 1
-            else:
-                new_order_id = 0
-            this_side_orders[new_order_id] = {'size': size, 'price': price, 'filled': False}
+        if post_only:
+            new_order_id = self.place_maker_order(price, side, size, coeff, top_opposing_order)
+        else:
+            new_order_id = self.place_post_only_disabled_order(price, side, size, coeff, top_opposing_order)
 
         return new_order_id
 
@@ -93,7 +116,7 @@ class BackTestPortfolio:
     def __init__(self, order_book_path=None):
         self.exchange = BackTestExchange(order_book_path)
 
-    def update_value(self, fee=0.0015):
+    def update_value(self, maker_fee=0.0015, taker_fee=0.0025):
         self.value['USD Hold'] = 0
         self.value['SYM Hold'] = 0
         for side in ['asks', 'bids']:
@@ -116,8 +139,9 @@ class BackTestPortfolio:
                 if order['filled']:
                     self.value[from_sym] -= from_val
                     ids_to_remove.append(order_id)
-                    # TODO make fee variable by order (taker vs maker)
-                    self.value[to_sym] += to_val * (1 - fee)
+                    is_maker_order = order['is maker']
+                    is_taker_order = not is_maker_order
+                    self.value[to_sym] += to_val * (1 - maker_fee * is_maker_order - taker_fee * is_taker_order)
                 else:
                     from_sym += ' Hold'
                     self.value[from_sym] += from_val
@@ -190,8 +214,8 @@ class BackTestBot:
             top_order = self.portfolio.exchange.get_top_order('asks')
             self.current_price[side] = top_order
 
-    def place_order(self, price, side, size):
-        order_id = self.portfolio.exchange.place_order(price, side, size)
+    def place_order(self, price, side, size, allow_taker=True):
+        order_id = self.portfolio.exchange.place_order(price, side, size, post_only=allow_taker)
         return order_id
 
     def fit_to_data(self, true_price, predicted):
@@ -256,8 +280,10 @@ class BackTestBot:
             self.prior_price = price
             available = self.portfolio.get_amnt_available(side)
             size = available * decision['size coeff']/decision['price']
+            is_maker = decision['is maker']
+
             self.cancel_out_of_bound_orders(side, price, order_std)
-            order_id = self.place_order(price, side, size)
+            order_id = self.place_order(price, side, size, allow_taker=is_maker)
             self.order_stds[order_id] = order_std
         else:
             price = self.prior_price

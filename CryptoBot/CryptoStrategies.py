@@ -4,7 +4,7 @@ class Strategy:
 
     def prediction_stat(self, predictions, include_std):
         if len(predictions) > 0:
-            prediction = np.mean(predictions) - include_std * np.std(predictions)
+            prediction = np.mean(predictions)
             order_std = np.std(predictions)
         else:
             prediction = 0
@@ -44,13 +44,13 @@ class Strategy:
 
         current_price = prices[-1]
         prediction, opposing_prediction, coeff, plus_std, minus_std = self.condition_prediction(side, predictions)
-        pred_del = prediction - opposing_prediction
+        plus_del = prediction - 2 * plus_std
+        minus_del = opposing_prediction + 2 * minus_std
 
-        if (pred_del > 0): # TODO account for maker fee
-            decision = {'side': side, 'size coeff': 1, 'price': current_price + coeff * prediction}
-        elif (pred_del < 0): # TODO account for taker fee
-            # TODO make this a taker order
-            decision = {'side': opposing_side, 'size coeff': 1, 'price': current_price - coeff * 0.01}
+        if (plus_del > 0.0015):
+            decision = {'side': side, 'size coeff': 1, 'price': current_price + coeff * ( prediction - plus_std), 'is maker': True}
+        elif (minus_del < -0.0025):
+            decision = {'side': opposing_side, 'size coeff': 1, 'price': current_price + coeff * 0.01, 'is maker': False}
         else:
             decision = None
 

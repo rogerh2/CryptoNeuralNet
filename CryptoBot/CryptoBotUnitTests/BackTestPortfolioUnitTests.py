@@ -12,11 +12,11 @@ class BackTestPortfolioTestCase(unittest.TestCase):
         sizes = np.array([0.1, 0.15, 0.2, 0.1])
         prices = np.array([100, 110, 107, 106])
         self.test_obj.exchange.orders = {'bids':
-                                             {0: {'size': sizes[0], 'price': prices[0], 'filled': True},
-                                              1: {'size': sizes[1], 'price': prices[1], 'filled': False}},
+                                             {0: {'size': sizes[0], 'price': prices[0], 'filled': True, 'is maker':True},
+                                              1: {'size': sizes[1], 'price': prices[1], 'filled': False, 'is maker':True}},
                                          'asks':
-                                             {0: {'size': sizes[2], 'price': prices[2], 'filled': False},
-                                              1: {'size': sizes[3], 'price': prices[3], 'filled': False}}
+                                             {0: {'size': sizes[2], 'price': prices[2], 'filled': False, 'is maker':True},
+                                              1: {'size': sizes[3], 'price': prices[3], 'filled': False, 'is maker':True}}
                                          }
         self.test_obj.update_value()
         usd = self.test_obj.value['USD']
@@ -31,11 +31,11 @@ class BackTestPortfolioTestCase(unittest.TestCase):
         sizes = np.array([0.1, 0.15, 0.2, 0.1])
         prices = np.array([100, 110, 107, 106])
         self.test_obj.exchange.orders = {'bids':
-                                             {0: {'size': sizes[0], 'price': prices[0], 'filled': False},
-                                              1: {'size': sizes[1], 'price': prices[1], 'filled': False}},
+                                             {0: {'size': sizes[0], 'price': prices[0], 'filled': False, 'is maker':True},
+                                              1: {'size': sizes[1], 'price': prices[1], 'filled': False, 'is maker':True}},
                                          'asks':
-                                             {0: {'size': sizes[2], 'price': prices[2], 'filled': False},
-                                              1: {'size': sizes[3], 'price': prices[3], 'filled': True}}
+                                             {0: {'size': sizes[2], 'price': prices[2], 'filled': False, 'is maker':True},
+                                              1: {'size': sizes[3], 'price': prices[3], 'filled': True, 'is maker':True}}
                                          }
         self.test_obj.update_value()
         sym = self.test_obj.value['SYM']
@@ -50,11 +50,11 @@ class BackTestPortfolioTestCase(unittest.TestCase):
         sizes = np.array([0.1, 0.15, 0.2, 0.1])
         prices = np.array([100, 110, 107, 106])
         self.test_obj.exchange.orders = {'bids':
-                                             {0: {'size': sizes[0], 'price': prices[0], 'filled': True},
-                                              1: {'size': sizes[1], 'price': prices[1], 'filled': False}},
+                                             {0: {'size': sizes[0], 'price': prices[0], 'filled': True, 'is maker':True},
+                                              1: {'size': sizes[1], 'price': prices[1], 'filled': False, 'is maker':True}},
                                          'asks':
-                                             {0: {'size': sizes[2], 'price': prices[2], 'filled': False},
-                                              1: {'size': sizes[3], 'price': prices[3], 'filled': True}}
+                                             {0: {'size': sizes[2], 'price': prices[2], 'filled': False, 'is maker':True},
+                                              1: {'size': sizes[3], 'price': prices[3], 'filled': True, 'is maker':True}}
                                          }
         self.test_obj.update_value()
         usd_hold = self.test_obj.value['USD Hold']
@@ -68,11 +68,11 @@ class BackTestPortfolioTestCase(unittest.TestCase):
         sizes = np.array([0.1, 0.15, 0.2, 0.1])
         prices = np.array([100, 110, 107, 106])
         self.test_obj.exchange.orders = {'bids':
-                                             {0: {'size': sizes[0], 'price': prices[0], 'filled': False},
-                                              1: {'size': sizes[1], 'price': prices[1], 'filled': False}},
+                                             {0: {'size': sizes[0], 'price': prices[0], 'filled': False, 'is maker':True},
+                                              1: {'size': sizes[1], 'price': prices[1], 'filled': False, 'is maker':True}},
                                          'asks':
-                                             {0: {'size': sizes[2], 'price': prices[2], 'filled': False},
-                                              1: {'size': sizes[3], 'price': prices[3], 'filled': True}}
+                                             {0: {'size': sizes[2], 'price': prices[2], 'filled': False, 'is maker':True},
+                                              1: {'size': sizes[3], 'price': prices[3], 'filled': True, 'is maker':True}}
                                          }
         self.test_obj.update_value()
         sym_hold = self.test_obj.value['SYM Hold']
