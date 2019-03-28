@@ -43,7 +43,7 @@ class BackTestExchange:
         return current_order_book_row
 
     def place_order(self, price, side, size):
-
+        # TODO implement taker orders (maybe make this a place_maker_order method and have a place_taker_order method)
         new_order_id = None
 
         if side == 'asks':
@@ -69,7 +69,6 @@ class BackTestExchange:
         return new_order_id
 
     def update_fill_status(self):
-
         sides = ['bids', 'asks']
 
         for side_ind in [0, 1]:
@@ -94,7 +93,7 @@ class BackTestPortfolio:
     def __init__(self, order_book_path=None):
         self.exchange = BackTestExchange(order_book_path)
 
-    def update_value(self, fee=0):
+    def update_value(self, fee=0.0015):
         self.value['USD Hold'] = 0
         self.value['SYM Hold'] = 0
         for side in ['asks', 'bids']:
@@ -117,6 +116,7 @@ class BackTestPortfolio:
                 if order['filled']:
                     self.value[from_sym] -= from_val
                     ids_to_remove.append(order_id)
+                    # TODO make fee variable by order (taker vs maker)
                     self.value[to_sym] += to_val * (1 - fee)
                 else:
                     from_sym += ' Hold'
@@ -137,6 +137,7 @@ class BackTestPortfolio:
 
 class BackTestBot:
     current_price = {'asks': None, 'bids': None}
+    order_stds = {}
     fills = None
     prior_price = None
     order_books = None
@@ -229,7 +230,7 @@ class BackTestBot:
 
         return full_value
 
-    def cancel_out_of_bound_orders(self, side, price):
+    def cancel_out_of_bound_orders(self, side, price, order_std):
         # TODO take into account order reason (e.g. placing order at current price to hit future prediction vs placing order at projected future price)
         orders = self.portfolio.exchange.orders[side]
         keys_to_delete = []
@@ -239,7 +240,8 @@ class BackTestBot:
             coeff = 1
 
         for id in orders.keys():
-            if coeff * orders[id]['price'] > coeff * price:
+            # if coeff * orders[id]['price'] > coeff * price:
+            if self.order_stds[id] > order_std:
                 keys_to_delete.append(id)
 
         for id in keys_to_delete:
@@ -247,16 +249,16 @@ class BackTestBot:
 
     def trade_action(self):
         prediction, order_book = self.predict()
-        decision = self.strategy.determine_move(prediction, order_book, self.portfolio) # returns None for hold
+        decision, order_std = self.strategy.determine_move(prediction, order_book, self.portfolio) # returns None for hold
         if decision is not None:
             side = decision['side']
             price = decision['price']
             self.prior_price = price
             available = self.portfolio.get_amnt_available(side)
             size = available * decision['size coeff']/decision['price']
-            self.cancel_out_of_bound_orders(side, price)
-            # TODO use order_id to track std from the prediction that spawned each order
+            self.cancel_out_of_bound_orders(side, price, order_std)
             order_id = self.place_order(price, side, size)
+            self.order_stds[order_id] = order_std
         else:
             price = self.prior_price
 
@@ -281,7 +283,6 @@ class MultiProcessingBackTestBot(BackTestBot):
         order_book = self.get_order_book()
         ind = self.portfolio.exchange.time+1
         prices = self.order_books['0'].values
-        # TODO rotate full_prediction (it is a 2d array and should be 1D)
         full_prediction = self.predictions[(ind - len(prices)):ind, 0]
         int_len = 10
         if len(prices) > int_len:
@@ -483,7 +484,8 @@ def run_backtests_in_parallel(model_path, strategy, historical_order_books_path,
 
     # --Setup logging for multuprocessing --
     logger = multiprocessing.log_to_stderr()
-    logger.setLevel(logging.INFO) # For some reason Pycharm does not recognize SUBDEBUG, however, it is valid
+    # logger.setLevel(multiprocessing.SUBDEBUG) # For some reason Pycharm does not recognize SUBDEBUG, however, it is valid
+    logger.setLevel(logging.INFO)
 
     # --Start processing--
     start_time = time()
