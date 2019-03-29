@@ -8,7 +8,7 @@ class Strategy:
             order_std = np.std(predictions)
         else:
             prediction = 0
-            order_std = 0
+            order_std = 100
 
         return prediction, order_std
 
@@ -37,23 +37,29 @@ class Strategy:
             side = 'bids'
             opposing_side = 'asks'
             prices = order_book['0'].values
+            opposing_prices = order_book['60'].values
         else:
             side = 'asks'
             opposing_side = 'bids'
             prices = order_book['60'].values
+            opposing_prices = order_book['0'].values
 
         current_price = prices[-1]
+        current_opposing_price = opposing_prices[-1]
         prediction, opposing_prediction, coeff, plus_std, minus_std = self.condition_prediction(side, predictions)
-        plus_del = prediction - 2 * plus_std
-        minus_del = opposing_prediction + 2 * minus_std
+        plus_del = prediction
+        minus_del = opposing_prediction - minus_std
+        plus_price = current_price + coeff * ( prediction)
+        minus_price = current_opposing_price - coeff * 0.01
 
-        if (plus_del > 0.0015):
-            decision = {'side': side, 'size coeff': 1, 'price': current_price + coeff * ( prediction - plus_std), 'is maker': True}
-        elif (minus_del < -0.0025):
-            decision = {'side': opposing_side, 'size coeff': 1, 'price': current_price + coeff * 0.01, 'is maker': False}
+        if (plus_del > (0.0015 * plus_price)):
+            decision = {'side': side, 'size coeff': 1, 'price': plus_price, 'is maker': True}
+        elif (minus_del < (-0.0025 * minus_price)):
+            decision = {'side': side, 'size coeff': 1, 'price': minus_price, 'is maker': False}
         else:
             decision = None
 
+        # decision = {'side': side, 'size coeff': 1, 'price': plus_price, 'is maker': True}
         #decision = {'side': 'bids', 'size coeff': 1, 'price': 128}
 
         return decision, plus_std

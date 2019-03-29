@@ -11,12 +11,14 @@ PREDICTIONS = PORTFOLIO_HISTORY
 class MyTestCase(unittest.TestCase):
     test_list = {0:
         {'USD': PORTFOLIO_HISTORY[0], 'process id': 0, 'SYM': SYM_START_PORTFOLIO_HISTORY[0], 'end state': None,
-         'seg id': 0, 'predictions': PREDICTIONS[0]},
+         'sym run end state': None, 'seg id': 0, 'predictions': PREDICTIONS[0]},
                  1:
         {'USD': PORTFOLIO_HISTORY[1], 'process id': 0, 'SYM': SYM_START_PORTFOLIO_HISTORY[1], 'end state': None,
+         'sym run end state': None,
          'seg id': 0, 'predictions': PREDICTIONS[1]},
                  2:
         {'USD': PORTFOLIO_HISTORY[2], 'process id': 0, 'SYM': SYM_START_PORTFOLIO_HISTORY[2], 'end state': True,
+         'sym run end state': False,
          'seg id': 0, 'predictions': PREDICTIONS[2]}
     }
 

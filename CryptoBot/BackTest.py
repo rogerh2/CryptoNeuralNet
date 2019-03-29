@@ -164,6 +164,7 @@ class BackTestBot:
     order_stds = {}
     fills = None
     prior_price = None
+    prior_value = 0
     order_books = None
 
     def __init__(self, model_path, strategy):
@@ -274,17 +275,26 @@ class BackTestBot:
     def trade_action(self):
         prediction, order_book = self.predict()
         decision, order_std = self.strategy.determine_move(prediction, order_book, self.portfolio) # returns None for hold
-        if decision is not None:
+        current_val = self.get_full_portfolio_value()
+        if (self.portfolio.value['USD'] > 10):
+            self.prior_value = current_val
+        if (decision is not None):
             side = decision['side']
             price = decision['price']
-            self.prior_price = price
             available = self.portfolio.get_amnt_available(side)
-            size = available * decision['size coeff']/decision['price']
+            # if (current_val >= self.prior_value * 1.035) or (side == 'bids'):
+            if side == 'bids':
+                size = available * decision['size coeff'] / decision['price']
+            else:
+                size = available * decision['size coeff']
             is_maker = decision['is maker']
 
             self.cancel_out_of_bound_orders(side, price, order_std)
             order_id = self.place_order(price, side, size, allow_taker=is_maker)
             self.order_stds[order_id] = order_std
+            if order_id is None:
+                price = self.prior_price
+            self.prior_price = price
         else:
             price = self.prior_price
 
@@ -349,6 +359,8 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
         #progress_printer(len(times), time)
         bot.portfolio.exchange.time = time
         prediction = bot.trade_action()
+        bot.portfolio.exchange.update_fill_status()
+        bot.portfolio.update_value()
         val = bot.get_full_portfolio_value()
         # --This loop allows the bot to simulate what would happen if the last segment ended holding crypto--
         if sym_run:
@@ -370,9 +382,6 @@ def run_backtest(bot, data_queue, order_books, proc_id=0):
             sym_start_portfolio_history = np.array([])
             predictions = np.array([])
             order_id += 1
-
-        bot.portfolio.exchange.update_fill_status()
-        bot.portfolio.update_value()
 
         if sym_run & (ind == len(times)):
             sym_run = False
@@ -437,10 +446,13 @@ def update_and_order_processes(procs, queue, full_len):
             proc.join(timeout=1)
             while not queue.empty():
                 temp_data = queue.get()
-                if len(temp_data['USD']) > 0:
-                    completed_len += len(temp_data['USD'])
+                usd_len = len(temp_data['USD'])
+                sym_len = len(temp_data['SYM'])
+                if usd_len > 0:
+                    completed_len += usd_len
+                    # TODO adjust full_len for short sym_len values
                 else:
-                    completed_len += len(temp_data['SYM'])
+                    completed_len += sym_len
 
                 if data[temp_data['process id']] is None:
                     data[temp_data['process id']] = {temp_data['seg id']: temp_data}  # Puts the segments in order
@@ -472,8 +484,9 @@ def stitch_trade_histories(data):
         else:
             usd_portfolio_history = entry['USD']
             sym_start_history = entry['SYM']
+            usd_norm_coeff = entry['SYM'][0] / entry['USD'][0]
             norm_coeff = last_segment_end_value / entry['SYM'][0]
-            current_portfolio_history = np.append(sym_start_history, usd_portfolio_history[len(sym_start_history)::])
+            current_portfolio_history = np.append(sym_start_history, usd_norm_coeff * usd_portfolio_history[len(sym_start_history)::])
             end_key = 'sym run end state'
 
         portfolio_history = np.append(portfolio_history, norm_coeff*current_portfolio_history)
