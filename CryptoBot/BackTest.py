@@ -230,21 +230,21 @@ class BackTestBot:
         order_book = self.get_order_book()
         self.model.data_obj.historical_order_books = self.order_books
         full_prediction = self.model.model_actions('forecast')
-        prices = self.order_books['0'].values
+        bids = self.order_books['0'].values
+        asks = self.order_books['60'].values
         int_len = 10
-        if len(prices) > int_len:
-            scaled_prediction = rescale_to_fit(full_prediction, prices)
-
+        if len(bids) > int_len:
+            scaled_prediction = rescale_to_fit(full_prediction, bids)
             prediction = scaled_prediction
         else:
             prediction = np.array([0])
 
-        if len(prediction) > 0:
+        if len(prediction) > 1:
             prediction_del = np.diff(prediction)
         else:
-            prediction_del = 0
+            prediction_del = np.zeros(prediction.shape)
 
-        return prediction_del, order_book
+        return prediction_del, order_book, bids, asks
 
     def get_full_portfolio_value(self):
         self.update_current_price()
@@ -273,8 +273,8 @@ class BackTestBot:
             self.portfolio.exchange.remove_order(side, id)
 
     def trade_action(self):
-        prediction, order_book = self.predict()
-        decision, order_std = self.strategy.determine_move(prediction, order_book, self.portfolio) # returns None for hold
+        prediction, order_book, bids, asks = self.predict()
+        decision, order_std = self.strategy.determine_move(prediction, order_book, self.portfolio, bids, asks) # returns None for hold
         current_val = self.get_full_portfolio_value()
         if (self.portfolio.value['USD'] > 10):
             self.prior_value = current_val
@@ -282,19 +282,19 @@ class BackTestBot:
             side = decision['side']
             price = decision['price']
             available = self.portfolio.get_amnt_available(side)
-            # if (current_val >= self.prior_value * 1.035) or (side == 'bids'):
-            if side == 'bids':
-                size = available * decision['size coeff'] / decision['price']
-            else:
-                size = available * decision['size coeff']
-            is_maker = decision['is maker']
+            if (current_val >= self.prior_value * 1.035) or (side == 'bids'):
+                if side == 'bids':
+                    size = available * decision['size coeff'] / decision['price']
+                else:
+                    size = available * decision['size coeff']
+                is_maker = decision['is maker']
 
-            self.cancel_out_of_bound_orders(side, price, order_std)
-            order_id = self.place_order(price, side, size, allow_taker=is_maker)
-            self.order_stds[order_id] = order_std
-            if order_id is None:
-                price = self.prior_price
-            self.prior_price = price
+                self.cancel_out_of_bound_orders(side, price, order_std)
+                order_id = self.place_order(price, side, size, allow_taker=is_maker)
+                self.order_stds[order_id] = order_std
+                if order_id is None:
+                    price = self.prior_price
+                self.prior_price = price
         else:
             price = self.prior_price
 
@@ -318,22 +318,22 @@ class MultiProcessingBackTestBot(BackTestBot):
         # Keras's predict method does not support multiprocessing
         order_book = self.get_order_book()
         ind = self.portfolio.exchange.time+1
-        prices = self.order_books['0'].values
-        full_prediction = self.predictions[(ind - len(prices)):ind, 0]
+        bids = self.order_books['0'].values
+        asks = self.order_books['60'].values
+        full_prediction = self.predictions[(ind - len(bids)):ind, 0]
         int_len = 10
-        if len(prices) > int_len:
-            scaled_prediction = rescale_to_fit(full_prediction, prices)
-
+        if len(bids) > int_len:
+            scaled_prediction = rescale_to_fit(full_prediction, bids)
             prediction = scaled_prediction
         else:
             prediction = np.array([0])
 
-        if len(prediction) > 0:
+        if len(prediction) > 1:
             prediction_del = np.diff(prediction)
         else:
-            prediction_del = 0
+            prediction_del = np.zeros(bids.shape)
 
-        return prediction_del, order_book
+        return prediction_del, order_book, bids, asks
 
 def run_backtest(bot, data_queue, order_books, proc_id=0):
 
@@ -557,7 +557,7 @@ if __name__ == "__main__":
     historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_031919.csv'
     historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_031919.csv'
 
-    algorithm_returns, market_returns, predictions = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.003, num_processes=8)
+    algorithm_returns, market_returns, predictions = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.01, num_processes=8)
 
     plt.plot(algorithm_returns, '--.r', label='algorithm')
     plt.plot(100*market_returns/market_returns[0], '--xb', label='market')
