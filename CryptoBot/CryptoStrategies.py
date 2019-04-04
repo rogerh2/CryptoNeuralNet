@@ -2,10 +2,16 @@ import numpy as np
 
 class Strategy:
 
-    def prediction_stat(self, predictions):
-        if len(predictions) > 0:
-            prediction = np.mean(predictions)
+    def prediction_stat(self, predictions, is_plus=True):
+        if len(predictions) > 1:
+            if is_plus:
+                prediction = np.mean(predictions)
+            else:
+                prediction = np.mean(predictions)
             order_std = np.std(predictions)
+        elif len(predictions) == 1:
+            prediction = predictions[0]
+            order_std = 100
         else:
             prediction = 0
             order_std = 100
@@ -20,7 +26,7 @@ class Strategy:
             coeff = 1
 
 
-        price_mask = np.abs( prices - prices[-1] ) < 3 * np.std(prices) * np.ones(prices.shape)
+        price_mask = np.abs( prices - prices[-1] ) < np.std(prices) * np.ones(prices.shape)
 
         if len(price_mask) == len(predictions):
             norm_predictions = coeff * predictions[price_mask]
@@ -30,10 +36,9 @@ class Strategy:
         minus_predictions = norm_predictions[norm_predictions < -0.01]
 
         plus_prediction, plus_std = self.prediction_stat(plus_predictions)
-        minus_prediction, minus_std = self.prediction_stat(minus_predictions)
+        minus_prediction, minus_std = self.prediction_stat(minus_predictions, is_plus=False)
 
         return plus_prediction, minus_prediction, coeff, plus_std, minus_std
-
 
     def determine_move(self, predictions, order_book, portfolio, bids, asks):
 
@@ -51,15 +56,15 @@ class Strategy:
         current_price = prices[-1]
         current_opposing_price = opposing_prices[-1]
         prediction, opposing_prediction, coeff, plus_std, minus_std = self.condition_prediction(side, predictions, prices)
-        plus_del = prediction
+        plus_del = prediction # Opposing prediction is a negative quantity (the predictions are deltas)
         minus_del = opposing_prediction
         plus_price = current_price + coeff * ( prediction)
         minus_price = current_opposing_price - coeff * 0.01
 
-        if (plus_std < minus_std):#(plus_del > (0.0015 * plus_price)):
+        if (plus_std < minus_std):
             decision = {'side': side, 'size coeff': 1, 'price': plus_price, 'is maker': True}
-        elif (plus_std > minus_std):#(minus_del < (-0.0025 * minus_price)):
-            decision = {'side': side, 'size coeff': 1, 'price': minus_price, 'is maker': False}
+        # elif (plus_std > minus_std):
+        #     decision = {'side': side, 'size coeff': 1, 'price': minus_price, 'is maker': False}
         else:
             decision = None
 

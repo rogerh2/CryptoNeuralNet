@@ -763,13 +763,13 @@ class FormattedCoinbaseProData:
         return normalized_fills, normalized_order_book
 
     def format_data_for_training_or_testing(self):
-        output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
+        # output_vec, temp_input_arr = self.normalize_fill_array_and_order_book()
         # TODO delete this and formalize, also uncomment the above
-        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_books_031919.pickle', 'rb') as ds_file:
-        #     temp_input_arr = pickle.load(ds_file)
-        #
-        # with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/current_test_fills_031919.pickle', 'rb') as ds_file:
-        #     output_vec = pickle.load(ds_file)
+        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/granular_test_books.pickle', 'rb') as ds_file:
+            temp_input_arr = pickle.load(ds_file)
+
+        with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/granular_test_fills.pickle', 'rb') as ds_file:
+            output_vec = pickle.load(ds_file)
 
         #output_vec = (output_vec - np.min(output_vec))/(np.max(output_vec) - np.min(output_vec))
 
@@ -1275,6 +1275,6 @@ if __name__ == '__main__':
             # fills = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/' + sym + '_fills_granular.csv'
             order_books = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_031919.csv'
             fills = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_031919.csv'
-            model_obj = CryptoFillsModel(sym, model_path=model_path, epochs=15)
+            model_obj = CryptoFillsModel(sym, model_path=model_path, epochs=5)
             model_obj.create_formatted_cbpro_data(order_book_path=order_books, fill_path=fills)
             pred = model_obj.model_actions('train/test', neuron_count=60, layers=3, batch_size=256, save_model=True, train_test_split=0.1, patience=10)

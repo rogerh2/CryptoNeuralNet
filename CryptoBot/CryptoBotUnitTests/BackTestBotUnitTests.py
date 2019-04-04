@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from CryptoBot.CryptoStrategies import Strategy
-from CryptoBot.BackTest import BackTestBot
+from CryptoBot.BackTest import BaseBot
 
 
 class BackTestBotTestCase(unittest.TestCase):
@@ -11,7 +11,7 @@ class BackTestBotTestCase(unittest.TestCase):
         model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/CryptoBotUnitTests/UnitTestData/back_test_model.h5'
         historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/CryptoBotUnitTests/UnitTestData/SYM_historical_order_books_20entries.csv'
         historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/CryptoBotUnitTests/UnitTestData/SYM_fills_20entries.csv'
-        self.bot = BackTestBot(model_path, strategy)
+        self.bot = BaseBot(model_path, strategy)
         self.bot.load_model_data(historical_order_books_path, historical_fills_path, 1)
 
     def test_does_get_order_book_and_holds_only_30(self):

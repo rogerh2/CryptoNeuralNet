@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import warnings
 import pandas as pd
 from multiprocessing import Process
 from multiprocessing import Queue
@@ -110,6 +111,8 @@ class BackTestExchange:
 
 class BackTestPortfolio:
     value = {'USD': 100, 'SYM': 0, 'USD Hold': 0, 'SYM Hold': 0}
+    last_buy_price = None
+    last_sell_price = None
     # USD is total value stored in USD, SYM is total value stored in crypto, USD Hold is total value in bids, and SYM
     # Hold is total value in asks
 
@@ -142,6 +145,10 @@ class BackTestPortfolio:
                     is_maker_order = order['is maker']
                     is_taker_order = not is_maker_order
                     self.value[to_sym] += to_val * (1 - maker_fee * is_maker_order - taker_fee * is_taker_order)
+                    if to_sym == 'USD':
+                        self.last_sell_price = order['price']
+                    else:
+                        self.last_buy_price = order['price']
                 else:
                     from_sym += ' Hold'
                     self.value[from_sym] += from_val
@@ -159,12 +166,12 @@ class BackTestPortfolio:
         available = self.value[sym] - self.value[sym + ' Hold']
         return available
 
-class BackTestBot:
+class BaseBot:
     current_price = {'asks': None, 'bids': None}
+    spread_price_limits = {'asks': None, 'bids': None}
     order_stds = {}
     fills = None
     prior_price = None
-    prior_value = 0
     order_books = None
 
     def __init__(self, model_path, strategy):
@@ -219,12 +226,16 @@ class BackTestBot:
         order_id = self.portfolio.exchange.place_order(price, side, size, post_only=allow_taker)
         return order_id
 
-    def fit_to_data(self, true_price, predicted):
-        coeff = np.polyfit(true_price, predicted, 1)
-        fit_data = coeff[0] * predicted + coeff[1]
-        predict_point = fit_data[-1]
+    def fit_to_data(self, predicted, true_price):
+        with warnings.catch_warnings():
+            warnings.filterwarnings('error')
+            try:
+                coeff = np.polyfit(true_price, predicted, 1)
+                fit_data = coeff[0] * predicted + coeff[1]
+            except np.RankWarning:
+                fit_data = predicted
 
-        return predict_point
+        return fit_data
 
     def predict(self):
         order_book = self.get_order_book()
@@ -272,29 +283,48 @@ class BackTestBot:
         for id in keys_to_delete:
             self.portfolio.exchange.remove_order(side, id)
 
+    def update_last_price(self, last_price, spread, alt_price=0):
+        if last_price is None:
+            spread = alt_price
+        else:
+            spread = spread * last_price
+
+        return spread
+
+    def update_spread_prices_limits(self, spread=1.004):
+        last_sell_price = self.portfolio.last_sell_price
+        last_buy_price = self.portfolio.last_buy_price
+
+        self.spread_price_limits['bids'] = self.update_last_price(last_sell_price, 1 / spread, alt_price=1000000)
+        self.spread_price_limits['asks'] = self.update_last_price(last_buy_price, spread, alt_price=0)
+
     def trade_action(self):
         prediction, order_book, bids, asks = self.predict()
         decision, order_std = self.strategy.determine_move(prediction, order_book, self.portfolio, bids, asks) # returns None for hold
-        current_val = self.get_full_portfolio_value()
-        if (self.portfolio.value['USD'] > 10):
-            self.prior_value = current_val
+        self.update_spread_prices_limits()
+
         if (decision is not None):
             side = decision['side']
             price = decision['price']
             available = self.portfolio.get_amnt_available(side)
-            if (current_val >= self.prior_value * 1.035) or (side == 'bids'):
-                if side == 'bids':
-                    size = available * decision['size coeff'] / decision['price']
-                else:
-                    size = available * decision['size coeff']
-                is_maker = decision['is maker']
+            if side == 'bids':
+                size = available * decision['size coeff'] / decision['price']
+                if price > self.spread_price_limits['bids']:
+                    return self.prior_price
+            else:
+                size = available * decision['size coeff']
+                if price < self.spread_price_limits['asks']:
+                    return self.prior_price
+            is_maker = decision['is maker']
 
-                self.cancel_out_of_bound_orders(side, price, order_std)
-                order_id = self.place_order(price, side, size, allow_taker=is_maker)
-                self.order_stds[order_id] = order_std
-                if order_id is None:
-                    price = self.prior_price
-                self.prior_price = price
+            self.cancel_out_of_bound_orders(side, price, order_std)
+            order_id = self.place_order(price, side, size, allow_taker=is_maker)
+            self.order_stds[order_id] = order_std
+
+            # -- this filters out prices for orders that were not placed --
+            if order_id is None:
+                price = self.prior_price
+            self.prior_price = price
         else:
             price = self.prior_price
 
@@ -308,10 +338,10 @@ class BackTestBot:
         self.prior_price = None
         self.order_books = None
 
-class MultiProcessingBackTestBot(BackTestBot):
+class MultiProcessingBackTestBot(BaseBot):
 
     def __init__(self, model_path, strategy, predictions):
-        BackTestBot.__init__(self, model_path, strategy)
+        BaseBot.__init__(self, model_path, strategy)
         self.predictions = predictions
 
     def predict(self):
@@ -323,7 +353,8 @@ class MultiProcessingBackTestBot(BackTestBot):
         full_prediction = self.predictions[(ind - len(bids)):ind, 0]
         int_len = 10
         if len(bids) > int_len:
-            scaled_prediction = rescale_to_fit(full_prediction, bids)
+            fit_prediction = self.fit_to_data(full_prediction, bids)
+            scaled_prediction = rescale_to_fit(fit_prediction, bids)
             prediction = scaled_prediction
         else:
             prediction = np.array([0])
@@ -500,7 +531,7 @@ def stitch_trade_histories(data):
 def run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.1, num_processes=1):
 
     # --Instantiate master bot which formats all data for the multiprocessing bots--
-    bot = BackTestBot(model_path, strategy)
+    bot = BaseBot(model_path, strategy)
     print('Loading historical data')
     bot.load_model_data(historical_order_books_path, historical_fills_path, train_test_split)
     order_books = bot.portfolio.exchange.order_books
@@ -557,7 +588,7 @@ if __name__ == "__main__":
     historical_order_books_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_historical_order_books_granular_031919.csv'
     historical_fills_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/HistoricalData/order_books/ETH_fills_granular_031919.csv'
 
-    algorithm_returns, market_returns, predictions = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.01, num_processes=8)
+    algorithm_returns, market_returns, predictions = run_backtests_in_parallel(model_path, strategy, historical_order_books_path, historical_fills_path, train_test_split=0.003, num_processes=8)
 
     plt.plot(algorithm_returns, '--.r', label='algorithm')
     plt.plot(100*market_returns/market_returns[0], '--xb', label='market')

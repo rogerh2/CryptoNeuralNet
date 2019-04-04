@@ -14,16 +14,14 @@ sys.path.append("home/ubuntu/CryptoNeuralNet")
 
 import cbpro
 import numpy as np
-import scipy.stats
 import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime
-from datetime import timedelta
 from time import sleep
+from time import time
 import pytz
 import os
 import traceback
-import random
 
 def current_est_time():
     naive_date_from = datetime.now()
@@ -32,7 +30,6 @@ def current_est_time():
     est = pytz.timezone('America/New_York')
     est_date = est_date_from.astimezone(est)
     return est_date
-
 
 class SpreadTradeBot:
     min_usd_balance = 90.00  # Make sure the bot does not trade away all my money
