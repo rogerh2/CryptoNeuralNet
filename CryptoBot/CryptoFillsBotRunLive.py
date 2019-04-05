@@ -118,9 +118,10 @@ class Exchange:
         ts = str(time())
         if not ('bids' in order_book.keys()):
             print('Get order book error, the returned dict is: ' + str(order_book))
+            return None
         else:
-            bids = [float(x) for x in order_book['bids']]
-            asks = [float(x) for x in order_book['asks']]
+            bids = order_book['bids']
+            asks = order_book['asks']
             num_order_book_entries = 20  # How far up the order book to scrape
             num_cols = 3 * 2 * num_order_book_entries
 
@@ -131,18 +132,21 @@ class Exchange:
                 bid_row = bid_row + bids[i]
                 ask_row = ask_row + asks[i]
 
-            new_row = [[ts] + bid_row + ask_row]
+            new_row = [ts] + bid_row + ask_row
+            new_row_of_floats = [[float(x) for x in new_row]]
             header_names = ['ts'] + [str(x) for x in range(0, num_cols)]
 
-            self.order_book = pd.DataFrame(data=new_row, columns=header_names)
+            self.order_book = pd.DataFrame(data=new_row_of_floats, columns=header_names)
+            return self.order_book
 
     def get_top_order(self, side):
+        _ = self.get_current_book()
         if side == 'asks':
             col = '60'
         elif side == 'bids':
             col = '0'
         else:
-            raise ValueError('Side must be either "sell" or "buy"')
+            raise ValueError('Side must be either "asks" or "bids"')
         top_order = self.order_book[col].values[0]
         return top_order
 
@@ -196,10 +200,10 @@ class Portfolio:
         sleep(0.5)
         usd_balance, usd_hold_balance = self.get_wallet_values('USD', data)
         sym_balance, sym_hold_balance = self.get_wallet_values(self.ticker, data)
-        self.value['USD'] = usd_balance
-        self.value['USD Hold'] = usd_hold_balance
-        self.value['SYM'] = sym_balance
-        self.value['SYM Hold'] = sym_hold_balance
+        self.value['USD'] = float(usd_balance)
+        self.value['USD Hold'] = float(usd_hold_balance)
+        self.value['SYM'] = float(sym_balance)
+        self.value['SYM Hold'] = float(sym_hold_balance)
 
     def get_amnt_available(self, side):
         if side == 'sell':
@@ -208,15 +212,14 @@ class Portfolio:
             sym = 'USD'
         else:
             raise ValueError('side must be either "sell" or "buy"')
-        available = self.value[sym] - self.value[sym + ' Hold']
+        available = float(self.value[sym]) - float(self.value[sym + ' Hold'])
         return available
 
 class LiveBaseBot:
-    current_price = {'sell': None, 'buy': None}
+    current_price = {'asks': None, 'bids': None}
     spread_price_limits = {'sell': None, 'buy': None}
     order_stds = {}
     fills = None
-    prior_price = None
     order_books = None
 
     def __init__(self, model_path, strategy, api_key, secret_key, passphrase, prediction_ticker='ETH', is_sandbox_api=False):
@@ -240,7 +243,7 @@ class LiveBaseBot:
         return order_book
 
     def update_current_price(self):
-        for side in ['sell', 'bids']:
+        for side in ['asks', 'bids']:
             top_order = self.portfolio.exchange.get_top_order(side)
             self.current_price[side] = top_order
 
@@ -261,14 +264,15 @@ class LiveBaseBot:
 
     def predict(self):
         order_book = self.get_order_book()
-        self.model.data_obj.historical_order_books = self.order_books
-        full_prediction = self.model.model_actions('forecast')
+        temp_input_arr = self.order_books.drop(['ts'], axis=1).values
+        arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+        full_prediction = self.model.model.predict(arr)
         bids = self.order_books['0'].values
         asks = self.order_books['60'].values
         int_len = 10
         if len(bids) > int_len:
             scaled_prediction = rescale_to_fit(full_prediction, bids)
-            prediction = scaled_prediction
+            prediction = scaled_prediction[::, 0]
         else:
             prediction = np.array([0])
 
@@ -282,7 +286,7 @@ class LiveBaseBot:
     def get_full_portfolio_value(self):
         self.update_current_price()
         self.portfolio.update_value()
-        price = np.mean([self.current_price['sell'], self.current_price['buy']])
+        price = np.mean([self.current_price['asks'], self.current_price['bids']])
         usd = self.portfolio.value['USD']
         sym = self.portfolio.value['SYM']
         full_value = usd + sym*price
@@ -330,14 +334,15 @@ class LiveBaseBot:
             side = decision['side']
             price = decision['price']
             available = self.portfolio.get_amnt_available(side)
+            print('Evaluating ' + side + ' at $' + num2str(price, 2))
             if side == 'buy':
                 size = available * decision['size coeff'] / decision['price']
                 if price > self.spread_price_limits['buy']:
-                    return self.prior_price
+                    return None
             else:
                 size = available * decision['size coeff']
                 if price < self.spread_price_limits['sell']:
-                    return self.prior_price
+                    return None
             is_maker = decision['is maker']
 
             self.cancel_out_of_bound_orders(side, price, order_std)
@@ -346,51 +351,52 @@ class LiveBaseBot:
 
             # -- this filters out prices for orders that were not placed --
             if order_id is None:
-                price = self.prior_price
-            self.prior_price = price
+                price = None
         else:
-            price = self.prior_price
+            price = None
+            side = None
 
-        return price
+        return price, side
 
-
-def print_err_msg(self, section_text, e, err_counter):
+def print_err_msg(section_text, e, err_counter):
     sleep(5*60) #Most errors are connection related, so a short time out is warrented
     err_counter += 1
     print('failed to' + section_text + ' due to error: ' + str(e))
     print('number of consecutive errors: ' + str(err_counter))
     exc_type, exc_obj, exc_tb = sys.exc_info()
-    fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-    #print(exc_type, fname, exc_tb.tb_lineno)
     print(traceback.format_exc())
 
     return err_counter
 
 def run_bot():
+    # -- Secret/changing variable declerations
     if len(sys.argv) > 2:
-        minute_path = sys.argv[1]
+        # Definition from a shell file
+        model_path = sys.argv[1]
         api_input = sys.argv[2]
         secret_input = sys.argv[3]
         passphrase_input = sys.argv[4]
         sandbox_bool = bool(int(sys.argv[5]))
 
     else:
-        minute_path = input('What is the model path? ')
+        # Manual definition
+        model_path = input('What is the model path? ')
         api_input = input('What is the api key? ')
         secret_input = input('What is the secret key? ')
         passphrase_input = input('What is the passphrase? ')
         sandbox_bool = bool(int(input('Is this for a sandbox? ')))
 
-    print(minute_path)
+    print(model_path)
     print(api_input)
     print(secret_input)
     print(passphrase_input)
     print(sandbox_bool)
 
+
     strategy = Strategy()
-    bot = LiveBaseBot('saved_model.h5', strategy, api_input, secret_input, passphrase_input, is_sandbox_api=sandbox_bool)
+    bot = LiveBaseBot(model_path, strategy, api_input, secret_input, passphrase_input, is_sandbox_api=sandbox_bool)
     portfolio_value = bot.get_full_portfolio_value()
-    starting_price = bot.current_price['buy']
+    starting_price = bot.current_price['bids']
 
     # This method keeps the bot running continuously
     current_time = datetime.now().timestamp()
@@ -400,8 +406,9 @@ def run_bot():
           + ' with current price of $' + str(
         starting_price) + ' per ' + bot.ticker + 'and a portfolio worth $' + num2str(portfolio_value, 2))
     sleep(1)
-    err_counter = 0
+    last_check = 0
     check_period = 1
+    err_counter = 0
     last_plot = 0
     last_buy_msg = ''
     last_sell_msg = ''
@@ -410,6 +417,20 @@ def run_bot():
     market_returns = 0
 
     # TODO make the below into a loop to trade with new software
+    while 11 < portfolio_value:
+        current_time = datetime.now().timestamp()
+        if (current_time > (last_check + check_period)):
+            try:
+                price, side = bot.trade_action()
+                if price:
+                    print('Placing ' + side + ' at $' + num2str(price, 2))
+                err_counter = 0
+                last_check = datetime.now().timestamp()
+            except Exception as e:
+                    err_counter = print_err_msg('find new data', e, err_counter)
+                    continue
+            finally:
+                portfolio_value = bot.get_full_portfolio_value()
 
     # while 11 < portfolio_value:
     #     if (current_time > (last_check + check_period)) & (current_time < (last_training_time + 2 * 3600)):
@@ -505,3 +526,8 @@ def run_bot():
     # sleep(0.4)
     # usd_available, crypto_available = bot.get_available_wallet_contents(accnt_data)
     # bot.auth_client.place_market_order(bot.product_id, side='sell', size=num2str(crypto_available, 8))
+
+
+if __name__ == '__main__':
+    model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/ETH/ETHmodel_3layers_30fill_leakyreluact_adamopt_mean_absolute_percentage_errorloss_60neurons_14epochs1553129847.019871.h5'
+    run_bot()
