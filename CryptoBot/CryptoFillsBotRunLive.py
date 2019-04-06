@@ -22,7 +22,11 @@ from time import sleep
 from time import time
 import pytz
 import os
+import re
 import traceback
+
+SETTINGS_FILE_PATH = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/fill_bot_settings'
+
 
 class Strategy:
 
@@ -44,7 +48,7 @@ class Strategy:
 
     def condition_prediction(self, side, predictions, prices):
 
-        if side == 'bids':
+        if side == 'buy':
             coeff = -1
         else:
             coeff = 1
@@ -69,11 +73,11 @@ class Strategy:
         is_holding_usd = portfolio.value['USD'] > 10
 
         if is_holding_usd:
-            side = 'bids'
+            side = 'buy'
             prices = bids
             opposing_prices = asks
         else:
-            side = 'asks'
+            side = 'sell'
             prices = asks
             opposing_prices = bids
 
@@ -163,7 +167,7 @@ class Exchange:
         sleep(0.5)
 
         if type(order_info) == dict:
-            if "id" in order_info.keys():
+            if "price" in order_info.keys():
                 new_order_id = order_info["id"]
 
         self.orders[side][new_order_id] = order_info
@@ -171,11 +175,13 @@ class Exchange:
         return new_order_id
 
     def remove_order(self, id):
-        self.auth_client.cancel_all(product_id=id)
+        self.auth_client.cancel_order(id)
+        self.orders.pop(id)
         sleep(0.5)
 
 class Portfolio:
-    value = {'USD': 100, 'SYM': 0, 'USD Hold': 0, 'SYM Hold': 0}
+    value = {'USD': 15, 'SYM': 0, 'USD Hold': 0, 'SYM Hold': 0}
+    offset_value = None # Offset value is subtracted from the amount in usd to ensure only the desired amount of money is traded
     last_buy_price = None
     last_sell_price = None
     # USD is total value stored in USD, SYM is total value stored in crypto, USD Hold is total value in bids, and SYM
@@ -184,14 +190,13 @@ class Portfolio:
     def __init__(self, api_key, secret_key, passphrase, prediction_ticker='ETH', is_sandbox_api=False):
         self.exchange = Exchange(api_key, secret_key, passphrase, prediction_ticker=prediction_ticker, is_sandbox_api=is_sandbox_api)
         self.ticker = prediction_ticker
-        value = {'USD': 100, 'SYM': 0, 'USD Hold': 0, 'SYM Hold': 0}
 
     def get_wallet_values(self, currency, data):
         # Data should come from self.auth_client.get_accounts()
         ind = [acc["currency"] == currency for acc in data]
-        usd_wallet = data[ind.index(True)]
-        balance = usd_wallet["balance"]
-        hold_balance = usd_wallet["hold"]
+        wallet = data[ind.index(True)]
+        balance = wallet["balance"]
+        hold_balance = wallet["hold"]
 
         return balance, hold_balance
 
@@ -200,7 +205,15 @@ class Portfolio:
         sleep(0.5)
         usd_balance, usd_hold_balance = self.get_wallet_values('USD', data)
         sym_balance, sym_hold_balance = self.get_wallet_values(self.ticker, data)
-        self.value['USD'] = float(usd_balance)
+        usd_float_balance = float(usd_balance)
+        if not self.offset_value:
+            if usd_float_balance > self.value['USD']:
+                self.offset_value = usd_float_balance - self.value['USD']
+            else:
+                self.offset_value = 0
+                print('starting value too large, defaulting to full portfolio value')
+
+        self.value['USD'] = usd_float_balance - self.offset_value
         self.value['USD Hold'] = float(usd_hold_balance)
         self.value['SYM'] = float(sym_balance)
         self.value['SYM Hold'] = float(sym_hold_balance)
@@ -211,13 +224,47 @@ class Portfolio:
         elif side == 'buy':
             sym = 'USD'
         else:
-            raise ValueError('side must be either "sell" or "buy"')
+            raise ValueError('side value set to' + side + ', side must be either "sell" or "buy"')
         available = float(self.value[sym]) - float(self.value[sym + ' Hold'])
         return available
 
+class LiveRunSettings:
+
+    settings = {'total value':None, 'limit buy':None, 'limit sell':None}
+
+    def __init__(self, settings_file_path):
+        self.fname = settings_file_path
+        with open(settings_file_path) as f:
+            self.contents = f.readlines()
+        self.reg_ex = re.compile(r'(?<=:)([0-9]*\.[0-9]+|[0-9]+)')
+
+    def read_setting_from_file(self, setting_name):
+        setting_value = None
+
+        for content in self.contents:
+            if setting_name in content:
+                setting_str = self.reg_ex.search(content.replace(' ', ''))
+                if setting_str is not None:
+                    setting_value = float(setting_str[0])
+
+        return setting_value
+
+    def write_setting_to_file(self, setting_name, setting_val):
+        self.settings[setting_name] = setting_val
+        write_str = 'total value: ' + str(self.settings['total value']) + '\nlimit buy: ' + str(self.settings['limit buy']) + '\nlimit sell: ' + str(self.settings['limit sell'])
+        with open(self.fname, 'w') as f:
+            f.write(write_str)
+
+
+    def update_settings(self):
+        for setting_name in self.settings.keys():
+            setting_value = self.read_setting_from_file(setting_name)
+            self.settings[setting_name] = setting_value
+
 class LiveBaseBot:
     current_price = {'asks': None, 'bids': None}
-    spread_price_limits = {'sell': None, 'buy': None}
+    spread_price_limits = {'sell': 0, 'buy': 1000000}
+    settings = LiveRunSettings(SETTINGS_FILE_PATH)
     order_stds = {}
     fills = None
     order_books = None
@@ -274,9 +321,9 @@ class LiveBaseBot:
             scaled_prediction = rescale_to_fit(full_prediction, bids)
             prediction = scaled_prediction[::, 0]
         else:
-            prediction = np.array([0])
+            prediction = np.zeros(full_prediction.shape)
 
-        if len(prediction) > 1:
+        if len(prediction) > 10:
             prediction_del = np.diff(prediction)
         else:
             prediction_del = np.zeros(prediction.shape)
@@ -304,7 +351,7 @@ class LiveBaseBot:
 
         for id in orders.keys():
             # if coeff * orders[id]['price'] > coeff * price:
-            if self.order_stds[id] > order_std:
+            if (self.order_stds[id] > order_std) and (coeff * float(orders[id]["price"]) > coeff * price):
                 keys_to_delete.append(id)
 
         for id in keys_to_delete:
@@ -318,23 +365,23 @@ class LiveBaseBot:
 
         return spread
 
-    def update_spread_prices_limits(self, spread=1.004):
-        last_sell_price = self.portfolio.last_sell_price
-        last_buy_price = self.portfolio.last_buy_price
-
-        self.spread_price_limits['buy'] = self.update_last_price(last_sell_price, 1 / spread, alt_price=1000000)
-        self.spread_price_limits['sell'] = self.update_last_price(last_buy_price, spread, alt_price=0)
+    def update_spread_prices_limits(self, last_price, side, spread=1.004):
+        if side == 'sell':
+            self.spread_price_limits['buy'] = self.update_last_price(last_price, 1 / spread, alt_price=1000000)
+            self.settings.write_setting_to_file('limit buy', self.spread_price_limits['buy'])
+        elif side == 'buy':
+            self.spread_price_limits['sell'] = self.update_last_price(last_price, spread)
+            self.settings.write_setting_to_file('limit sell', self.spread_price_limits['sell'])
 
     def trade_action(self):
         prediction, order_book, bids, asks = self.predict()
         decision, order_std = self.strategy.determine_move(prediction, order_book, self.portfolio, bids, asks) # returns None for hold
-        self.update_spread_prices_limits()
 
         if (decision is not None):
             side = decision['side']
             price = decision['price']
+            self.cancel_out_of_bound_orders(side, price, order_std)
             available = self.portfolio.get_amnt_available(side)
-            print('Evaluating ' + side + ' at $' + num2str(price, 2))
             if side == 'buy':
                 size = available * decision['size coeff'] / decision['price']
                 if price > self.spread_price_limits['buy']:
@@ -343,20 +390,24 @@ class LiveBaseBot:
                 size = available * decision['size coeff']
                 if price < self.spread_price_limits['sell']:
                     return None
+
+            print('Evaluating ' + side + ' of ' + num2str(size, 3) + ' ' + self.ticker + ' at $' + num2str(price, 2) + ' based on std of ' + num2str(order_std, 4))
             is_maker = decision['is maker']
 
-            self.cancel_out_of_bound_orders(side, price, order_std)
             order_id = self.place_order(price, side, size, allow_taker=is_maker)
             self.order_stds[order_id] = order_std
 
             # -- this filters out prices for orders that were not placed --
             if order_id is None:
                 price = None
+            else:
+                self.update_spread_prices_limits(price, side)
         else:
             price = None
             side = None
+            size = None
 
-        return price, side
+        return price, side, size
 
 def print_err_msg(section_text, e, err_counter):
     sleep(5*60) #Most errors are connection related, so a short time out is warrented
@@ -392,6 +443,7 @@ def run_bot():
     print(passphrase_input)
     print(sandbox_bool)
 
+    settings = LiveRunSettings('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/fill_bot_settings')
 
     strategy = Strategy()
     bot = LiveBaseBot(model_path, strategy, api_input, secret_input, passphrase_input, is_sandbox_api=sandbox_bool)
@@ -409,21 +461,14 @@ def run_bot():
     last_check = 0
     check_period = 1
     err_counter = 0
-    last_plot = 0
-    last_buy_msg = ''
-    last_sell_msg = ''
-    fmt = '%Y-%m-%d %H:%M:'
-    portfolio_returns = 0
-    market_returns = 0
 
-    # TODO make the below into a loop to trade with new software
     while 11 < portfolio_value:
         current_time = datetime.now().timestamp()
         if (current_time > (last_check + check_period)):
             try:
-                price, side = bot.trade_action()
+                price, side, size = bot.trade_action()
                 if price:
-                    print('Placing ' + side + ' at $' + num2str(price, 2))
+                    print('Placed ' + side + ' order for ' + num2str(size, 3) + ' ' + bot.ticker + ' at $' + num2str(price,2))
                 err_counter = 0
                 last_check = datetime.now().timestamp()
             except Exception as e:
@@ -431,101 +476,11 @@ def run_bot():
                     continue
             finally:
                 portfolio_value = bot.get_full_portfolio_value()
+                bot.settings.update_settings()
+                bot.spread_price_limits['buy'] = bot.settings.settings['limit buy']
+                bot.spread_price_limits['sell'] = bot.settings.settings['limit sell']
 
-    # while 11 < portfolio_value:
-    #     if (current_time > (last_check + check_period)) & (current_time < (last_training_time + 2 * 3600)):
-    #
-    #         # Scrape price from cryptocompae
-    #         try:
-    #             order_dict = bot.auth_client.get_product_order_book(bot.product_id, level=2)
-    #             sleep(0.4)
-    #             accnt_data = bot.auth_client.get_accounts()
-    #             sleep(0.4)
-    #             bot.scrape_granular_price()
-    #             last_check = current_time
-    #             if (current_time > (last_scrape + 65)):
-    #                 price, portfolio_value = bot.get_portfolio_value(order_dict, accnt_data)
-    #                 bot.spread_bot_predict()
-    #                 last_scrape = current_time
-    #                 # self.order_status = 'active' #This forces the order to be reset as a stop order after 1 minute passes
-    #                 portfolio_returns, market_returns = bot.update_returns_data(price, portfolio_value)
-    #                 bot.timer['buy'] += 1
-    #                 bot.timer['sell'] += 1
-    #
-    #             err_counter = 0
-    #
-    #
-    #         except Exception as e:
-    #             err_counter = bot.print_err_msg('find new data', e, err_counter)
-    #             continue
-    #
-    #         # Plot returns
-    #         try:
-    #             if (current_time > (last_plot + 5 * 60)):
-    #                 bot.plot_returns(portfolio_returns, portfolio_value, market_returns, price)
-    #                 last_plot = current_time
-    #                 err_counter = 0
-    #         except Exception as e:
-    #             err_counter = bot.print_err_msg('plot', e, err_counter)
-    #             continue
-    #
-    #         # Make trades
-    #         try:
-    #             err, fit_coeff, fit_offset, const_diff, fuzziness = bot.find_fit_info()
-    #             buy_msg = bot.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'buy', order_dict,
-    #                                               accnt_data)
-    #             sell_msg = bot.place_limit_orders(err, const_diff, fit_coeff, fuzziness, fit_offset, 'sell',
-    #                                                order_dict, accnt_data)
-    #             current_datetime = current_est_time()
-    #             prez_fmt = '%Y-%m-%d %H:%M:%S'
-    #             sell_msg = sell_msg.title()
-    #             buy_msg = buy_msg.title()
-    #
-    #             if (buy_msg != last_buy_msg) and (buy_msg != ''):
-    #                 print('\nCurrent time is ' + current_datetime.strftime(prez_fmt) + ' EST')
-    #                 print('Buy message: ' + buy_msg)
-    #                 last_buy_msg = buy_msg
-    #
-    #             if (sell_msg != last_sell_msg) and (sell_msg != ''):
-    #                 print('\nCurrent time is ' + current_datetime.strftime(prez_fmt) + ' EST')
-    #                 print('Sell message: ' + sell_msg)
-    #                 last_sell_msg = sell_msg
-    #
-    #             err_counter = 0
-    #
-    #         except Exception as e:
-    #             err_counter = bot.print_err_msg('trade', e, err_counter)
-    #             continue
-    #
-    #
-    #     # Update model training
-    #     elif current_time > (last_training_time + 2 * 3600):
-    #         try:
-    #             last_scrape = 0
-    #             last_training_time = current_time
-    #             bot.price_model.model_actions('train', train_saved_model=True, save_model=False)
-    #             bot.price_model.model.save(bot.save_str)
-    #
-    #             # Reinitialize CoinPriceModel
-    #             bot.reinitialize_model()
-    #             err_counter = 0
-    #
-    #         except Exception as e:
-    #             err_counter = bot.print_err_msg('trade', e, err_counter)
-    #             continue
-    #
-    #     current_time = datetime.now().timestamp()
-    #     if err_counter > 12:
-    #         print('Process aborted due to too many exceptions')
-    #         break
-    #
-    # print(
-    #     'Algorithm failed either due to underperformance or due to too many exceptions. Now converting all crypto to USD')
-    # bot.auth_client.cancel_all(bot.product_id)
-    # accnt_data = bot.auth_client.get_accounts()
-    # sleep(0.4)
-    # usd_available, crypto_available = bot.get_available_wallet_contents(accnt_data)
-    # bot.auth_client.place_market_order(bot.product_id, side='sell', size=num2str(crypto_available, 8))
+    print('Loop END')
 
 
 if __name__ == '__main__':
