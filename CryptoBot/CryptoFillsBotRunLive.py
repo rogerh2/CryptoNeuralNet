@@ -25,8 +25,16 @@ import os
 import re
 import traceback
 
-SETTINGS_FILE_PATH = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/fill_bot_settings'
+SETTINGS_FILE_PATH = r'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/fill_bot_settings'
+SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test20190406'
 
+def current_est_time():
+    naive_date_from = datetime.now()
+    utc = pytz.timezone('UTC')
+    est_date_from = utc.localize(naive_date_from)
+    est = pytz.timezone('America/New_York')
+    est_date = est_date_from.astimezone(est)
+    return est_date
 
 class Strategy:
 
@@ -170,13 +178,10 @@ class Exchange:
             if "price" in order_info.keys():
                 new_order_id = order_info["id"]
 
-        self.orders[side][new_order_id] = order_info
-
         return new_order_id
 
     def remove_order(self, id):
         self.auth_client.cancel_order(id)
-        self.orders.pop(id)
         sleep(0.5)
 
 class Portfolio:
@@ -228,6 +233,23 @@ class Portfolio:
         available = float(self.value[sym]) - float(self.value[sym + ' Hold'])
         return available
 
+    def get_full_portfolio_value(self):
+
+        current_price = {'asks':None, 'bids':None}
+        _ = self.exchange.get_current_book()
+
+        for side in current_price.keys():
+            top_order = self.exchange.get_top_order(side)
+            current_price[side] = top_order
+
+        self.update_value()
+        price = np.mean([current_price['asks'], current_price['bids']])
+        usd = self.value['USD']
+        sym = self.value['SYM']
+        full_value = usd + sym*price
+
+        return full_value
+
 class LiveRunSettings:
 
     settings = {'total value':None, 'limit buy':None, 'limit sell':None}
@@ -257,6 +279,8 @@ class LiveRunSettings:
 
 
     def update_settings(self):
+        with open(self.fname) as f:
+            self.contents = f.readlines()
         for setting_name in self.settings.keys():
             setting_value = self.read_setting_from_file(setting_name)
             self.settings[setting_name] = setting_value
@@ -331,31 +355,30 @@ class LiveBaseBot:
         return prediction_del, order_book, bids, asks
 
     def get_full_portfolio_value(self):
-        self.update_current_price()
-        self.portfolio.update_value()
-        price = np.mean([self.current_price['asks'], self.current_price['bids']])
-        usd = self.portfolio.value['USD']
-        sym = self.portfolio.value['SYM']
-        full_value = usd + sym*price
+
+        full_value = self.portfolio.get_full_portfolio_value()
 
         return full_value
 
     def cancel_out_of_bound_orders(self, side, price, order_std):
         # TODO take into account order reason (e.g. placing order at current price to hit future prediction vs placing order at projected future price)
-        orders = self.portfolio.exchange.orders[side]
+        orders = list(self.portfolio.exchange.auth_client.get_orders(self.portfolio.exchange.product_id))
         keys_to_delete = []
         if side == 'buy':
             coeff = -1
         else:
             coeff = 1
 
-        for id in orders.keys():
-            # if coeff * orders[id]['price'] > coeff * price:
-            if (self.order_stds[id] > order_std) and (coeff * float(orders[id]["price"]) > coeff * price):
-                keys_to_delete.append(id)
+        for order in orders:
+            if order['side'] != side:
+                continue
+
+            if (self.order_stds[order['id']] > order_std) and (coeff * float(order['price']) > coeff * price):
+                keys_to_delete.append(order['id'])
 
         for id in keys_to_delete:
             self.portfolio.exchange.remove_order(id)
+            self.order_stds.pop(id)
 
     def update_last_price(self, last_price, spread, alt_price=0):
         if last_price is None:
@@ -381,19 +404,23 @@ class LiveBaseBot:
             side = decision['side']
             price = decision['price']
             self.cancel_out_of_bound_orders(side, price, order_std)
+            self.portfolio.update_value()
             available = self.portfolio.get_amnt_available(side)
+            if available < 0.001:
+                return None, None, None
             if side == 'buy':
                 size = available * decision['size coeff'] / decision['price']
                 if price > self.spread_price_limits['buy']:
-                    return None
+                    return None, None, None
             else:
                 size = available * decision['size coeff']
                 if price < self.spread_price_limits['sell']:
-                    return None
+                    return None, None, None
 
             print('Evaluating ' + side + ' of ' + num2str(size, 3) + ' ' + self.ticker + ' at $' + num2str(price, 2) + ' based on std of ' + num2str(order_std, 4))
             is_maker = decision['is maker']
 
+            # TODO create function to optimize location in the order book when placing an order
             order_id = self.place_order(price, side, size, allow_taker=is_maker)
             self.order_stds[order_id] = order_std
 
@@ -409,13 +436,102 @@ class LiveBaseBot:
 
         return price, side, size
 
+class PortfolioTracker:
+
+    def __init__(self, portfolio):
+        self.portfolio = portfolio
+        percentage_data = {'Market': 100, 'Algorithm': 100}
+        current_datetime = current_est_time()
+        self.returns = pd.DataFrame(data=percentage_data, index=[current_datetime])
+        self.initial_price = portfolio.exchange.get_top_order('bids')
+        self.initial_value = portfolio.get_full_portfolio_value()
+        self.prediction_ticker = portfolio.ticker
+        absolute_data = {'Portfolio ValueL:':self.initial_value}
+        self.portfolio_value = pd.DataFrame(data=absolute_data, index=[current_datetime])
+
+    def format_price_info(self, returns, price):
+        if returns >= 0:
+            value_sym = '+'
+        else:
+            value_sym = '-'
+
+        return_str = value_sym + num2str(returns, 3)
+        formated_string = '$' + num2str(price, 2) + ' (' + return_str + ')'
+
+        return formated_string
+
+    def add_new_row(self, df, new_row):
+        # Append data to dataframes
+        new_df = df.append(new_row)
+
+        # Ensure dataframes are not too long
+        diff_from_max_len = len(new_df.index) - 60000
+        if diff_from_max_len > 0:
+            new_df = new_df.iloc[diff_from_max_len::]
+
+        return new_df
+
+    def update_returns_data(self):
+        # Scrape data
+        price = self.portfolio.exchange.get_top_order('bids')
+        portfolio_value = self.portfolio.get_full_portfolio_value()
+
+        # Setup calculated values
+        current_datetime = current_est_time()
+        market_returns = 100 * price / self.initial_price - 100
+        portfolio_returns = 100 * portfolio_value / self.initial_value - 100
+
+        # Setup new rows
+        data = {'Market': market_returns + 100, 'Algorithm': portfolio_returns + 100}
+        absolute_data = {'Portfolio ValueL:': portfolio_value}
+        new_percentage_row = pd.DataFrame(data=data, index=[current_datetime])
+        new_portfolio_row = pd.DataFrame(data=absolute_data, index=[current_datetime])
+
+        # Append data to dataframes
+        self.returns = self.add_new_row(self.returns, new_percentage_row)
+        self.portfolio_value = self.add_new_row(self.portfolio_value, new_portfolio_row)
+
+        return portfolio_returns, market_returns, portfolio_value, price
+
+    def plot_returns(self):
+        # Get data
+        portfolio_returns, market_returns, portfolio_value, price = self.update_returns_data()
+        portfolio_str = self.format_price_info(portfolio_returns, portfolio_value)
+        market_str = self.format_price_info(market_returns, price)
+
+        # Plot returns
+        self.returns.plot()
+        plt.title('Portfolio: ' + portfolio_str + '\n' + self.prediction_ticker + ': ' + market_str)
+        plt.xlabel('Date/Time')
+        plt.ylabel('% Initial Value')
+
+        plt.savefig(SAVED_DATA_FILE_PATH + r'/returns.png')
+        plt.close()
+
+        # Plot portfolio value
+        self.portfolio_value.plot()
+        plt.title('Total Portfolio Value')
+        plt.xlabel('Date/Time')
+        plt.ylabel('Portfolio Value ($)')
+        plt.savefig(SAVED_DATA_FILE_PATH + r'/value.png')
+        plt.close()
+
+        # Save raw data to csv
+        self.returns.to_csv(SAVED_DATA_FILE_PATH + r'/returns.csv')
+        self.portfolio_value.to_csv(SAVED_DATA_FILE_PATH + r'/value.csv')
+
+        return portfolio_value
+
 def print_err_msg(section_text, e, err_counter):
     sleep(5*60) #Most errors are connection related, so a short time out is warrented
     err_counter += 1
     print('failed to' + section_text + ' due to error: ' + str(e))
     print('number of consecutive errors: ' + str(err_counter))
-    exc_type, exc_obj, exc_tb = sys.exc_info()
+    # exc_type, exc_obj, exc_tb = sys.exc_info()
     print(traceback.format_exc())
+    print('Pausing execution for 2 min')
+    sleep(120)
+    print('Execution resumed')
 
     return err_counter
 
@@ -443,12 +559,12 @@ def run_bot():
     print(passphrase_input)
     print(sandbox_bool)
 
-    settings = LiveRunSettings('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/fill_bot_settings')
-
     strategy = Strategy()
     bot = LiveBaseBot(model_path, strategy, api_input, secret_input, passphrase_input, is_sandbox_api=sandbox_bool)
     portfolio_value = bot.get_full_portfolio_value()
+    bot.update_current_price()
     starting_price = bot.current_price['bids']
+    portfolio_tracker = PortfolioTracker(bot.portfolio)
 
     # This method keeps the bot running continuously
     current_time = datetime.now().timestamp()
@@ -459,6 +575,8 @@ def run_bot():
         starting_price) + ' per ' + bot.ticker + 'and a portfolio worth $' + num2str(portfolio_value, 2))
     sleep(1)
     last_check = 0
+    last_plot = 0
+    plot_period = 60
     check_period = 1
     err_counter = 0
 
@@ -475,10 +593,13 @@ def run_bot():
                     err_counter = print_err_msg('find new data', e, err_counter)
                     continue
             finally:
-                portfolio_value = bot.get_full_portfolio_value()
                 bot.settings.update_settings()
                 bot.spread_price_limits['buy'] = bot.settings.settings['limit buy']
                 bot.spread_price_limits['sell'] = bot.settings.settings['limit sell']
+                if (current_time > (last_plot + plot_period)):
+                    portfolio_value = portfolio_tracker.plot_returns()
+                    last_plot = datetime.now().timestamp()
+
 
     print('Loop END')
 
