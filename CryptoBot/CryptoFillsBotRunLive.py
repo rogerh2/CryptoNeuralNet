@@ -26,7 +26,7 @@ import re
 import traceback
 
 SETTINGS_FILE_PATH = r'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/fill_bot_settings'
-SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test20190406'
+SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test20190407'
 
 def current_est_time():
     naive_date_from = datetime.now()
@@ -252,7 +252,7 @@ class Portfolio:
 
 class LiveRunSettings:
 
-    settings = {'total value':None, 'limit buy':None, 'limit sell':None}
+    settings = {'portfolio value offset':None, 'limit buy':None, 'limit sell':None, 'spread':1.004}
 
     def __init__(self, settings_file_path):
         self.fname = settings_file_path
@@ -271,13 +271,6 @@ class LiveRunSettings:
 
         return setting_value
 
-    def write_setting_to_file(self, setting_name, setting_val):
-        self.settings[setting_name] = setting_val
-        write_str = 'total value: ' + str(self.settings['total value']) + '\nlimit buy: ' + str(self.settings['limit buy']) + '\nlimit sell: ' + str(self.settings['limit sell'])
-        with open(self.fname, 'w') as f:
-            f.write(write_str)
-
-
     def update_settings(self):
         with open(self.fname) as f:
             self.contents = f.readlines()
@@ -285,10 +278,20 @@ class LiveRunSettings:
             setting_value = self.read_setting_from_file(setting_name)
             self.settings[setting_name] = setting_value
 
+    def write_setting_to_file(self, setting_name, setting_val):
+        self.update_settings()
+        self.settings[setting_name] = setting_val
+        write_str = ''
+        for key in self.settings.keys():
+            write_str = write_str + key + ': ' + str(self.settings[key]) + '\n'
+        with open(self.fname, 'w') as f:
+            f.write(write_str)
+
 class LiveBaseBot:
     current_price = {'asks': None, 'bids': None}
     spread_price_limits = {'sell': 0, 'buy': 1000000}
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
+    spread = 1.004
     order_stds = {}
     fills = None
     order_books = None
@@ -373,7 +376,7 @@ class LiveBaseBot:
             if order['side'] != side:
                 continue
 
-            if (self.order_stds[order['id']] > order_std) and (coeff * float(order['price']) > coeff * price):
+            if (self.order_stds[order['id']] > order_std) and (coeff * float(order['price']) < coeff * price):
                 keys_to_delete.append(order['id'])
 
         for id in keys_to_delete:
@@ -388,7 +391,8 @@ class LiveBaseBot:
 
         return spread
 
-    def update_spread_prices_limits(self, last_price, side, spread=1.004):
+    def update_spread_prices_limits(self, last_price, side):
+        spread = self.spread
         if side == 'sell':
             self.spread_price_limits['buy'] = self.update_last_price(last_price, 1 / spread, alt_price=1000000)
             self.settings.write_setting_to_file('limit buy', self.spread_price_limits['buy'])
@@ -559,12 +563,15 @@ def run_bot():
     print(passphrase_input)
     print(sandbox_bool)
 
+    # Setup initial variables
     strategy = Strategy()
     bot = LiveBaseBot(model_path, strategy, api_input, secret_input, passphrase_input, is_sandbox_api=sandbox_bool)
     portfolio_value = bot.get_full_portfolio_value()
     bot.update_current_price()
     starting_price = bot.current_price['bids']
     portfolio_tracker = PortfolioTracker(bot.portfolio)
+
+    bot.settings.write_setting_to_file('portfolio value offset', bot.portfolio.offset_value)
 
     # This method keeps the bot running continuously
     current_time = datetime.now().timestamp()
@@ -580,7 +587,7 @@ def run_bot():
     check_period = 1
     err_counter = 0
 
-    while 11 < portfolio_value:
+    while (11 < portfolio_value) and (err_counter < 10):
         current_time = datetime.now().timestamp()
         if (current_time > (last_check + check_period)):
             try:
@@ -596,6 +603,8 @@ def run_bot():
                 bot.settings.update_settings()
                 bot.spread_price_limits['buy'] = bot.settings.settings['limit buy']
                 bot.spread_price_limits['sell'] = bot.settings.settings['limit sell']
+                bot.spread = bot.settings.settings['spread']
+                bot.portfolio.offset_value = bot.settings.settings['portfolio value offset']
                 if (current_time > (last_plot + plot_period)):
                     portfolio_value = portfolio_tracker.plot_returns()
                     last_plot = datetime.now().timestamp()
