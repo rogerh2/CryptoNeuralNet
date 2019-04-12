@@ -25,8 +25,9 @@ import os
 import re
 import traceback
 
-SETTINGS_FILE_PATH = r'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/fill_bot_settings'
-SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test20190407'
+SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/fill_bot_settings.txt'
+# TODO update the SAVED_DATA_FILE_PATH before running the next test
+SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test20190410'
 
 def current_est_time():
     naive_date_from = datetime.now()
@@ -591,15 +592,14 @@ def run_bot():
         current_time = datetime.now().timestamp()
         if (current_time > (last_check + check_period)):
             try:
+                # Trade
                 price, side, size = bot.trade_action()
                 if price:
                     print('Placed ' + side + ' order for ' + num2str(size, 3) + ' ' + bot.ticker + ' at $' + num2str(price,2))
                 err_counter = 0
                 last_check = datetime.now().timestamp()
-            except Exception as e:
-                    err_counter = print_err_msg('find new data', e, err_counter)
-                    continue
-            finally:
+
+                # Update Settings
                 bot.settings.update_settings()
                 bot.spread_price_limits['buy'] = bot.settings.settings['limit buy']
                 bot.spread_price_limits['sell'] = bot.settings.settings['limit sell']
@@ -608,6 +608,10 @@ def run_bot():
                 if (current_time > (last_plot + plot_period)):
                     portfolio_value = portfolio_tracker.plot_returns()
                     last_plot = datetime.now().timestamp()
+
+            except Exception as e:
+                    err_counter = print_err_msg('find new data', e, err_counter)
+                    continue
 
 
     print('Loop END')
