@@ -333,7 +333,7 @@ class SpreadTradeBot:
         market_str = self.format_price_info(market_returns, price)
 
         self.returns.plot()
-        plt.title('Portfolio: ' + portfolio_str + '\n' + self.prediction_ticker + ': ' + market_str)
+        plt.title('Wallet: ' + portfolio_str + '\n' + self.prediction_ticker + ': ' + market_str)
         plt.xlabel('Date/Time')
         plt.ylabel('% Initial Value')
 

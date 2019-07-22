@@ -27,7 +27,7 @@ import traceback
 
 SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/fill_bot_settings.txt'
 # TODO update the SAVED_DATA_FILE_PATH before running the next test
-SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test20190410'
+SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test20190416'
 
 def current_est_time():
     naive_date_from = datetime.now()
@@ -289,6 +289,65 @@ class LiveRunSettings:
             f.write(write_str)
 
 class LiveBaseBot:
+    current_price = {'asks': None, 'bids': None}
+    spread_price_limits = {'sell': 0, 'buy': 1000000}
+    settings = LiveRunSettings(SETTINGS_FILE_PATH)
+    spread = 1.004
+    order_stds = {}
+
+    def __init__(self, api_key, secret_key, passphrase, prediction_ticker='ETH', is_sandbox_api=False):
+        # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
+        self.portfolio = Portfolio(api_key, secret_key, passphrase, prediction_ticker=prediction_ticker, is_sandbox_api=is_sandbox_api)
+        self.ticker = prediction_ticker
+
+    def get_order_book(self):
+        order_book = self.portfolio.exchange.get_current_book()
+
+        if self.order_books is None:
+            self.order_books = order_book
+        else:
+            if len(self.order_books.index) >= 30:
+                self.order_books = self.order_books.drop([0])
+            self.order_books = self.order_books.append(order_book, ignore_index=True)
+
+        return order_book
+
+    def update_current_price(self):
+        for side in ['asks', 'bids']:
+            top_order = self.portfolio.exchange.get_top_order(side)
+            self.current_price[side] = top_order
+
+    def place_order(self, price, side, size, allow_taker=True):
+        order_id = self.portfolio.exchange.place_order(price, side, size, post_only=allow_taker)
+        return order_id
+
+    def get_full_portfolio_value(self):
+
+        full_value = self.portfolio.get_full_portfolio_value()
+
+        return full_value
+
+    def cancel_out_of_bound_orders(self, side, price, order_std):
+        # TODO take into account order reason (e.g. placing order at current price to hit future prediction vs placing order at projected future price)
+        orders = list(self.portfolio.exchange.auth_client.get_orders(self.portfolio.exchange.product_id))
+        keys_to_delete = []
+        if side == 'buy':
+            coeff = -1
+        else:
+            coeff = 1
+
+        for order in orders:
+            if order['side'] != side:
+                continue
+
+            if (self.order_stds[order['id']] > order_std) and (coeff * float(order['price']) < coeff * price):
+                keys_to_delete.append(order['id'])
+
+        for id in keys_to_delete:
+            self.portfolio.exchange.remove_order(id)
+            self.order_stds.pop(id)
+
+class LiveSmartBot:
     current_price = {'asks': None, 'bids': None}
     spread_price_limits = {'sell': 0, 'buy': 1000000}
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
@@ -566,7 +625,7 @@ def run_bot():
 
     # Setup initial variables
     strategy = Strategy()
-    bot = LiveBaseBot(model_path, strategy, api_input, secret_input, passphrase_input, is_sandbox_api=sandbox_bool)
+    bot = LiveSmartBot(model_path, strategy, api_input, secret_input, passphrase_input, is_sandbox_api=sandbox_bool)
     portfolio_value = bot.get_full_portfolio_value()
     bot.update_current_price()
     starting_price = bot.current_price['bids']
