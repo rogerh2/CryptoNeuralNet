@@ -1,8 +1,8 @@
-from CryptoBot.CryptoBot_Shared_Functions import num2str
 import cbpro
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from operator import itemgetter
 from itertools import islice
 from time import sleep
 from time import time
@@ -50,18 +50,25 @@ class Product:
         top_order = float(self.order_book[side][0][0])
         return top_order
 
-    def get_recent_fills(self, fill_number):
+    def get_recent_fills(self, fill_number=300):
         recent_fills = list(islice(self.pub_client.get_product_trades(product_id=self.product_id), fill_number))
         sleep(0.5)
         return recent_fills
 
     def get_mean_and_std(self):
-        fills = self.get_recent_fills(300)
+        for i in range(0, 10):
+            fills = self.get_recent_fills()
+            if 'message' in fills:
+                sleep(1)
+            else:
+                break
+
         fill_arr = np.array([float(fill['price']) for fill in fills])
         fill_diff = np.diff(fill_arr)
         fill_diff_ratio = np.append(0, fill_diff) / fill_arr
         std = np.std(fill_diff_ratio)
         mu = np.mean(fill_diff_ratio)
+        print((fill_arr[-1] - fill_arr[1]) / fill_arr[0])
         return mu, std
 
     def place_order(self, price, side, size, coeff=1, post_only=True):
@@ -103,8 +110,9 @@ class Wallet:
 
         return balance, hold_balance
 
-    def update_value(self):
-        data = self.exchange.auth_client.get_accounts()
+    def update_value(self, data=None):
+        if data is None:
+            data = self.exchange.auth_client.get_accounts()
         sleep(0.5)
         usd_balance, usd_hold_balance = self.get_wallet_values('USD', data)
         sym_balance, sym_hold_balance = self.get_wallet_values(self.ticker, data)
@@ -131,9 +139,10 @@ class Wallet:
         available = float(self.value[sym]) - float(self.value[sym + ' Hold'])
         return available
 
+
 class LiveRunSettings:
 
-    settings = {'portfolio value offset':None, 'limit buy':None, 'limit sell':None, 'spread':1.004, 'std':2}
+    settings = {'portfolio value offset':None, 'limit buy':None, 'limit sell':None, 'spread':1.01, 'std':2}
 
     def __init__(self, settings_file_path):
         self.fname = settings_file_path
@@ -187,20 +196,30 @@ class CombinedPortfolio:
             self.wallets[symbol] = Wallet(api_key, secret_key, passphrase, sym=symbol, auth_client=auth_client, pub_client=pub_client)
             self.auth = auth_client
 
+        self.symbols = sym_list
+
+    def get_common_wallet(self):
+        # Useful to use common functions from all wallets regadless of symbol
+        wallet = self.wallets[self.symbols[0]]
+        return wallet
+
     def get_full_portfolio_value(self):
 
         full_value = 0
+        # get the wallet data once to reduce API calls
+        wallet = self.get_common_wallet()
+        full_wallet_data = wallet.exchange.auth_client.get_accounts()
 
+        # update the last recorded price and add to get full value
         for sym in self.wallets.keys():
             wallet = self.wallets[sym]
             current_price = {'asks':None, 'bids':None}
-            _ = wallet.exchange.get_current_book()
 
             for side in current_price.keys():
                 top_order = wallet.exchange.get_top_order(side)
                 current_price[side] = top_order
 
-            wallet.update_value()
+            wallet.update_value(data=full_wallet_data)
             price = np.mean([current_price['asks'], current_price['bids']])
 
             sym = wallet.value['SYM']
@@ -211,9 +230,16 @@ class CombinedPortfolio:
 
         return full_value
 
+    def get_usd_available(self):
+        wallet = self.get_common_wallet()
+        usd_available = wallet.get_amnt_available('buy')
+
+        return usd_available
+
     def remove_order(self, id):
         self.auth.cancel_order(id)
         sleep(0.5)
+
 
 class Bot:
 
@@ -230,8 +256,7 @@ class Bot:
             self.current_price[sym] = {'asks': None, 'bids': None}
             self.spread_price_limits[sym] = {'sell': 0, 'buy': 1000000}
 
-
-    def update_current_price(self):
+    def update_current_prices(self):
         for side in ['asks', 'bids']:
             for sym in self.symbols:
                 top_order = self.portfolio.wallets[sym].exchange.get_top_order(side)
@@ -260,25 +285,65 @@ class Bot:
             if order['side'] != side:
                 continue
 
-            if (coeff * float(order['price']) < coeff * price):
+            if coeff * float(order['price']) < coeff * price:
                 keys_to_delete.append(order['id'])
 
         for id in keys_to_delete:
             self.portfolio.remove_order(id)
 
+    def rank_currencies(self):
+        # setup
+        ranking_dict = {}
 
-def run_bot(symbols=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX')):
-    api_input = input('What is the api key? ')
-    secret_input = input('What is the secret key? ')
-    passphrase_input = input('What is the passphrase? ')
+        # create dictionary for symbols and relevant data
+        for sym in self.symbols:
+            print('Evaluating ' + sym)
+            mu, std = self.portfolio.wallets[sym].exchange.get_mean_and_std()
+            ranking_dict[sym] = (mu, std)
 
-    bot = Bot(api_input, secret_input, passphrase_input, syms=symbols)
-    largest_var = -1
+        # sort (by mean first then standard deviation)
+        sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
 
-    for sym in symbols:
-        mu, std = bot.portfolio.wallets[sym].exchange.get_mean_and_std()
+        return sorted_syms
+
+    def update_spread_prices_limits(self, last_price, side, sym):
+
+        self.spread_price_limits[sym][side] = last_price
+        self.settings.write_setting_to_file('limit ' + side, self.spread_price_limits['buy'])
+
+    def place_order_for_top_currencies(self, order_ind=0):
+        # determine whether enough crypto is available to order
+        usd_available = self.portfolio.get_usd_available()
+        if usd_available < 10:
+            return False
+
+        # determine trade symbol
+        sorted_syms = self.rank_currencies()
+        top_sym = sorted_syms[0][0]
+        std = sorted_syms[1][1]
+
+        # determine trade price
+        order_coeff = 1 + 3 * std # TODO make better determination for price (e.g. use an aggregated diff for the std)
+        wallet = self.portfolio.wallets[top_sym]
+        current_price = wallet.exchange.get_top_order('bids')
+        buy_price = order_coeff * current_price
+        size = buy_price / usd_available
+
+        # TODO place order and update limits (if order_id isn't None)
+
+        # TODO place limit sell and return the order_id
+
+
+
+
 
 
 
 if __name__ == "__main__":
-    pass
+    api_input = input('What is the api key? ')
+    secret_input = input('What is the secret key? ')
+    passphrase_input = input('What is the passphrase? ')
+
+    bot = Bot(api_input, secret_input, passphrase_input)
+    sorted_syms = bot.rank_currencies()
+    print(sorted_syms)
