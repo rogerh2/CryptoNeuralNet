@@ -3,6 +3,8 @@ import numpy as np
 import scipy.stats
 from tzlocal import get_localzone
 from datetime import datetime
+from time import sleep
+import traceback
 
 
 def num2str(num, digits):
@@ -97,3 +99,20 @@ def fit_to_data(data, data_to_scale_to):
     predict_point = fit_data[-1]
 
     return predict_point
+
+def print_err_msg(section_text, e, err_counter):
+    sleep(5)  # Most errors are connection related, so a short time out is warrented
+    err_counter += 1
+    print('failed to' + section_text + ' due to error: ' + str(e))
+    print('number of consecutive errors: ' + str(err_counter))
+    print(traceback.format_exc())
+
+    return err_counter
+
+def current_est_time():
+    naive_date_from = datetime.now()
+    utc = pytz.timezone('UTC')
+    est_date_from = utc.localize(naive_date_from)
+    est = pytz.timezone('America/New_York')
+    est_date = est_date_from.astimezone(est)
+    return est_date
