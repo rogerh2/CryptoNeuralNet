@@ -107,11 +107,7 @@ class Product:
         std = np.std(fill_diff_ratio)
         mu = np.mean(fill_diff_ratio)
 
-        # TODO get last sell and use for better price prediction
-        last_fill = fills[-1]
-        second_to_last_fill = fills[-2]
-
-        return mu, std
+        return mu, std, fill_diff_ratio[-1]
 
     def place_order(self, price, side, size, coeff=1, post_only=True):
         # TODO ensure it never rounds up to the point that the order is larger than available
@@ -365,8 +361,8 @@ class Bot:
         # create dictionary for symbols and relevant data
         for sym in self.symbols:
             print('Evaluating ' + sym)
-            mu, std = self.portfolio.wallets[sym].product.get_mean_and_std()
-            ranking_dict[sym] = (mu, std)
+            mu, std, last_diff = self.portfolio.wallets[sym].product.get_mean_and_std()
+            ranking_dict[sym] = (mu, std, last_diff)
 
         # sort (by mean first then standard deviation)
         sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
@@ -389,13 +385,14 @@ class Bot:
             # determine trade symbol
             sorted_syms = self.rank_currencies()
             top_sym = sorted_syms[order_ind][0]
-            std = sorted_syms[order_ind][1][1]
             mu = sorted_syms[order_ind][1][0]
+            std = sorted_syms[order_ind][1][1]
+            last_diff = sorted_syms[order_ind][1][2]
             std_coeff = self.settings.read_setting_from_file('std')
             print(top_sym + ' chosen as best trade with a std of ' + num2str(std, 4) + ' and a mean of ' + num2str(mu, 4) + '\n')
 
             # determine trade price
-            order_coeff = 1 - (std_coeff * std) + mu # TODO make better determination for price (e.g. use an aggregated diff for the std)
+            order_coeff = 1 - (std_coeff * std) + mu # TODO use last fill_diff to calculate whether or not your placing an order on a fall or rise and where it is in the std. Use that info to create a better bid price
             wallet = self.portfolio.wallets[top_sym]
             current_price = wallet.product.get_top_order('bids')
             buy_price = order_coeff * current_price
@@ -425,7 +422,6 @@ class Bot:
             available = wallet.get_amnt_available('sell')
 
             # Filter unnecessary currencies
-            # TODO fix so that sells go through, currently sets price to None and never resets if a buy is pending
             if available < wallet.product.base_order_min:
                 continue
             print('Evaluating ' + sym + ' for spread sell')
@@ -548,10 +544,10 @@ def run_bot():
         if (current_time > (last_check + check_period)):
             try:
                 # Trade
-                err_counter = 0
                 last_check = datetime.now().timestamp()
                 bot.place_order_for_top_currencies(0)
                 bot.place_limit_sells()
+                # TODO find some way to cancle buy/sell orders and update them if the price changes dramatically (maybe an aggregate std for trades over a specified period of time)
 
                 # Update Settings
                 bot.settings.update_settings()
@@ -561,10 +557,11 @@ def run_bot():
                 if (current_time > (last_plot + plot_period)):
                     portfolio_value = portfolio_tracker.plot_returns()
                     last_plot = datetime.now().timestamp()
+                err_counter = 0
 
             except Exception as e:
+                if err_counter > 1:
                     err_counter = print_err_msg('find new data', e, err_counter)
-                    continue
 
 
     print('Loop END')
