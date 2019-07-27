@@ -21,21 +21,21 @@ if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
 else:
     override_saved_data = input('Override data in current saved data folder? (yes/no)' )
-    if override_saved_data != 'yes':
+    if override_saved_data != 'yes': # TODO change to allow inclusion of a new file name (also print old one)
         raise ValueError('Folder for saved plots already taken')
 
 
-EXCHANGE_CONSTANTS = {'BTC':{'resolution':2, 'base order min':0.001},
-                      'ETH':{'resolution':2, 'base order min':0.01},
-                      'XRP':{'resolution':4, 'base order min':1},
-                      'LTC':{'resolution':2, 'base order min':0.1},
-                      'BCH':{'resolution':2, 'base order min':0.01},
-                      'EOS':{'resolution':3, 'base order min':0.1},
-                      'XLM':{'resolution':6, 'base order min':1},
-                      'ETC':{'resolution':3, 'base order min':0.1},
-                      'LINK':{'resolution':5, 'base order min':1},
-                      'REP':{'resolution':2, 'base order min':0.1},
-                      'ZRX':{'resolution':6, 'base order min':1}
+EXCHANGE_CONSTANTS = {'BTC':{'resolution':2, 'base order min':0.001, 'base resolution':8},
+                      'ETH':{'resolution':2, 'base order min':0.01, 'base resolution':8},
+                      'XRP':{'resolution':4, 'base order min':1, 'base resolution':0},
+                      'LTC':{'resolution':2, 'base order min':0.1, 'base resolution':8},
+                      'BCH':{'resolution':2, 'base order min':0.01, 'base resolution':8},
+                      'EOS':{'resolution':3, 'base order min':0.1, 'base resolution':1},
+                      'XLM':{'resolution':6, 'base order min':1, 'base resolution':0},
+                      'ETC':{'resolution':3, 'base order min':0.1, 'base resolution':8},
+                      'LINK':{'resolution':5, 'base order min':1, 'base resolution':0},
+                      'REP':{'resolution':2, 'base order min':0.1, 'base resolution':6},
+                      'ZRX':{'resolution':6, 'base order min':1, 'base resolution':6}
                       }
 
 QUOTE_ORDER_MIN = 10
@@ -49,8 +49,9 @@ class Product:
         self.product_id = prediction_ticker.upper() + '-USD'
         self.usd_decimal_num = EXCHANGE_CONSTANTS[prediction_ticker]['resolution']
         self.usd_res = 10**(-self.usd_decimal_num)
-        self.quote_order_min = 10
+        self.quote_order_min = QUOTE_ORDER_MIN
         self.base_order_min = EXCHANGE_CONSTANTS[prediction_ticker]['base order min']
+        self.base_decimal_num = EXCHANGE_CONSTANTS[prediction_ticker]['base resolution']
 
         if auth_client is None:
             if is_sandbox_api:
@@ -123,7 +124,7 @@ class Product:
 
         new_order_id = None
         price_str = num2str(price, self.usd_decimal_num)
-        size_str = num2str(coeff * size, 4)
+        size_str = num2str(coeff * size, self.base_decimal_num)
 
         order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only)
         sleep(0.5)
@@ -286,8 +287,12 @@ class CombinedPortfolio:
     def get_usd_available(self):
         wallet = self.get_common_wallet()
         usd_available = wallet.get_amnt_available('buy')
-
         return usd_available
+
+    def get_usd_held(self):
+        wallet = self.get_common_wallet()
+        usd_hold = wallet.value['USD Hold']
+        return usd_hold
 
     def remove_order(self, id):
         self.auth.cancel_order(id)
@@ -307,7 +312,7 @@ class Bot:
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
     spread = 1.01
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX'), is_sandbox_api=False):
+    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'REP', 'ZRX'), is_sandbox_api=False):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         current_offset = self.settings.read_setting_from_file('portfolio value offset')
         self.portfolio = CombinedPortfolio(api_key, secret_key, passphrase, syms, is_sandbox=is_sandbox_api, offset_value=current_offset)
@@ -335,32 +340,12 @@ class Bot:
 
         return full_value
 
-    def cancel_out_of_bound_orders(self, side, price, sym):
-        orders = list(self.portfolio.wallets[sym].product.auth_client.get_orders(self.portfolio.wallets[sym].product.product_id))
-        sleep(0.5)
-        keys_to_delete = []
-        if side == 'buy':
-            coeff = -1
-        else:
-            coeff = 1
-
-        for order in orders:
-            if order['side'] != side:
-                continue
-
-            if coeff * float(order['price']) < coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res):
-                keys_to_delete.append(order['id'])
-
-        for id in keys_to_delete:
-            self.portfolio.remove_order(id)
-
     def rank_currencies(self):
         # setup
         ranking_dict = {}
 
         # create dictionary for symbols and relevant data
         for sym in self.symbols:
-            print('Evaluating ' + sym)
             mu, std, last_diff = self.portfolio.wallets[sym].product.get_mean_and_std()
             ranking_dict[sym] = (mu, std, last_diff)
 
@@ -370,33 +355,80 @@ class Bot:
         return sorted_syms
 
     def update_spread_prices_limits(self, last_price, side, sym):
+        self.spread_price_limits[sym][side] = last_price
+        self.settings.write_setting_to_file('limit ' + side, self.spread_price_limits[sym][side])
+
+    def cancel_out_of_bound_orders(self, side, price, sym):
+        orders = list(self.portfolio.wallets[sym].product.auth_client.get_orders(self.portfolio.wallets[sym].product.product_id))
+        sleep(0.5)
+        keys_to_delete = []
         if side == 'buy':
             coeff = -1
         else:
             coeff = 1
-        self.spread_price_limits[sym][side] = last_price
-        self.settings.write_setting_to_file('limit ' + side, self.spread_price_limits[sym][side])
+        num_cancelled_orders = 0
+
+        for order in orders:
+            if order['side'] != side:
+                continue
+            if coeff * float(order['price']) < coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res):
+                keys_to_delete.append(order['id'])
+
+        for id in keys_to_delete:
+            num_cancelled_orders += 1
+            print('Cancelled ' + num2str(num_cancelled_orders, 1) + ' out of bounds ' + sym + ' ' + side + ' orders')
+            self.portfolio.remove_order(id)
+
+    def cancle_out_of_bound_buy_orders(self, sorted_syms):
+        # Ensure to update portfolio value before running
+        for currency_data in sorted_syms:
+            # Find price 2 standard deviations below the change (unlikely buy price to hit)
+            sym = currency_data[0]
+            mu = currency_data[1][0]
+            std = currency_data[1][1]
+            last_diff = currency_data[1][2]
+            std_coeff = 1 - (2 * std) + mu * (mu < 0) # only factor in the mean when it gives a wider margin (make it harder to cancel an order due to short changes)
+            wallet = self.portfolio.wallets[sym]
+            if last_diff > (std + mu):
+                # Don't cancel orders due to one big jump
+                continue
+            current_price = wallet.product.get_top_order('bids')
+            minimum_buy_price = std_coeff * current_price
+            self.cancel_out_of_bound_orders('buy', minimum_buy_price, sym)
+
+    def determine_buy_price(self, sorted_syms, order_ind, usd_available):
+        # initialize variables
+        top_sym = sorted_syms[order_ind][0]
+        mu = sorted_syms[order_ind][1][0]
+        std = sorted_syms[order_ind][1][1]
+        last_diff = sorted_syms[order_ind][1][2]
+        std_coeff = self.settings.read_setting_from_file('std')
+        print(top_sym + ' chosen as best trade with a std of ' + num2str(std, 4) + ' and a mean of ' + num2str(mu, 4) + '\n')
+        wallet = self.portfolio.wallets[top_sym]
+
+        # determine trade price
+        std_offset = - (std_coeff * std) + mu
+        order_coeff = 1 + std_offset
+        current_price = wallet.product.get_top_order('bids')
+        if (last_diff < 0) and (last_diff > std_offset):
+            order_coeff -= last_diff
+        elif (last_diff < 0):
+            order_coeff = 1
+            current_price = wallet.product.get_top_order('sell') - self.portfolio.wallets[top_sym].product.usd_res
+
+        buy_price = order_coeff * current_price
+        size = usd_available / buy_price
+
+        return buy_price, wallet, size, top_sym, std, mu
 
     def place_order_for_top_currencies(self, order_ind=0):
-        # determine whether enough crypto is available to order
-        self.portfolio.update_value()
+        # Ensure to update portfolio value before running
         usd_available = self.portfolio.get_usd_available()
+        usd_hold = self.portfolio.get_usd_held()
         if usd_available > QUOTE_ORDER_MIN:
-            # determine trade symbol
+            print('Evaluating currencies for best buy')
             sorted_syms = self.rank_currencies()
-            top_sym = sorted_syms[order_ind][0]
-            mu = sorted_syms[order_ind][1][0]
-            std = sorted_syms[order_ind][1][1]
-            last_diff = sorted_syms[order_ind][1][2]
-            std_coeff = self.settings.read_setting_from_file('std')
-            print(top_sym + ' chosen as best trade with a std of ' + num2str(std, 4) + ' and a mean of ' + num2str(mu, 4) + '\n')
-
-            # determine trade price
-            order_coeff = 1 - (std_coeff * std) + mu # TODO use last fill_diff to calculate whether or not your placing an order on a fall or rise and where it is in the std. Use that info to create a better bid price
-            wallet = self.portfolio.wallets[top_sym]
-            current_price = wallet.product.get_top_order('bids')
-            buy_price = order_coeff * current_price
-            size = usd_available / buy_price
+            buy_price, wallet, size, top_sym, std, mu = self.determine_buy_price(sorted_syms, order_ind, usd_available)
 
             # place order and record
             print('placing order\n' + 'price: ' + num2str(buy_price, wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(size, 3) + '\n')
@@ -411,10 +443,14 @@ class Bot:
                     spread = 1.004
                 self.settings.write_setting_to_file('spread', spread)
                 self.update_spread_prices_limits(spread * buy_price, 'sell', top_sym)
+        elif usd_hold > QUOTE_ORDER_MIN:
+            print('Evaluating orders for out of bound buy')
+            sorted_syms = self.rank_currencies()
+            self.cancle_out_of_bound_buy_orders(sorted_syms)
+
 
     def place_limit_sells(self):
-        self.portfolio.update_value()
-
+        # Ensure to update portfolio value before running
         for sym in self.portfolio.wallets.keys():
             # Get relevant variables
             wallet = self.portfolio.wallets[sym]
@@ -526,8 +562,10 @@ def run_bot():
     passphrase_input = input('What is the passphrase? ')
 
     # Setup initial variables
+    print('Initializing bot')
     bot = Bot(api_input, secret_input, passphrase_input)
     bot.portfolio.update_value()
+    print('Initializing portfolio tracking')
     portfolio_tracker = PortfolioTracker(bot.portfolio)
     portfolio_value = portfolio_tracker.initial_value
     print('Bot starting value ' + num2str(portfolio_value, 2))
@@ -544,10 +582,10 @@ def run_bot():
         if (current_time > (last_check + check_period)):
             try:
                 # Trade
+                bot.portfolio.update_value()
                 last_check = datetime.now().timestamp()
                 bot.place_order_for_top_currencies(0)
                 bot.place_limit_sells()
-                # TODO find some way to cancle buy/sell orders and update them if the price changes dramatically (maybe an aggregate std for trades over a specified period of time)
 
                 # Update Settings
                 bot.settings.update_settings()
@@ -562,6 +600,7 @@ def run_bot():
             except Exception as e:
                 if err_counter > 1:
                     err_counter = print_err_msg('find new data', e, err_counter)
+                err_counter += 1
 
 
     print('Loop END')
