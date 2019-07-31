@@ -346,7 +346,6 @@ class CombinedPortfolio:
         for sym in self.symbols:
             self.wallets[sym].update_value(data=wallets_data)
 
-
 class Bot:
 
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
@@ -379,20 +378,6 @@ class Bot:
         full_value = self.portfolio.get_full_portfolio_value()
 
         return full_value
-
-    def rank_currencies(self):
-        # setup
-        ranking_dict = {}
-
-        # create dictionary for symbols and relevant data
-        for sym in self.symbols:
-            mu, std, last_diff = self.portfolio.wallets[sym].product.get_mean_and_std_of_price_changes()
-            ranking_dict[sym] = (mu, std, last_diff)
-
-        # sort (by mean first then standard deviation)
-        sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
-
-        return sorted_syms
 
     def update_spread_prices_limits(self, last_price, side, sym):
         self.spread_price_limits[sym][side] = last_price
@@ -437,55 +422,108 @@ class Bot:
             minimum_buy_price = std_coeff * current_price
             self.cancel_out_of_bound_orders('buy', minimum_buy_price, sym)
 
-    def determine_buy_price_based_on_std(self, sorted_syms, order_ind, usd_available):
+    def get_side_depedent_vars(self, side):
+        if side == 'buy':
+            book_side = 'bids'
+            opposing_book_side = 'asks'
+            coeff = -1
+        else:
+            book_side = 'asks'
+            opposing_book_side = 'bids'
+            coeff = 1
+
+        return book_side, opposing_book_side, coeff
+
+    def determine_price_based_on_std(self, sym, usd_available, side):
+
         # initialize variables
-        top_sym = sorted_syms[order_ind][0]
-        mu = sorted_syms[order_ind][1][0]
-        std = sorted_syms[order_ind][1][1]
-        last_diff = sorted_syms[order_ind][1][2]
+        book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
+
+        wallet = self.portfolio.wallets[sym]
+        mu, std, last_diff = wallet.product.get_mean_and_std_of_price_changes()
         std_coeff = self.settings.read_setting_from_file('std')
-        print(top_sym + ' chosen as best trade with a std of ' + num2str(std, 4) + ' and a mean of ' + num2str(mu, 4) + '\n')
-        wallet = self.portfolio.wallets[top_sym]
+        if side == 'sell':
+            std_coeff = 2 * std_coeff
 
         # determine trade price
-        std_offset = - (std_coeff * std) + mu
+        std_offset = coeff * (std_coeff * std) + mu
         order_coeff = 1 + std_offset
-        current_price = wallet.product.get_top_order('bids')
+        current_price = wallet.product.get_top_order(book_side)
         if (last_diff < 0) and (last_diff > std_offset):
             order_coeff -= last_diff
         elif (last_diff < 0):
             order_coeff = 1
-            current_price = wallet.product.get_top_order('sell') - self.portfolio.wallets[top_sym].product.usd_res
+            current_price = wallet.product.get_top_order(opposing_book_side) + coeff * wallet.product.usd_res
 
         buy_price = order_coeff * current_price
         size = usd_available / buy_price
 
-        return buy_price, wallet, size, top_sym, std, mu
+        return buy_price, wallet, size, std, mu
 
-    def determine_buy_price_based_on_fill_size(self, sorted_syms, order_ind, usd_available):
+    def determine_price_based_on_fill_size(self, sym, usd_available, side):
         # initialize variables
-        top_sym = sorted_syms[order_ind][0]
-        mu = sorted_syms[order_ind][1][0]
-        std = sorted_syms[order_ind][1][1]
-        last_diff = sorted_syms[order_ind][1][2]
+        book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
+
+        wallet = self.portfolio.wallets[sym]
+        mu, std, existing_fill_size = wallet.product.get_mean_and_std_of_fill_sizes(side)
         std_coeff = self.settings.read_setting_from_file('std')
-        wallet = self.portfolio.wallets[top_sym]
+        if side == 'sell':
+            std_coeff = 2 * std_coeff
 
         # determine trade price
-        current_price = wallet.product.get_top_order('bids')
-        wallet.product.get_current_book()
-        book = wallet.product.order_book['bids']
-        max_size = std_coeff * std + mu
+        current_price = wallet.product.get_top_order(opposing_book_side)
+        book = wallet.product.order_book[book_side]
+        max_size = std_coeff * std + mu - existing_fill_size * (existing_fill_size > 0)
         current_book_size = 0 # This is the size of order needed to climb to a certain point in the book
+        buy_price = None
+        size = None
+        if max_size > 0:
+            for order in book:
+                buy_price = float(order[0]) - coeff * wallet.product.usd_res
+                current_book_size += float(order[1])
+                size = usd_available / buy_price
+                if ( current_book_size + size ) > max_size:
+                    break
+        elif buy_price is None:
+            buy_price = _price = current_price + coeff * wallet.product.usd_res
+            size = usd_available / buy_price
 
-        for order in book:
-            current_book_size += order['size']
-            if current_book_size > max_size:
-                buy_price = order['price'] + wallet.product.quote_order_min
-                break
+        return buy_price, size
 
-        size = usd_available / buy_price
-        return buy_price, wallet, size, top_sym, std, mu
+    def determine_trade_price(self, sym, usd_available, side):
+        _, _, coeff = self.get_side_depedent_vars(side)
+        price_p, wallet, size_p, std, mu = self.determine_price_based_on_std(sym, usd_available, side)
+        price_s, size_s = self.determine_price_based_on_fill_size(sym, usd_available, side)
+        if coeff * price_p < coeff * price_s: # Always use the more conservative price
+            return price_p, wallet, size_p, std, mu
+        else:
+            return price_s, wallet, size_s, std, mu
+
+    def rank_currencies(self, usd_available):
+        # setup
+        ranking_dict = {}
+
+        # create dictionary for symbols and relevant data
+        for sym in self.symbols:
+            buy_price, wallet, size, std, mu = self.determine_trade_price(sym, usd_available, side='buy')
+            sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell')
+            spread = ( sell_price - buy_price ) / buy_price
+            ranking_dict[sym] = (spread, buy_price, wallet, std, mu, size)
+
+        # sort (by mean first then standard deviation)
+        sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
+        top_sym = sorted_syms[0][0]
+        spread = sorted_syms[1][0]
+        buy_price = sorted_syms[1][1]
+        wallet = sorted_syms[1][2]
+        std = sorted_syms[1][3]
+        mu = sorted_syms[1][4]
+        size = sorted_syms[1][5]
+
+        if spread > 0.004:
+            return buy_price, wallet, size, top_sym, std, mu
+        else:
+            return None, None, None, None, None, None
 
     def place_order_for_top_currencies(self, order_ind=0):
         # Ensure to update portfolio value before running
@@ -493,9 +531,9 @@ class Bot:
         usd_hold = self.portfolio.get_usd_held()
         if usd_available > QUOTE_ORDER_MIN:
             print('Evaluating currencies for best buy')
-            sorted_syms = self.rank_currencies()
-            buy_price, wallet, size, top_sym, std, mu = self.determine_buy_price_based_on_std(sorted_syms, order_ind, usd_available)
+            buy_price, wallet, size, top_sym, std, mu = self.rank_currencies(usd_available)
             # TODO use the buy_price based on the size to determine if a more conservative buy is necessary
+            # TODO add functionality to handle None buy_prie
             std_coeff = self.settings.read_setting_from_file('std')
 
             # place order and record
