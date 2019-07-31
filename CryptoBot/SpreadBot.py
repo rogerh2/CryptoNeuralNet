@@ -1,3 +1,21 @@
+# Format for fills
+# [{
+#     "time": "2014-11-07T22:19:28.578544Z",
+#     "trade_id": 74,
+#     "price": "10.00000000",
+#     "size": "0.01000000",
+#     "side": "buy"
+# }, {
+#     "time": "2014-11-07T01:08:43.642366Z",
+#     "trade_id": 73,
+#     "price": "100.00000000",
+#     "size": "0.01000000",
+#     "side": "sell"
+# }]
+
+import matplotlib
+matplotlib.use('Agg')
+import sys
 import cbpro
 import pandas as pd
 import numpy as np
@@ -16,6 +34,8 @@ import re
 
 SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
+# SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
+# SAVED_DATA_FILE_PATH = r'/Test' + str(current_est_time().date()).replace('-', '')
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -98,7 +118,7 @@ class Product:
 
         return recent_fills
 
-    def get_mean_and_std(self):
+    def get_mean_and_std_of_price_changes(self):
         fills = self.get_recent_fills()
         fill_arr = np.array([float(fill['price']) for fill in fills])
         fill_diff = np.diff(fill_arr)
@@ -109,6 +129,15 @@ class Product:
         mu = np.mean(fill_diff_ratio)
 
         return mu, std, fill_diff_ratio[-1]
+
+    def get_mean_and_std_of_fill_sizes(self, side):
+        fills = self.get_recent_fills()
+        size_arr = np.array([float(fill['price'])*(fill['side']==side) for fill in fills])
+        size_arr = size_arr[size_arr > 0]
+        std = np.std(size_arr)
+        mu = np.mean(size_arr)
+
+        return mu, std
 
     def place_order(self, price, side, size, coeff=1, post_only=True):
         # TODO ensure it never rounds up to the point that the order is larger than available
@@ -204,7 +233,7 @@ class LiveRunSettings:
             if setting_name in content:
                 setting_str = self.reg_ex.search(content.replace(' ', ''))
                 if setting_str is not None:
-                    setting_value = float(setting_str[0])
+                    setting_value = float(setting_str[0]) # TODO investigate how to get this line to work on python 3.5 (for AWS)
 
         return setting_value
 
@@ -346,7 +375,7 @@ class Bot:
 
         # create dictionary for symbols and relevant data
         for sym in self.symbols:
-            mu, std, last_diff = self.portfolio.wallets[sym].product.get_mean_and_std()
+            mu, std, last_diff = self.portfolio.wallets[sym].product.get_mean_and_std_of_price_changes()
             ranking_dict[sym] = (mu, std, last_diff)
 
         # sort (by mean first then standard deviation)
@@ -387,7 +416,8 @@ class Bot:
             mu = currency_data[1][0]
             std = currency_data[1][1]
             last_diff = currency_data[1][2]
-            std_coeff = 1 - (2 * std) + mu * (mu < 0) # only factor in the mean when it gives a wider margin (make it harder to cancel an order due to short changes)
+            std_coeff = self.settings.read_setting_from_file('std')
+            std_coeff = 1 - (3 * std_coeff * std) + mu * (mu < 0) # only factor in the mean when it gives a wider margin (make it harder to cancel an order due to short changes)
             wallet = self.portfolio.wallets[sym]
             if last_diff > (std + mu):
                 # Don't cancel orders due to one big jump
@@ -429,6 +459,7 @@ class Bot:
             print('Evaluating currencies for best buy')
             sorted_syms = self.rank_currencies()
             buy_price, wallet, size, top_sym, std, mu = self.determine_buy_price(sorted_syms, order_ind, usd_available)
+            std_coeff = self.settings.read_setting_from_file('std')
 
             # place order and record
             print('placing order\n' + 'price: ' + num2str(buy_price, wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(size, 3) + '\n')
@@ -438,7 +469,7 @@ class Bot:
             else:
                 print('Order placed!\n')
                 self.update_spread_prices_limits(buy_price, 'buy', top_sym)
-                spread = 1 + (2 * std) + mu #self.settings.read_setting_from_file('spread')
+                spread = 1 + (2 * std_coeff * std) + mu #self.settings.read_setting_from_file('spread')
                 if spread < 1.004:
                     spread = 1.004
                 self.settings.write_setting_to_file('spread', spread)
@@ -557,9 +588,16 @@ class PortfolioTracker:
 
 def run_bot():
     # -- Secret/changing variable declerations
-    api_input = input('What is the api key? ')
-    secret_input = input('What is the secret key? ')
-    passphrase_input = input('What is the passphrase? ')
+    if len(sys.argv) > 2:
+        # Definition from a shell file
+        api_input = sys.argv[1]
+        secret_input = sys.argv[2]
+        passphrase_input = sys.argv[3]
+
+    else:
+        api_input = input('What is the api key? ')
+        secret_input = input('What is the secret key? ')
+        passphrase_input = input('What is the passphrase? ')
 
     # Setup initial variables
     print('Initializing bot')
