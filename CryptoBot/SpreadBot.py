@@ -91,13 +91,12 @@ class Product:
         ts = time()
         if not ('bids' in order_book.keys()):
             print('Get order book error, the returned dict is: ' + str(order_book))
-            return None
         else:
             self.order_book = order_book
             order_book['time'] = ts
 
     def get_top_order(self, side):
-        _ = self.get_current_book()
+        self.get_current_book()
         if not side in ['asks', 'bids']:
             raise ValueError('Side must be either "asks" or "bids"')
         top_order = float(self.order_book[side][0][0])
@@ -113,13 +112,13 @@ class Product:
             else:
                 break
 
-        fill_mask = [recent_fills[i]['side']!=recent_fills[i-1]['side'] for i in range(0, len(recent_fills))]
-        recent_fills = list(compress(recent_fills, fill_mask))
+        fill_mask = [recent_fills[i]['side']!=recent_fills[i-1]['side'] for i in range(0, len(recent_fills))] # This loop aggreagates changes over moves in a single direction
+        filtered_recent_fills = list(compress(recent_fills, fill_mask))
 
-        return recent_fills
+        return filtered_recent_fills, recent_fills
 
     def get_mean_and_std_of_price_changes(self):
-        fills = self.get_recent_fills()
+        fills, _ = self.get_recent_fills()
         fill_arr = np.array([float(fill['price']) for fill in fills])
         fill_diff = np.diff(fill_arr)
         fill_diff_mask = np.abs(fill_diff) > self.usd_res #ignore small bounces between the minimum resolution
@@ -131,13 +130,25 @@ class Product:
         return mu, std, fill_diff_ratio[-1]
 
     def get_mean_and_std_of_fill_sizes(self, side):
-        fills = self.get_recent_fills()
-        size_arr = np.array([float(fill['price'])*(fill['side']==side) for fill in fills])
-        size_arr = size_arr[size_arr > 0]
+        _, fills = self.get_recent_fills()
+        size_ls = []
+        current_size = 0
+        # This loop aggregates over moves in a single direction to match the price based variables
+        for i in range(1, len(fills)):
+            current_fill = fills[i]
+            last_fill = fills[i-1]
+            size = float(last_fill['size'])
+            current_size += size
+            if current_fill['side'] != last_fill['side']:
+                size_ls.append(current_size * (-1)**(current_fill['side'] == side)) # size is negative for sizes in the opposing direction
+                current_size=0
+
+        size_arr = np.array(size_ls)
+        size_arr = size_arr[np.abs(size_arr) > 0]
         std = np.std(size_arr)
         mu = np.mean(size_arr)
 
-        return mu, std
+        return mu, std, size_arr[-1]
 
     def place_order(self, price, side, size, coeff=1, post_only=True):
         # TODO ensure it never rounds up to the point that the order is larger than available
@@ -333,7 +344,7 @@ class CombinedPortfolio:
         wallets_data = wallet.product.auth_client.get_accounts()
 
         for sym in self.symbols:
-            self.wallets[sym].update_value(data=wallets_data) # TODO investigate why two wallet objects will affect each other
+            self.wallets[sym].update_value(data=wallets_data)
 
 
 class Bot:
@@ -426,7 +437,7 @@ class Bot:
             minimum_buy_price = std_coeff * current_price
             self.cancel_out_of_bound_orders('buy', minimum_buy_price, sym)
 
-    def determine_buy_price(self, sorted_syms, order_ind, usd_available):
+    def determine_buy_price_based_on_std(self, sorted_syms, order_ind, usd_available):
         # initialize variables
         top_sym = sorted_syms[order_ind][0]
         mu = sorted_syms[order_ind][1][0]
@@ -451,6 +462,31 @@ class Bot:
 
         return buy_price, wallet, size, top_sym, std, mu
 
+    def determine_buy_price_based_on_fill_size(self, sorted_syms, order_ind, usd_available):
+        # initialize variables
+        top_sym = sorted_syms[order_ind][0]
+        mu = sorted_syms[order_ind][1][0]
+        std = sorted_syms[order_ind][1][1]
+        last_diff = sorted_syms[order_ind][1][2]
+        std_coeff = self.settings.read_setting_from_file('std')
+        wallet = self.portfolio.wallets[top_sym]
+
+        # determine trade price
+        current_price = wallet.product.get_top_order('bids')
+        wallet.product.get_current_book()
+        book = wallet.product.order_book['bids']
+        max_size = std_coeff * std + mu
+        current_book_size = 0 # This is the size of order needed to climb to a certain point in the book
+
+        for order in book:
+            current_book_size += order['size']
+            if current_book_size > max_size:
+                buy_price = order['price'] + wallet.product.quote_order_min
+                break
+
+        size = usd_available / buy_price
+        return buy_price, wallet, size, top_sym, std, mu
+
     def place_order_for_top_currencies(self, order_ind=0):
         # Ensure to update portfolio value before running
         usd_available = self.portfolio.get_usd_available()
@@ -458,7 +494,8 @@ class Bot:
         if usd_available > QUOTE_ORDER_MIN:
             print('Evaluating currencies for best buy')
             sorted_syms = self.rank_currencies()
-            buy_price, wallet, size, top_sym, std, mu = self.determine_buy_price(sorted_syms, order_ind, usd_available)
+            buy_price, wallet, size, top_sym, std, mu = self.determine_buy_price_based_on_std(sorted_syms, order_ind, usd_available)
+            # TODO use the buy_price based on the size to determine if a more conservative buy is necessary
             std_coeff = self.settings.read_setting_from_file('std')
 
             # place order and record
