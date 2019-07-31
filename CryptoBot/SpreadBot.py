@@ -505,6 +505,7 @@ class Bot:
 
         # create dictionary for symbols and relevant data
         for sym in self.symbols:
+            print(sym)
             buy_price, wallet, size, std, mu = self.determine_trade_price(sym, usd_available, side='buy')
             sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell')
             spread = ( sell_price - buy_price ) / buy_price
@@ -512,18 +513,19 @@ class Bot:
 
         # sort (by mean first then standard deviation)
         sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
-        top_sym = sorted_syms[0][0]
-        spread = sorted_syms[1][0]
-        buy_price = sorted_syms[1][1]
-        wallet = sorted_syms[1][2]
-        std = sorted_syms[1][3]
-        mu = sorted_syms[1][4]
-        size = sorted_syms[1][5]
+        top_sym_data = sorted_syms[0]
+        top_sym = top_sym_data[0]
+        spread = top_sym_data[1][0]
+        buy_price = top_sym_data[1][1]
+        wallet = top_sym_data[1][2]
+        std = top_sym_data[1][3]
+        mu = top_sym_data[1][4]
+        size = top_sym_data[1][5]
 
         if spread > 0.004:
-            return buy_price, wallet, size, top_sym, std, mu
+            return buy_price, wallet, size, top_sym, std, mu, spread
         else:
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
 
     def place_order_for_top_currencies(self, order_ind=0):
         # Ensure to update portfolio value before running
@@ -531,24 +533,28 @@ class Bot:
         usd_hold = self.portfolio.get_usd_held()
         if usd_available > QUOTE_ORDER_MIN:
             print('Evaluating currencies for best buy')
-            buy_price, wallet, size, top_sym, std, mu = self.rank_currencies(usd_available)
+            buy_price, wallet, size, top_sym, std, mu, spread = self.rank_currencies(usd_available)
             # TODO use the buy_price based on the size to determine if a more conservative buy is necessary
-            # TODO add functionality to handle None buy_prie
-            std_coeff = self.settings.read_setting_from_file('std')
-
-            # place order and record
-            print('placing order\n' + 'price: ' + num2str(buy_price, wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(size, 3) + '\n')
-            order_id = self.place_order(buy_price, 'buy', size, top_sym)
-            if order_id is None:
-                print('Order rejected\n')
+            if buy_price is None:
+                print('No viable trades found')
             else:
-                print('Order placed!\n')
-                self.update_spread_prices_limits(buy_price, 'buy', top_sym)
-                spread = 1 + (2 * std_coeff * std) + mu #self.settings.read_setting_from_file('spread')
-                if spread < 1.004:
-                    spread = 1.004
-                self.settings.write_setting_to_file('spread', spread)
-                self.update_spread_prices_limits(spread * buy_price, 'sell', top_sym)
+                std_coeff = self.settings.read_setting_from_file('std')
+                # recalculate prices for most recent figure
+                buy_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='buy')
+                sell_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='sell')
+                # place order and record
+                print('placing order\n' + 'price: ' + num2str(buy_price, wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(size, 3) + '\n')
+                order_id = self.place_order(buy_price, 'buy', size, top_sym)
+                if order_id is None:
+                    print('Order rejected\n')
+                else:
+                    print('Order placed!\n')
+                    self.update_spread_prices_limits(buy_price, 'buy', top_sym)
+                    if spread < 1.004:
+                        spread = 1.004
+                        sell_price = spread * buy_price
+                    self.settings.write_setting_to_file('spread', spread)
+                    self.update_spread_prices_limits(sell_price, 'sell', top_sym)
         elif usd_hold > QUOTE_ORDER_MIN:
             print('Evaluating orders for out of bound buy')
             sorted_syms = self.rank_currencies()
