@@ -1,18 +1,3 @@
-# Format for fills
-# [{
-#     "time": "2014-11-07T22:19:28.578544Z",
-#     "trade_id": 74,
-#     "price": "10.00000000",
-#     "size": "0.01000000",
-#     "side": "buy"
-# }, {
-#     "time": "2014-11-07T01:08:43.642366Z",
-#     "trade_id": 73,
-#     "price": "100.00000000",
-#     "size": "0.01000000",
-#     "side": "sell"
-# }]
-
 import matplotlib
 matplotlib.use('Agg')
 import sys
@@ -32,17 +17,17 @@ from CryptoBot.CryptoBot_Shared_Functions import current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
 import re
 
-SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt'
-SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
-# SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
-# SAVED_DATA_FILE_PATH = r'/Test' + str(current_est_time().date()).replace('-', '')
+# SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt'
+# SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
+SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
+SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
-else:
-    override_saved_data = input('Override data in current saved data folder? (yes/no)' )
-    if override_saved_data != 'yes': # TODO change to allow inclusion of a new file name (also print old one)
-        raise ValueError('Folder for saved plots already taken')
+# else:
+#     override_saved_data = input('Override data in current saved data folder? (yes/no)' )
+#     if override_saved_data != 'yes': # TODO change to allow inclusion of a new file name (also print old one)
+#         raise ValueError('Folder for saved plots already taken')
 
 
 EXCHANGE_CONSTANTS = {'BTC':{'resolution':2, 'base order min':0.001, 'base resolution':8},
@@ -118,7 +103,7 @@ class Product:
 
         return recent_fills
 
-    def get_mean_and_std_of_price_changes(self):
+    def get_mean_and_std(self):
         fills = self.get_recent_fills()
         fill_arr = np.array([float(fill['price']) for fill in fills])
         fill_diff = np.diff(fill_arr)
@@ -129,15 +114,6 @@ class Product:
         mu = np.mean(fill_diff_ratio)
 
         return mu, std, fill_diff_ratio[-1]
-
-    def get_mean_and_std_of_fill_sizes(self, side):
-        fills = self.get_recent_fills()
-        size_arr = np.array([float(fill['price'])*(fill['side']==side) for fill in fills])
-        size_arr = size_arr[size_arr > 0]
-        std = np.std(size_arr)
-        mu = np.mean(size_arr)
-
-        return mu, std
 
     def place_order(self, price, side, size, coeff=1, post_only=True):
         # TODO ensure it never rounds up to the point that the order is larger than available
@@ -233,7 +209,7 @@ class LiveRunSettings:
             if setting_name in content:
                 setting_str = self.reg_ex.search(content.replace(' ', ''))
                 if setting_str is not None:
-                    setting_value = float(setting_str[0]) # TODO investigate how to get this line to work on python 3.5 (for AWS)
+                    setting_value = float(setting_str.group(0))
 
         return setting_value
 
@@ -333,7 +309,7 @@ class CombinedPortfolio:
         wallets_data = wallet.product.auth_client.get_accounts()
 
         for sym in self.symbols:
-            self.wallets[sym].update_value(data=wallets_data)
+            self.wallets[sym].update_value(data=wallets_data) # TODO investigate why two wallet objects will affect each other
 
 
 class Bot:
@@ -375,7 +351,7 @@ class Bot:
 
         # create dictionary for symbols and relevant data
         for sym in self.symbols:
-            mu, std, last_diff = self.portfolio.wallets[sym].product.get_mean_and_std_of_price_changes()
+            mu, std, last_diff = self.portfolio.wallets[sym].product.get_mean_and_std()
             ranking_dict[sym] = (mu, std, last_diff)
 
         # sort (by mean first then standard deviation)
@@ -400,12 +376,12 @@ class Bot:
         for order in orders:
             if order['side'] != side:
                 continue
-            if coeff * float(order['price']) < coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res):
+            if coeff * float(order['price']) > coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res):
                 keys_to_delete.append(order['id'])
 
         for id in keys_to_delete:
             num_cancelled_orders += 1
-            print('Cancelled ' + num2str(num_cancelled_orders, 1) + ' out of bounds ' + sym + ' ' + side + ' orders')
+            print('Cancelled ' + num2str(num_cancelled_orders, 1) + ' out of bounds ' + sym + ' ' + side + ' orders' + '\n')
             self.portfolio.remove_order(id)
 
     def cancle_out_of_bound_buy_orders(self, sorted_syms):
