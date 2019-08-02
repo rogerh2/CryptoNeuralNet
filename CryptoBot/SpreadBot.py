@@ -35,7 +35,7 @@ import re
 SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
 # SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
-# SAVED_DATA_FILE_PATH = r'/Test' + str(current_est_time().date()).replace('-', '')
+# SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -244,7 +244,7 @@ class LiveRunSettings:
             if setting_name in content:
                 setting_str = self.reg_ex.search(content.replace(' ', ''))
                 if setting_str is not None:
-                    setting_value = float(setting_str[0]) # TODO investigate how to get this line to work on python 3.5 (for AWS)
+                    setting_value = float(setting_str.group(0)) # TODO investigate how to get this line to work on python 3.5 (for AWS)
 
         return setting_value
 
@@ -396,7 +396,7 @@ class Bot:
         for order in orders:
             if order['side'] != side:
                 continue
-            if coeff * float(order['price']) < coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res):
+            if coeff * float(order['price']) > coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res):
                 keys_to_delete.append(order['id'])
 
         for id in keys_to_delete:
@@ -404,18 +404,16 @@ class Bot:
             print('Cancelled ' + num2str(num_cancelled_orders, 1) + ' out of bounds ' + sym + ' ' + side + ' orders')
             self.portfolio.remove_order(id)
 
-    def cancle_out_of_bound_buy_orders(self, sorted_syms):
+    def cancle_out_of_bound_buy_orders(self):
         # Ensure to update portfolio value before running
-        for currency_data in sorted_syms:
+        for sym in self.symbols:
             # Find price 2 standard deviations below the change (unlikely buy price to hit)
-            sym = currency_data[0]
-            mu = currency_data[1][0]
-            std = currency_data[1][1]
-            last_diff = currency_data[1][2]
+            wallet = self.portfolio.wallets[sym]
+            mu, std, last_diff = wallet.product.get_mean_and_std_of_price_changes()
             std_coeff = self.settings.read_setting_from_file('std')
             std_coeff = 1 - (3 * std_coeff * std) + mu * (mu < 0) # only factor in the mean when it gives a wider margin (make it harder to cancel an order due to short changes)
             wallet = self.portfolio.wallets[sym]
-            if last_diff > (std + mu):
+            if np.abs(last_diff) > (std + mu):
                 # Don't cancel orders due to one big jump
                 continue
             current_price = wallet.product.get_top_order('bids')
@@ -543,6 +541,7 @@ class Bot:
                 buy_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='buy')
                 sell_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='sell')
                 # place order and record
+                print(top_sym + ' Chosen as best buy')
                 print('placing order\n' + 'price: ' + num2str(buy_price, wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(size, 3) + '\n')
                 order_id = self.place_order(buy_price, 'buy', size, top_sym)
                 if order_id is None:
@@ -557,8 +556,7 @@ class Bot:
                     self.update_spread_prices_limits(sell_price, 'sell', top_sym)
         elif usd_hold > QUOTE_ORDER_MIN:
             print('Evaluating orders for out of bound buy')
-            sorted_syms = self.rank_currencies()
-            self.cancle_out_of_bound_buy_orders(sorted_syms)
+            self.cancle_out_of_bound_buy_orders()
 
 
     def place_limit_sells(self):
