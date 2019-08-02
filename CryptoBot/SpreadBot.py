@@ -30,6 +30,7 @@ from time import time
 from CryptoBot.CryptoBot_Shared_Functions import num2str
 from CryptoBot.CryptoBot_Shared_Functions import current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
+from CryptoBot.CryptoBot_Shared_Functions import str_list_to_timestamp
 import re
 
 SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt'
@@ -55,7 +56,7 @@ EXCHANGE_CONSTANTS = {'BTC':{'resolution':2, 'base order min':0.001, 'base resol
                       'ETC':{'resolution':3, 'base order min':0.1, 'base resolution':8},
                       'LINK':{'resolution':5, 'base order min':1, 'base resolution':0},
                       'REP':{'resolution':2, 'base order min':0.1, 'base resolution':6},
-                      'ZRX':{'resolution':6, 'base order min':1, 'base resolution':6}
+                      'ZRX':{'resolution':6, 'base order min':1, 'base resolution':5}
                       }
 
 QUOTE_ORDER_MIN = 10
@@ -149,6 +150,27 @@ class Product:
         mu = np.mean(size_arr)
 
         return mu, std, size_arr[-1]
+
+    def get_num_price_momentum_switches_per_time(self, t_interval=15*60):
+        fills, _ = self.get_recent_fills()
+        fill_ts_ls = np.array(str_list_to_timestamp([fill['time'] for fill in fills]))
+        num_trades_per_t = []
+        num_trades = 0
+        ts0 = fill_ts_ls[0]
+
+        for ts in fill_ts_ls:
+            t = ts - ts0
+            if t >= t_interval:
+                num_trades_per_t.append(num_trades)
+                ts0 = ts
+                num_trades = 0
+            else:
+                num_trades += 1
+
+        return np.mean(np.array(num_trades_per_t))
+
+
+
 
     def place_order(self, price, side, size, coeff=1, post_only=True):
         # TODO ensure it never rounds up to the point that the order is larger than available
@@ -458,13 +480,13 @@ class Bot:
 
         return buy_price, wallet, size, std, mu
 
-    def determine_price_based_on_fill_size(self, sym, usd_available, side):
+    def determine_price_based_on_fill_size(self, sym, usd_available, side, std_mult=1):
         # initialize variables
         book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
 
         wallet = self.portfolio.wallets[sym]
         mu, std, existing_fill_size = wallet.product.get_mean_and_std_of_fill_sizes(side)
-        std_coeff = self.settings.read_setting_from_file('std')
+        std_coeff = std_mult * self.settings.read_setting_from_file('std')
         if side == 'sell':
             std_coeff = 2 * std_coeff
 
@@ -506,21 +528,21 @@ class Bot:
             print(sym)
             buy_price, wallet, size, std, mu = self.determine_trade_price(sym, usd_available, side='buy')
             sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell')
-            spread = ( sell_price - buy_price ) / buy_price
-            ranking_dict[sym] = (spread, buy_price, wallet, std, mu, size)
+            spread = 1 + ( sell_price - buy_price ) / buy_price
+            ranking_dict[sym] = (mu, buy_price, wallet, std, spread, size)
 
         # sort (by mean first then standard deviation)
         sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
         top_sym_data = sorted_syms[0]
         top_sym = top_sym_data[0]
-        spread = top_sym_data[1][0]
+        spread = top_sym_data[1][4]
         buy_price = top_sym_data[1][1]
         wallet = top_sym_data[1][2]
         std = top_sym_data[1][3]
-        mu = top_sym_data[1][4]
+        mu = top_sym_data[1][0]
         size = top_sym_data[1][5]
 
-        if spread > 0.004:
+        if spread > 1.004:
             return buy_price, wallet, size, top_sym, std, mu, spread
         else:
             return None, None, None, None, None, None, None
@@ -540,6 +562,7 @@ class Bot:
                 # recalculate prices for most recent figure
                 buy_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='buy')
                 sell_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='sell')
+                spread = 1 + ( sell_price - buy_price ) / buy_price
                 # place order and record
                 print(top_sym + ' Chosen as best buy')
                 print('placing order\n' + 'price: ' + num2str(buy_price, wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(size, 3) + '\n')
@@ -565,7 +588,17 @@ class Bot:
             # Get relevant variables
             wallet = self.portfolio.wallets[sym]
             limit_price = self.spread_price_limits[sym]['sell']
+            alt_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
             available = wallet.get_amnt_available('sell')
+
+            if limit_price is None:
+                continue
+
+            if alt_price < limit_price: # cancel sell orders that have a large resistance
+                self.update_spread_prices_limits(alt_price, 'sell', sym)
+                self.cancel_out_of_bound_orders( 'sell', alt_price, sym)
+                available = wallet.get_amnt_available('sell')
+                limit_price = alt_price
 
             # Filter unnecessary currencies
             if available < wallet.product.base_order_min:

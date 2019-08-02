@@ -33,6 +33,13 @@ def convert_time_to_uct(naive_date_from, tz_str=None):
     utc_date = sys_tz_date_from.astimezone(utc)
     return utc_date
 
+def str_list_to_timestamp(datetime_str_list, fmt='%Y-%m-%dT%H:%M:%S.%fZ'):
+    utc = pytz.UTC
+    localized_datetime_objects = [utc.localize(datetime.strptime(str, fmt)) for str in datetime_str_list]
+    time_stamps = np.array([dt.timestamp() for dt in localized_datetime_objects])
+
+    return time_stamps
+
 def progress_printer(total_len, current_ind, start_ind=0, digit_resolution=1, print_resolution=None, tsk='Task', suppress_output=False):
 
     if print_resolution is None:
