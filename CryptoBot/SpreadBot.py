@@ -153,7 +153,8 @@ class Product:
 
     def get_num_price_momentum_switches_per_time(self, t_interval=15*60):
         fills, _ = self.get_recent_fills()
-        fill_ts_ls = np.array(str_list_to_timestamp([fill['time'] for fill in fills]))
+        fill_ts_ls_r = np.array(str_list_to_timestamp([fill['time'] for fill in fills]))
+        fill_ts_ls = np.flip(fill_ts_ls_r, axis=0)
         num_trades_per_t = []
         num_trades = 0
         ts0 = fill_ts_ls[0]
@@ -373,7 +374,7 @@ class Bot:
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
     spread = 1.01
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'REP', 'ZRX'), is_sandbox_api=False):
+    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX'), is_sandbox_api=False):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         current_offset = self.settings.read_setting_from_file('portfolio value offset')
         self.portfolio = CombinedPortfolio(api_key, secret_key, passphrase, syms, is_sandbox=is_sandbox_api, offset_value=current_offset)
@@ -527,20 +528,22 @@ class Bot:
         for sym in self.symbols:
             print(sym)
             buy_price, wallet, size, std, mu = self.determine_trade_price(sym, usd_available, side='buy')
+            avg_num_trades = wallet.product.get_num_price_momentum_switches_per_time()
+            weighted_mu = avg_num_trades * mu
             sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell')
             spread = 1 + ( sell_price - buy_price ) / buy_price
-            ranking_dict[sym] = (mu, buy_price, wallet, std, spread, size)
+            ranking_dict[sym] = (weighted_mu, mu, buy_price, wallet, std, spread, size)
 
         # sort (by mean first then standard deviation)
         sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
         top_sym_data = sorted_syms[0]
         top_sym = top_sym_data[0]
-        spread = top_sym_data[1][4]
-        buy_price = top_sym_data[1][1]
-        wallet = top_sym_data[1][2]
-        std = top_sym_data[1][3]
-        mu = top_sym_data[1][0]
-        size = top_sym_data[1][5]
+        spread = top_sym_data[1][5]
+        buy_price = top_sym_data[1][2]
+        wallet = top_sym_data[1][3]
+        std = top_sym_data[1][4]
+        mu = top_sym_data[1][1]
+        size = top_sym_data[1][6]
 
         if spread > 1.004:
             return buy_price, wallet, size, top_sym, std, mu, spread
