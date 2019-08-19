@@ -7,7 +7,7 @@ from time import sleep
 import traceback
 
 
-def num2str(num, digits):
+def num2str(num, digits=2):
     # This function formats numbers as strings with the desired number of digits
     fmt_str = "{:0." + str(digits) + "f}"
     num_str = fmt_str.format(num)
