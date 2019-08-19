@@ -55,10 +55,11 @@ EXCHANGE_CONSTANTS = {'BTC':{'resolution':2, 'base order min':0.001, 'base resol
                       'EOS':{'resolution':3, 'base order min':0.1, 'base resolution':1},
                       'XLM':{'resolution':6, 'base order min':1, 'base resolution':0},
                       'ETC':{'resolution':3, 'base order min':0.1, 'base resolution':8},
-                      'LINK':{'resolution':5, 'base order min':1, 'base resolution':0},
+                      'LINK':{'resolution':5, 'base order min':1, 'base resolution':1},
                       'REP':{'resolution':2, 'base order min':0.1, 'base resolution':6},
                       'ZRX':{'resolution':6, 'base order min':1, 'base resolution':5},
-                      'XTZ':{'resolution':3, 'base order min':1, 'base resolution':0}
+                      'XTZ':{'resolution':3, 'base order min':1, 'base resolution':1},
+                      'ALGO':{'resolution':4, 'base order min':1, 'base resolution':0}
                       }
 
 QUOTE_ORDER_MIN = 10
@@ -527,7 +528,7 @@ class Bot:
         mu, std, existing_fill_size = wallet.product.get_mean_and_std_of_fill_sizes(side)
 
         # Calculate the coefficient used to determine the which multiple of the std to use
-        std_coeff = std_mult * self.settings.read_setting_from_file('std')
+        std_coeff = 2 * std_mult * self.settings.read_setting_from_file('std') # const factor of two due to low spreads
 
         # determine trade price
         current_price = wallet.product.get_top_order(opposing_book_side)
@@ -555,7 +556,7 @@ class Bot:
         _, _, coeff = self.get_side_depedent_vars(side)
         price_p, wallet, size_p, std, mu = self.determine_price_based_on_std(sym, usd_available, side)
         price_s, size_s = self.determine_price_based_on_fill_size(sym, usd_available, side)
-        if coeff * price_p > coeff * price_s: # Always use the more conservative price
+        if coeff * price_p < coeff * price_s: # Always use the more conservative price
             return price_p, wallet, size_p, std, mu
         else:
             return price_s, wallet, size_s, std, mu
@@ -586,7 +587,7 @@ class Bot:
             sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell')
             current_price = wallet.product.get_top_order('bids')
             spread = 1 + ( sell_price - buy_price ) / buy_price
-            rank = mu #( sell_price - current_price ) / current_price
+            rank = mu
             if spread < MIN_SPREAD:
                 rank = -1 # eliminate trades with low spreads
             ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
@@ -672,7 +673,7 @@ class Bot:
         # Ensure to update portfolio value before running
         usd_hold = self.portfolio.get_usd_held()
         usd_available = self.portfolio.get_usd_available()
-        buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False, sym_ind=(0, 1, 2))
+        buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False, sym_ind=(0, 1, 2, 3))
         no_viable_trade = False
 
         # Cancel bad buy orders before continuing
@@ -683,6 +684,7 @@ class Bot:
             self.cancle_out_of_bound_buy_orders(top_syms=top_syms)
             sleep(0.5)
 
+        self.portfolio.update_value()
         # Check available cash after canceling the non_optimal buy orders and place the next order
         full_portfolio_value = self.get_full_portfolio_value()
         num_orders = len(top_syms)
@@ -702,6 +704,7 @@ class Bot:
                     order_size = nominal_order_size
 
                 self.place_order_for_nth_currency(no_viable_trade, top_syms, order_size, n=i)
+                self.portfolio.update_value()
             else:
                 break
 
@@ -718,7 +721,15 @@ class Bot:
 
             if limit_price is None:
                 continue
+            # Filter unnecessary currencies
+            if (available < wallet.product.base_order_min):
+                continue
+            if (available * limit_price < QUOTE_ORDER_MIN):
+                print(
+                    'Cannot sell ' + sym + ' because available is less than minnimum Quote order. Manual sell required')
+                continue
 
+            print('Evaluating sell order for ' + sym)
             # Cancel sell orders that have a large resistance
             if (e_sell_price < limit_price) and (limit_price < bounce_price):
                 print('Initiating market sell because sell price of ' + num2str(limit_price) + ' out of bounds' + '\n')
@@ -733,12 +744,6 @@ class Bot:
                 available = wallet.get_amnt_available('sell')
                 limit_price = bounce_price
 
-            # Filter unnecessary currencies
-            if (available < wallet.product.base_order_min):
-                continue
-            if (available*limit_price < QUOTE_ORDER_MIN):
-                print('Cannot sell ' + sym + ' because available is less than minnimum Quote order. Manual sell required')
-                continue
 
             print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n')
 
