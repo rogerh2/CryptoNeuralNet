@@ -7,10 +7,16 @@ from time import sleep
 import traceback
 
 
-def num2str(num, digits=2):
+def num2str(num, digits=2, round_down=True):
     # This function formats numbers as strings with the desired number of digits
-    fmt_str = "{:0." + str(digits) + "f}"
-    num_str = fmt_str.format(num)
+
+    if round_down:
+        fmt_str = "{:0." + str(digits + 1) + "f}"
+        num_str = fmt_str.format(num)[0:-1]
+    else:
+        fmt_str = "{:0." + str(digits) + "f}"
+        num_str = fmt_str.format(num)
+
 
     return num_str
 

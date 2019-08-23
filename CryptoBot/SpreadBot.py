@@ -68,9 +68,9 @@ class Product:
     orders = {'buy': {}, 'sell': {}}
     order_book = None
 
-    def __init__(self, api_key, secret_key, passphrase, prediction_ticker='ETH', is_sandbox_api=False, auth_client=None, pub_client=None):
+    def __init__(self, api_key, secret_key, passphrase, prediction_ticker='ETH', is_sandbox_api=False, auth_client=None, pub_client=None, base_ticker='USD'):
 
-        self.product_id = prediction_ticker.upper() + '-USD'
+        self.product_id = prediction_ticker.upper() + '-' + base_ticker
         self.usd_decimal_num = EXCHANGE_CONSTANTS[prediction_ticker]['resolution']
         self.usd_res = 10**(-self.usd_decimal_num)
         self.quote_order_min = QUOTE_ORDER_MIN
@@ -111,7 +111,7 @@ class Product:
         return top_order
 
     def get_recent_fills(self, fill_number=1000, return_time=False):
-        if (time() - self.fill_time) > 5:
+        if (time() - self.fill_time) > 7:
             # If fills have not been scraped recently (last 3s) then scrape
             recent_fills = None
             for i in range(0, 10):
@@ -143,13 +143,19 @@ class Product:
             recent_fills = self.all_fills
             filt_fill_ts_ls_r = self.filtered_fill_times
 
+        if filtered_recent_fills is None:
+            return None, None
+
         if return_time:
             return filtered_recent_fills, filt_fill_ts_ls_r
         else:
             return filtered_recent_fills, recent_fills
 
-    def get_num_price_momentum_switches_per_time(self, t_interval=5*60):
+    def get_num_price_momentum_switches_per_time(self, t_interval=15*60):
         fills, fill_ts_ls = self.get_recent_fills(return_time=True)
+        if fills is None:
+            return None
+
         num_trades_per_t = []
         num_trades = 0
         ts0 = fill_ts_ls[0]
@@ -175,6 +181,8 @@ class Product:
 
     def adjust_fill_data(self, mu, std, fill_diff_ratio):
         avg_num_trades = self.get_num_price_momentum_switches_per_time()
+        if avg_num_trades is None:
+            return None, None, None
         weighted_mu = avg_num_trades * mu
         weighted_std = np.sqrt(avg_num_trades) * std
         if avg_num_trades < 1:
@@ -186,6 +194,8 @@ class Product:
 
     def get_mean_and_std_of_price_changes(self):
         fills, _ = self.get_recent_fills()
+        if fills is None:
+            return None, None, None
         fill_arr = np.array([float(fill['price']) for fill in fills])
         fill_diff = np.diff(fill_arr)
         fill_diff_mask = np.abs(fill_diff) > self.usd_res #ignore small bounces between the minimum resolution
@@ -201,6 +211,8 @@ class Product:
 
     def get_mean_and_std_of_fill_sizes(self, side):
         _, fills = self.get_recent_fills()
+        if fills is None:
+            return None, None, None
         size_ls = []
         current_size = 0
         # This loop aggregates over moves in a single direction to match the price based variables
@@ -260,10 +272,11 @@ class Wallet:
     # USD is total value stored in USD, SYM is total value stored in crypto, USD Hold is total value in bids, and SYM
     # Hold is total value in asks
 
-    def __init__(self, api_key, secret_key, passphrase, sym='ETH', is_sandbox_api=False, auth_client=None, pub_client=None):
-        self.product = Product(api_key, secret_key, passphrase, prediction_ticker=sym, is_sandbox_api=is_sandbox_api, auth_client=auth_client, pub_client=pub_client)
+    def __init__(self, api_key, secret_key, passphrase, sym='ETH', base='USD', is_sandbox_api=False, auth_client=None, pub_client=None):
+        self.product = Product(api_key, secret_key, passphrase, prediction_ticker=sym, base_ticker=base, is_sandbox_api=is_sandbox_api, auth_client=auth_client, pub_client=pub_client)
         self.ticker = sym
         self.value = {'USD': 15, 'SYM': 0, 'USD Hold': 0, 'SYM Hold': 0}
+        self.base = base
 
     def get_wallet_values(self, currency, data):
         # Data should come from self.auth_client.get_accounts()
@@ -278,7 +291,7 @@ class Wallet:
         if data is None:
             data = self.product.auth_client.get_accounts()
         sleep(0.5)
-        usd_balance, usd_hold_balance = self.get_wallet_values('USD', data)
+        usd_balance, usd_hold_balance = self.get_wallet_values(self.base, data)
         sym_balance, sym_hold_balance = self.get_wallet_values(self.ticker, data)
         usd_float_balance = float(usd_balance)
         if self.offset_value is None:
@@ -342,7 +355,7 @@ class LiveRunSettings:
 
 class CombinedPortfolio:
 
-    def __init__(self, api_key, secret_key, passphrase, sym_list, offset_value=70, is_sandbox=False):
+    def __init__(self, api_key, secret_key, passphrase, sym_list, base_currency='USD', offset_value=70, is_sandbox=False):
         self.wallets = {}
 
         if is_sandbox:
@@ -357,8 +370,16 @@ class CombinedPortfolio:
 
         self.auth = auth_client
 
-        for symbol in sym_list:
-            self.wallets[symbol] = Wallet(api_key, secret_key, passphrase, sym=symbol, auth_client=auth_client, pub_client=pub_client)
+        for product_id in sym_list:
+            # The base can be put in the symbols in the format Quote-Base for use with multiple currencies
+            if base_currency is None:
+                product_dat = product_id.split('-')
+                symbol = product_dat[0]
+                base = product_dat[1]
+            else:
+                symbol = product_id
+                base = base_currency
+            self.wallets[symbol] = Wallet(api_key, secret_key, passphrase, base=base, sym=symbol, auth_client=auth_client, pub_client=pub_client)
             self.wallets[symbol].offset_value = offset_value
 
         self.symbols = sym_list
@@ -382,6 +403,8 @@ class CombinedPortfolio:
         # update the last recorded price and add to get full value
         for sym in self.wallets.keys():
             # print('getting value for ' + sym)
+            if ('-' in sym) and ('USD' not in sym):
+                continue
             wallet = self.wallets[sym]
             current_price = {'asks':None, 'bids':None}
 
@@ -492,13 +515,18 @@ class Bot:
 
         return book_side, opposing_book_side, coeff
 
-    def determine_price_based_on_std(self, sym, usd_available, side, std_mult=1):
+class SpreadBot(Bot):
+
+    def determine_price_based_on_std(self, sym, usd_available, side, std_mult=1.0, mu_mult=1.0):
 
         # initialize variables
         book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
 
         wallet = self.portfolio.wallets[sym]
         mu, std, last_diff = wallet.product.get_mean_and_std_of_price_changes()
+        if mu is None:
+            return None, None, None, None, None
+        mu *= mu_mult
 
         # Calculate the coefficient used to determine the which multiple of the std to use
         std_coeff = std_mult * self.settings.read_setting_from_file('std')
@@ -521,14 +549,15 @@ class Bot:
 
         return buy_price, wallet, size, std, mu
 
-    def determine_price_based_on_fill_size(self, sym, usd_available, side, std_mult=1):
+    def determine_price_based_on_fill_size(self, sym, usd_available, side, std_mult=1.0, mu_mult=1.0):
         # initialize variables
         book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
         wallet = self.portfolio.wallets[sym]
         mu, std, existing_fill_size = wallet.product.get_mean_and_std_of_fill_sizes(side)
+        mu *= mu_mult
 
         # Calculate the coefficient used to determine the which multiple of the std to use
-        std_coeff = 2 * std_mult * self.settings.read_setting_from_file('std') # const factor of two due to low spreads
+        std_coeff = std_mult * self.settings.read_setting_from_file('std') # const factor of two due to low spreads
 
         # determine trade price
         current_price = wallet.product.get_top_order(opposing_book_side)
@@ -552,11 +581,11 @@ class Bot:
 
         return buy_price, size
 
-    def determine_trade_price(self, sym, usd_available, side):
+    def determine_trade_price(self, sym, usd_available, side, mean_multiplier=1):
         _, _, coeff = self.get_side_depedent_vars(side)
-        price_p, wallet, size_p, std, mu = self.determine_price_based_on_std(sym, usd_available, side)
-        price_s, size_s = self.determine_price_based_on_fill_size(sym, usd_available, side)
-        if coeff * price_p < coeff * price_s: # Always use the more conservative price
+        price_p, wallet, size_p, std, mu = self.determine_price_based_on_std(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=0.5)
+        price_s, size_s = self.determine_price_based_on_fill_size(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=0.5)
+        if coeff * price_p > coeff * price_s: # Always use the more conservative price
             return price_p, wallet, size_p, std, mu
         else:
             return price_s, wallet, size_s, std, mu
@@ -570,6 +599,8 @@ class Bot:
             minimum_buy_price, _, _, std, mu = self.determine_trade_price(sym, 11, 'buy')
 
             # std_coeff = 1 - (3 * std_coeff * std) + mu * (mu < 0) # only factor in the mean when it gives a wider margin (make it harder to cancel an order due to short changes)
+            if mu is None:
+                self.cancel_out_of_bound_orders('buy', 0, sym)
             if (np.abs(last_diff) > (std + mu)) and (sym in top_syms):
                 # Don't cancel orders due to one big jump, but do cancel orders that are not first choice
                 continue
@@ -584,10 +615,12 @@ class Bot:
             if print_sym:
                 print(sym)
             buy_price, wallet, size, std, mu = self.determine_trade_price(sym, usd_available, side='buy')
-            sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell')
+            if buy_price is None:
+                continue
+            sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell', mean_multiplier=2) # Use mean_multiplier of 2 to account for movement after the buy
             current_price = wallet.product.get_top_order('bids')
             spread = 1 + ( sell_price - buy_price ) / buy_price
-            rank = mu
+            rank = (sell_price - current_price) / buy_price
             if spread < MIN_SPREAD:
                 rank = -1 # eliminate trades with low spreads
             ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
@@ -640,40 +673,30 @@ class Bot:
         else:
             return None, None, None, None, None, None, None
 
-    def place_order_for_nth_currency(self, no_viable_trade, top_syms, usd_available, n=0):
-        print('Evaluating currencies for best buy')
-        if no_viable_trade:
-            print('No viable trades found')
+    def place_order_for_nth_currency(self, buy_price, sell_price, wallet, size, std, mu, top_sym):
+        spread = 1 + (sell_price - buy_price) / buy_price
+        # place order and record
+        print('\n' + top_sym + ' Chosen as best buy')
+        print('placing order\n' + 'price: ' + num2str(buy_price,
+                                                      wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
+            size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 6) + '\n')
+        order_id = self.place_order(buy_price, 'buy', size, top_sym, post_only=False)
+        if order_id is None:
+            print('Buy Order rejected\n')
         else:
-            top_sym = top_syms[n]
-            buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, usd_available, side='buy')
-            sell_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='sell')
-            # recalculate prices for most recent figure
-            buy_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='buy')
-            sell_price, _, _, _, _ = self.determine_trade_price(top_sym, usd_available, side='sell')
-            spread = 1 + (sell_price - buy_price) / buy_price
-            # place order and record
-            print('\n' + top_sym + ' Chosen as best buy')
-            print('placing order\n' + 'price: ' + num2str(buy_price,
-                                                          wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
-                size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 6) + '\n')
-            order_id = self.place_order(buy_price, 'buy', size, top_sym, post_only=False)
-            if order_id is None:
-                print('Buy Order rejected\n')
-            else:
-                print('Buy Order placed!\n')
-                self.update_spread_prices_limits(buy_price, 'buy', top_sym)
-                if spread < MIN_SPREAD:
-                    spread = MIN_SPREAD
-                    sell_price = spread * buy_price
-                self.settings.write_setting_to_file('spread', spread)
-                self.update_spread_prices_limits(sell_price, 'sell', top_sym)
+            print('Buy Order placed!\n')
+            self.update_spread_prices_limits(buy_price, 'buy', top_sym)
+            if spread < MIN_SPREAD:
+                spread = MIN_SPREAD
+                sell_price = spread * buy_price
+            self.settings.write_setting_to_file('spread', spread)
+            self.update_spread_prices_limits(sell_price, 'sell', top_sym)
 
     def place_order_for_top_currencies(self):
         # Ensure to update portfolio value before running
         usd_hold = self.portfolio.get_usd_held()
         usd_available = self.portfolio.get_usd_available()
-        buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False, sym_ind=(0, 1, 2, 3))
+        buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False, sym_ind=(0, 1, 2))
         no_viable_trade = False
 
         # Cancel bad buy orders before continuing
@@ -692,6 +715,8 @@ class Bot:
             i = num_orders - ind
             usd_available = self.portfolio.get_usd_available()
             if (usd_available > QUOTE_ORDER_MIN):
+
+                # Determine order size
                 nominal_order_size = full_portfolio_value / num_orders
                 if nominal_order_size < QUOTE_ORDER_MIN:
                     # never try to place an order smalle than the minimum
@@ -703,8 +728,35 @@ class Bot:
                 else:
                     order_size = nominal_order_size
 
-                self.place_order_for_nth_currency(no_viable_trade, top_syms, order_size, n=i)
-                self.portfolio.update_value()
+                print('Evaluating currencies for best buy')
+                # Determine order properties
+                if no_viable_trade:
+                    print('No viable trades found')
+                else:
+                    top_sym = top_syms[i]
+                    buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
+                    sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
+                    if buy_price is None:
+                        continue
+
+                    existing_size = (wallet.value['SYM'])
+                    orders = list(self.portfolio.wallets[top_sym].product.auth_client.get_orders(
+                        self.portfolio.wallets[top_sym].product.product_id))
+                    for order in orders:
+                        if order['side'] == 'buy':
+                            existing_size += float(order['size'])
+
+                    amnt_held = existing_size * buy_price
+
+                    # Scale size based on existing holdings
+                    if amnt_held <= (order_size - QUOTE_ORDER_MIN):
+                        size -= existing_size
+                    else:
+                        continue
+
+                    # Place order
+                    self.place_order_for_nth_currency(buy_price, sell_price, wallet, size, std, mu, top_sym)
+                    self.portfolio.update_value()
             else:
                 break
 
@@ -714,14 +766,16 @@ class Bot:
             # Get relevant variables
             wallet = self.portfolio.wallets[sym]
             limit_price = self.spread_price_limits[sym]['sell']
-            bounce_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=6)
-            e_sell_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=4)
+            cutoff_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
+            e_cutoff_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell', std_mult=3)
             available = wallet.get_amnt_available('sell')
-            alt_price = wallet.product.get_top_order('bids')
 
             if limit_price is None:
                 continue
+
             # Filter unnecessary currencies
+            if limit_price > e_cutoff_price:
+                available = wallet.value['SYM']
             if (available < wallet.product.base_order_min):
                 continue
             if (available * limit_price < QUOTE_ORDER_MIN):
@@ -731,18 +785,13 @@ class Bot:
 
             print('Evaluating sell order for ' + sym)
             # Cancel sell orders that have a large resistance
-            if (e_sell_price < limit_price) and (limit_price < bounce_price):
-                print('Initiating market sell because sell price of ' + num2str(limit_price) + ' out of bounds' + '\n')
+            if (limit_price > cutoff_price):
+                alt_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=2)
+                print('Reducing sell price because sell price of ' + num2str(limit_price) + ' out of bounds' + '\n')
                 self.update_spread_prices_limits(alt_price, 'sell', sym)
-                self.cancel_out_of_bound_orders( 'sell', alt_price, sym)
+                self.cancel_out_of_bound_orders('sell', alt_price, sym)
                 available = wallet.get_amnt_available('sell')
                 limit_price = alt_price
-            elif (limit_price > bounce_price):
-                print('Reducing sell price because sell price of ' + num2str(limit_price) + ' out of bounds' + '\n')
-                self.update_spread_prices_limits(bounce_price, 'sell', sym)
-                self.cancel_out_of_bound_orders('sell', bounce_price, sym)
-                available = wallet.get_amnt_available('sell')
-                limit_price = bounce_price
 
 
             print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n')
@@ -855,12 +904,12 @@ def run_bot():
 
     # Setup initial variables
     print('Initializing bot')
-    bot = Bot(api_input, secret_input, passphrase_input)
+    bot = SpreadBot(api_input, secret_input, passphrase_input)
     bot.portfolio.update_value()
     print('Initializing portfolio tracking')
     portfolio_tracker = PortfolioTracker(bot.portfolio)
     portfolio_value = portfolio_tracker.initial_value
-    print('Bot starting value ' + num2str(portfolio_value, 2))
+    print('SpreadBot starting value ' + num2str(portfolio_value, 2))
 
     sleep(1)
     last_check = 0
