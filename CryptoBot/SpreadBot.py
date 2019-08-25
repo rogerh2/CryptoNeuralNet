@@ -31,6 +31,7 @@ from CryptoBot.CryptoBot_Shared_Functions import num2str
 from CryptoBot.CryptoBot_Shared_Functions import current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
 from CryptoBot.CryptoBot_Shared_Functions import str_list_to_timestamp
+from CryptoBot.constants import EXCHANGE_CONSTANTS
 import re
 
 # SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt'
@@ -46,22 +47,6 @@ if not os.path.exists(SAVED_DATA_FILE_PATH):
 #     if override_saved_data != 'yes': # TODO change to allow inclusion of a new file name (also print old one)
 #         raise ValueError('Folder for saved plots already taken')
 
-
-EXCHANGE_CONSTANTS = {'BTC':{'resolution':2, 'base order min':0.001, 'base resolution':8},
-                      'ETH':{'resolution':2, 'base order min':0.01, 'base resolution':8},
-                      'XRP':{'resolution':4, 'base order min':1, 'base resolution':0},
-                      'LTC':{'resolution':2, 'base order min':0.1, 'base resolution':8},
-                      'BCH':{'resolution':2, 'base order min':0.01, 'base resolution':8},
-                      'EOS':{'resolution':3, 'base order min':0.1, 'base resolution':1},
-                      'XLM':{'resolution':6, 'base order min':1, 'base resolution':0},
-                      'ETC':{'resolution':3, 'base order min':0.1, 'base resolution':8},
-                      'LINK':{'resolution':5, 'base order min':1, 'base resolution':1},
-                      'REP':{'resolution':2, 'base order min':0.1, 'base resolution':6},
-                      'ZRX':{'resolution':6, 'base order min':1, 'base resolution':5},
-                      'XTZ':{'resolution':3, 'base order min':1, 'base resolution':1},
-                      'ALGO':{'resolution':4, 'base order min':1, 'base resolution':0}
-                      }
-
 QUOTE_ORDER_MIN = 10
 
 class Product:
@@ -71,6 +56,9 @@ class Product:
     def __init__(self, api_key, secret_key, passphrase, prediction_ticker='ETH', is_sandbox_api=False, auth_client=None, pub_client=None, base_ticker='USD'):
 
         self.product_id = prediction_ticker.upper() + '-' + base_ticker
+        if not (base_ticker == 'USD'):
+            prediction_ticker = self.product_id
+
         self.usd_decimal_num = EXCHANGE_CONSTANTS[prediction_ticker]['resolution']
         self.usd_res = 10**(-self.usd_decimal_num)
         self.quote_order_min = QUOTE_ORDER_MIN
@@ -372,15 +360,17 @@ class CombinedPortfolio:
 
         for product_id in sym_list:
             # The base can be put in the symbols in the format Quote-Base for use with multiple currencies
-            if base_currency is None:
+            if (type(base_currency) is list) or (type(base_currency) is tuple):
                 product_dat = product_id.split('-')
                 symbol = product_dat[0]
                 base = product_dat[1]
+                if base not in base_currency:
+                    continue
             else:
                 symbol = product_id
                 base = base_currency
-            self.wallets[symbol] = Wallet(api_key, secret_key, passphrase, base=base, sym=symbol, auth_client=auth_client, pub_client=pub_client)
-            self.wallets[symbol].offset_value = offset_value
+            self.wallets[product_id] = Wallet(api_key, secret_key, passphrase, base=base, sym=symbol, auth_client=auth_client, pub_client=pub_client)
+            self.wallets[product_id].offset_value = offset_value
 
         self.symbols = sym_list
 
@@ -450,10 +440,10 @@ class Bot:
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
     spread = 1.01
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX', 'XTZ'), is_sandbox_api=False):
+    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX', 'XTZ'), is_sandbox_api=False, base_currency='USD'):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         current_offset = self.settings.read_setting_from_file('portfolio value offset')
-        self.portfolio = CombinedPortfolio(api_key, secret_key, passphrase, syms, is_sandbox=is_sandbox_api, offset_value=current_offset)
+        self.portfolio = CombinedPortfolio(api_key, secret_key, passphrase, syms, is_sandbox=is_sandbox_api, offset_value=current_offset, base_currency=base_currency)
         self.symbols = syms
         self.current_price = {}
         self.spread_price_limits = {}
