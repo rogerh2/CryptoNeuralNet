@@ -48,6 +48,8 @@ if not os.path.exists(SAVED_DATA_FILE_PATH):
 #         raise ValueError('Folder for saved plots already taken')
 
 QUOTE_ORDER_MIN = 10
+PUBLIC_SLEEP = 0.2
+PRIVATE_SLEEP = 0.1
 
 class Product:
     orders = {'buy': {}, 'sell': {}}
@@ -83,7 +85,7 @@ class Product:
 
     def get_current_book(self):
         order_book = self.pub_client.get_product_order_book(self.product_id, level=2)
-        sleep(0.5)
+        sleep(PUBLIC_SLEEP)
         ts = time()
         if not ('bids' in order_book.keys()):
             print('Get order book error, the returned dict is: ' + str(order_book))
@@ -104,7 +106,7 @@ class Product:
             recent_fills = None
             for i in range(0, 10):
                 recent_fills = list(islice(self.pub_client.get_product_trades(product_id=self.product_id), fill_number))
-                sleep(0.5)
+                sleep(PUBLIC_SLEEP)
                 if 'message' in recent_fills:
                     sleep(1)
                 else:
@@ -243,7 +245,7 @@ class Product:
         size_str = num2str(coeff * size, self.base_decimal_num)
 
         order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only)
-        sleep(0.5)
+        sleep(PRIVATE_SLEEP)
 
         if type(order_info) == dict:
             if "price" in order_info.keys():
@@ -278,7 +280,7 @@ class Wallet:
     def update_value(self, data=None):
         if data is None:
             data = self.product.auth_client.get_accounts()
-        sleep(0.5)
+        sleep(PRIVATE_SLEEP)
         usd_balance, usd_hold_balance = self.get_wallet_values(self.base, data)
         sym_balance, sym_hold_balance = self.get_wallet_values(self.ticker, data)
         usd_float_balance = float(usd_balance)
@@ -349,11 +351,11 @@ class CombinedPortfolio:
         if is_sandbox:
             api_base = 'https://api-public.sandbox.pro.coinbase.com'
             auth_client = cbpro.AuthenticatedClient(api_key, secret_key, passphrase, api_url=api_base)
-            sleep(0.5)
+            sleep(PRIVATE_SLEEP)
             pub_client = cbpro.PublicClient(api_url=api_base)
         else:
             auth_client = cbpro.AuthenticatedClient(api_key, secret_key, passphrase)
-            sleep(0.5)
+            sleep(PRIVATE_SLEEP)
             pub_client = cbpro.PublicClient()
 
         self.auth = auth_client
@@ -425,7 +427,7 @@ class CombinedPortfolio:
 
     def remove_order(self, id):
         self.auth.cancel_order(id)
-        sleep(0.5)
+        sleep(PRIVATE_SLEEP)
 
     def update_value(self):
         wallet = self.get_common_wallet()
@@ -474,7 +476,7 @@ class Bot:
 
     def cancel_out_of_bound_orders(self, side, price, sym):
         orders = list(self.portfolio.wallets[sym].product.auth_client.get_orders(self.portfolio.wallets[sym].product.product_id))
-        sleep(0.5)
+        sleep(PRIVATE_SLEEP)
         keys_to_delete = []
         if side == 'buy':
             coeff = -1
@@ -695,7 +697,7 @@ class SpreadBot(Bot):
             top_syms = self.symbols  # If no viable trades are found then allow any symbol to remain
         if usd_hold > QUOTE_ORDER_MIN:
             self.cancle_out_of_bound_buy_orders(top_syms=top_syms)
-            sleep(0.5)
+            sleep(PRIVATE_SLEEP)
 
         self.portfolio.update_value()
         # Check available cash after canceling the non_optimal buy orders and place the next order
