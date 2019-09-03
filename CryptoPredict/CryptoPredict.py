@@ -41,6 +41,8 @@ def convert_time_to_uct(naive_date_from):
 def get_current_tz():
     now = datetime.now(tzlocal.get_localzone())
     tz = now.strftime('%Z')
+    if tz == 'EDT':
+        tz = 'America/New_York'
 
     return tz
 

@@ -34,7 +34,7 @@ from CryptoBot.CryptoBot_Shared_Functions import str_list_to_timestamp
 from CryptoBot.constants import EXCHANGE_CONSTANTS
 import re
 
-# SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt'
+# SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt.txt'
 # SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
@@ -48,7 +48,7 @@ if not os.path.exists(SAVED_DATA_FILE_PATH):
 #         raise ValueError('Folder for saved plots already taken')
 
 QUOTE_ORDER_MIN = 10
-PUBLIC_SLEEP = 0.2
+PUBLIC_SLEEP = 0.01
 PRIVATE_SLEEP = 0.1
 
 class Product:

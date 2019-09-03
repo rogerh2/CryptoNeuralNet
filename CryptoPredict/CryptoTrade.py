@@ -4,8 +4,8 @@ import sys
 #sys.path.append("home/rjhii/CryptoNeuralNet/CryptoPredict")
 # use the below for AWS
 sys.path.append("home/ubuntu/CryptoNeuralNet/CryptoPredict")
-from CryptoPredict import CoinPriceModel
-from CryptoPredict import DataSet
+from CryptoPredict.CryptoPredict import CoinPriceModel
+from CryptoPredict.CryptoPredict import DataSet
 import cbpro
 import numpy as np
 import scipy.stats
