@@ -10,12 +10,13 @@ def construct_piecewise_polynomial_for_data(data, order, x=None):
 
     fits = [fit_len]
     if x is None:
-        x = np.arange(0, len(data))
+        x = np.arange(0, fit_len)
+    else:
+        x = x[0:fit_len]
 
     for ind in range(fit_len, data_len - fit_len, fit_len):
-        fit_x = x[ind:ind+fit_len]
         y = data[ind:ind+fit_len]
-        coeffs = np.polyfit(fit_x, y, order)
+        coeffs = np.polyfit(x, y, order)
         fits.append((coeffs, ind))
 
     return fits
@@ -23,15 +24,16 @@ def construct_piecewise_polynomial_for_data(data, order, x=None):
 def piece_wise_fit_eval(coeffs, x=None):
     fit_len = coeffs[0]
     if x is None:
-        x = np.arange(0, len(data))
+        x = np.arange(0, fit_len)
+    else:
+        x = x[0:fit_len]
     fit = np.array([])
     start_ind = coeffs[1][1]
     stop_ind = coeffs[-1][1] + fit_len
 
     for coeff_data in coeffs[1::]:
-        fit_x = x[coeff_data[1]:coeff_data[1]+fit_len]
         coeff = coeff_data[0]
-        current_fit = np.polyval(coeff, fit_x)
+        current_fit = np.polyval(coeff, x)
         fit = np.append(fit, current_fit)
 
     return fit, [start_ind, stop_ind]
