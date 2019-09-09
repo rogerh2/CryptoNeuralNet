@@ -64,18 +64,18 @@ if __name__ == "__main__":
     # data = cc.minute_price_historical('ETH')['ETH_close'].values
 
     # Define intial state
-    zeta_set = 0.02
+    zeta_set = 0.1
     omega_set = np.sqrt(7)
     freq = omega_set * np.sqrt(1 - zeta_set ** 2)
-    omega_f = np.pi/4
-    F0 = 1
+    omega_f = np.pi/2
+    F0 = 5
     t = np.arange(0, 30*np.pi, 0.01)
 
     # Construct test force
     # F = F0*sin(omega_f*t)
     Z, phi = get_Z_and_phi_for_forced_harmonic_oscillator(omega_set, omega_f, zeta_set)
     print('True Z: ' + num2str(Z, 4) + ' True phi: ' + num2str(phi, 4))
-    F = np.sin(omega_f * t)
+    F = F0 * np.sin(omega_f * t)
     F_coeff = construct_piecewise_polynomial_for_data(F, 15, x=t)
     F_poly_fit, start_stop = piece_wise_fit_eval(F_coeff, x=t)
     fit_t = t[start_stop[0]:start_stop[1]]
@@ -98,6 +98,7 @@ if __name__ == "__main__":
     plt.plot(fit_t, poly_fit, 'rx')
     plt.show()
     for i in range(1, len(coeff)):
+        print(F_coeff[i][0][-1])
         zeta, omega = calculate_coefficients_for_second_order(coeff[i][0], F_coeff[i][0][-1], F_coeff[i][0][-2])
         print('Calculated zeta: ' + num2str(zeta, 4) + ' Calculated omega: ' + num2str(omega, 4))
         fit_decay = zeta * omega
@@ -106,10 +107,10 @@ if __name__ == "__main__":
         # fit_freq = omega * np.sqrt(1 - zeta ** 2)
         # fit = np.exp(-fit_decay*fit_t)*np.sin(fit_freq*fit_t + c)
         #
-        # Z, phi = get_Z_and_phi_for_forced_harmonic_oscillator(omega, omega_f, zeta)
-        # print('Calculated Z: ' + num2str(Z, 4) + ' Calculated phi: ' + num2str(phi, 4))
-        # fit = (F0/(Z * omega_f)) * np.sin(omega_f*fit_t + phi)
-        #
-        # plt.plot(fit_t, data[start_stop[0]:start_stop[1]],'b')
-        # plt.plot(fit_t, fit,'rx')
+        Z, phi = get_Z_and_phi_for_forced_harmonic_oscillator(omega, omega_f, zeta)
+        print('Calculated Z: ' + num2str(Z, 4) + ' Calculated phi: ' + num2str(phi, 4))
+        fit = (F0/(Z * omega_f)) * np.sin(omega_f*fit_t + phi)
+
+        plt.plot(fit_t, data[start_stop[0]:start_stop[1]],'b')
+        plt.plot(fit_t, fit,'rx')
         plt.show()
