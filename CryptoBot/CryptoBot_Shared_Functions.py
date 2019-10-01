@@ -58,7 +58,7 @@ def progress_printer(total_len, current_ind, start_ind=0, digit_resolution=1, pr
         progress_percent = 100*(current_ind-start_ind)/(total_len-start_ind)
         resolution = 10**-(digit_resolution+2)
 
-        if 1 >= (total_len - start_ind)*resolution:
+        if 1 >= (total_len - start_ind)*resolution: # Print everything if the resolution is smaller than the spacing
             print (tsk + ' is ' + num2str(progress_percent, print_resolution) + '% Complete')
         else:
             relevant_inds = range(start_ind, total_len, round((total_len - start_ind)*resolution))
