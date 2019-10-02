@@ -78,7 +78,7 @@ def nominal_magnitude(x0, dx0, omega0):
 
     return mag
 
-# -- PSM for N coupled Oscillators --
+# -- PSM for N coupled oscillators --
 
 # This class represents the polynomial for a single mass (mass n)
 class Polynomial:
@@ -149,7 +149,6 @@ class Polynomial:
         return x
 
 # This class represents a system of ode's (all N masses). It holds the polynomials and evolves them over time
-
 class SystemPropogator:
 
     def __init__(self, x0s, y0s, omegas, zetas, t0=0):
@@ -206,7 +205,7 @@ class SystemPropogator:
         self.generate_nth_order_polynomials(polynomial_order)
 
     def break_up_time(self, time, step_size, polynomial_order):
-
+        # This method breaks up the time vectors so that the polynoials at each step can be used to evaluate
         t_poly = list(self.polynomials.keys())
         t_poly.sort()
         ind = 0
@@ -215,7 +214,7 @@ class SystemPropogator:
         t_dict = {}
 
         while i < max_i:
-            progress_printer(len(time), ind, tsk='Propgation', digit_resolution=int(np.log10(len(time)) + 1))
+            progress_printer(len(time), round(ind, -1), tsk='Propogation')
             t0 = t_poly[i]
             next_i = i + 1
             if (next_i >= max_i) and ((time[-1] - time[ind]) <= step_size):
@@ -258,27 +257,33 @@ class SystemPropogator:
 
         return x
 
+# -- Fixed Point Iteration to Find All N Omega's and Zeta's --
 
-# -Initialize with N initial conditions, omega's, zeta's.
-# Also create a list (called poly) of N empty dictionaries, to be indexed with time stamps and contain the polynomials
-# for the Nth equation as well as a list of dicts (for the x's and y's as numpy arrays for the solutions for all N
-# equations), start with the initial conditions
-# -method to generate the next order for all N polynomials
-# take the highest time in the self.poly[0].keys(). Then take each polynomial from there and use the built in
-# generate_next_order method. Start with the Nth polynomial and work down.
-# -method to step forward in time, takes step_size and steps_between as an argument. Evaluate each polynomial at one
-# step_size away at step_size/steps_between regularly spaced steps from the current time and use as the x0's,
-# do the same with their first derivatives for the y0's. Store the x's and y's in the solution list
+# -class SystemIterator
+# new_omegas = np.array([])
+# new_zetas = np.array([])
+# -initialize with a SystemPropegator obj as an attribute (or maybe with n omegas, zetas, etc...)
+# -def update_nth_omega_zeta: a function to plug in the current omega, zeta, and initial conditions that feed the nth
+# equation and use to a get a new omega and zeta, add to the new_omegas and new_zetas arrays
+# -def update_nth_initial_conditions: find a random x_n0 and y_n0 that maintain the same Hamitonian as the last iteration
+# -def update_propegator: loop through all n zetas, omegas, and initial conditions, then use to create a new SystemPropegator obj
+# -def iterate(epsilon, max_iterations, patience): succesively run update_propegator then evaluate all n polynomials,
+# compare with the last solutions. Stop when the rmse for each solution from one to next is less than epsilon for
+# patience number of iterations, or when max_iterations has been reached
+
+
+
+
 
 if __name__ == "__main__":
-    initial_xs = [1, 2, 1, 3]
-    initial_ys = [0.5, 0.5, 0.5, 0.5]
-    omegas = [np.sqrt(0.4), np.sqrt(1.808), np.sqrt(4), np.sqrt(3)]
-    zetas = [-0.1, 0.4, -0.1, 0.04]
+    initial_xs = [1, 2, 3]
+    initial_ys = [0.5, 0.5, 0.5]
+    omegas = [np.sqrt(0.4), np.sqrt(1.808), np.sqrt(2.712)]
+    zetas = [0.025, 0.05, 0.1]
 
     system = SystemPropogator(initial_xs, initial_ys, omegas, zetas)
-    x2 = system.evaluate_nth_polynomial(np.arange(0, 50, 0.01), 0.1, 10)
-    x1 = system.evaluate_nth_polynomial(np.arange(0, 50, 0.01), 0.1, 10, n=1)
+    x2 = system.evaluate_nth_polynomial(np.arange(0, 50, 0.01), 0.3, 10)
+    x1 = system.evaluate_nth_polynomial(np.arange(0, 50, 0.01), 0.3, 10, n=1)
     plt.plot(np.linspace(0, 50, len(x2)), x2)
     plt.plot([0, 50], [0, 0], 'r--')
     plt.figure()
