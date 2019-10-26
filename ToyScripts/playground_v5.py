@@ -83,9 +83,11 @@ def find_sin_freq(data, t):
     f = np.linspace(0, 2 * np.pi * 1 / (2 * T), int(N / 2))
     guess_freq = f[np.argmax(dataf[0:int(N / 2)])]
 
-    # omega, _ = optimize.curve_fit(sinusoidal_test_func, t, data, p0=[guess_freq])
-
-    return guess_freq#omega[0]
+    try:
+        omega, _ = optimize.curve_fit(sinusoidal_test_func, t, data, p0=[guess_freq])
+        return omega[0]
+    except:
+        return guess_freq
 
 # This calculates the nominal magnitude of a sine wave
 def nominal_magnitude(x0, dx0, omega0):
@@ -309,6 +311,14 @@ class SystemPropogator:
 
         return x_arr, t_arr
 
+    def evaluate(self, time_arr, step_size, polynomial_order, verbose=True):
+        x = []
+        for i in range(0, self.N):
+            x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose)
+            x.append(x_fit)
+
+        return x, t_fit
+
     def reset(self, x0s=None, y0s=None):
         # Erase the past data for repropagation
         self.polynomials = {self.t0: []}
@@ -328,7 +338,52 @@ class SystemPropogator:
                 omega_plus = 0
             self.polynomials[self.t0].append(Polynomial(x0, y0, zetas[i], omegas[i], omega_plus))
 
-    #TODO add simulate option that simulates inputting data over time to see how the predictions would fare
+    def simulate(self, data_sets, t, step_size, poly_order, eval_lens=None, del_len=10):
+        # This method evaluates the polynomials at each point in eval_lens then puts them together in a continuous way
+        if eval_lens is None:
+            eval_lens = np.array([30])
+        ind0 = del_len
+        indf = ind0 + np.max(eval_lens)
+        x_sets = {}
+        single_x_sets = [np.array([]) for i in range(0, self.N)]
+        eval_t = {}
+        for eval_len in eval_lens:
+            # There is a different data set for each length of time
+            x_sets[eval_len] = [single_x_sets.copy(), single_x_sets.copy()]
+            eval_t[eval_len] = single_x_sets
+
+        while indf < len(t):
+            progress_printer(len(data_sets[0]), ind0, start_ind=del_len, tsk='Simulation')
+            x0s = [x[ind0] for x in data_sets]
+            y0s = [np.mean(np.diff(x[ind0-del_len:ind0])) for x in data_sets]
+            current_t = t[ind0:indf] - t[ind0]
+            system_fit.reset(x0s=x0s, y0s=y0s)
+            x_fit, t_fit = system_fit.evaluate(current_t, step_size, poly_order, verbose=False)
+            for key in x_sets.keys():
+                eval_len = key - 2
+                for i in range(0, self.N):
+                    x_sets[key][0][i] = np.append(x_sets[key][0][i], x_fit[i][eval_len]) # TODO taylor eval_len using t_fit
+                    x_sets[key][1][i] = np.append(x_sets[key][1][i], data_sets[i][ind0 + eval_len])
+                    eval_t[key][i] = np.append(eval_t[key][i], t[ind0 + eval_len])
+
+            ind0 += 1
+            indf = ind0 + np.max(eval_lens)
+
+        return x_sets, eval_t
+
+    def plot_simulation(self, data_sets, t, step_size, poly_order, coefficients=None, shifts=None, eval_lens=None, del_len=10):
+        # TODO allow plotting of different N's (instead of only the last one)
+        x_sets, eval_t = self.simulate(data_sets, t, step_size, poly_order, eval_lens=eval_lens, del_len=del_len)
+        for eval_len in x_sets.keys():
+            plt.figure()
+            plt.plot(coeff_list[-1]*x_sets[eval_len][0][-1] + shift_list[-1])
+            plt.plot(coeff_list[-1]*x_sets[eval_len][1][-1] + shift_list[-1])
+            plt.title(str(eval_len) + ' Minute Prediction')
+            plt.legend(('true', 'fit'))
+            plt.xlabel('Time (min)')
+            plt.ylabel('Price ($)')
+
+        plt.show()
 
     def __getitem__(self, n):
         N = len(self.polynomials[self.t0])
@@ -362,7 +417,7 @@ class Hamiltonian:
 
 class SystemIterator:
 
-    def __init__(self, x0s, y0s, omegas, zetas, H_spectrum, epsilon, max_iterations=100, t0=0):
+    def __init__(self, x0s, y0s, omegas, zetas, H_spectrum, epsilon, max_iterations=10, t0=0):
         self.t0 = t0
         self.propogator = SystemPropogator(x0s, y0s, omegas, zetas, t0)
         self.hamiltonian = H_spectrum
@@ -474,7 +529,7 @@ class SystemIterator:
             if (segment_start_ind + propogation_len) >= len(t):
                 segment_start_ind = 0
             # Create a new propogator and compare to data
-            poly = [np.flip(np.polyfit(np.arange(0, propogation_len), a[segment_start_ind:segment_start_ind+propogation_len], 12), axis=0) for a in x_list]
+            poly = [np.flip(np.polyfit(np.arange(0, propogation_len), a[segment_start_ind:segment_start_ind+propogation_len], 10), axis=0) for a in x_list]
             input_data = [a[segment_start_ind:segment_start_ind+propogation_len] for a in x_list]
             new_propogator = self.update_propogator(poly, order, input_data)
             err, x_guess, t_guess = self.compute_system_err(x_list, np.arange(0, propogation_len), step_size, propogation_len, start_i=segment_start_ind, propogator=new_propogator)
@@ -508,9 +563,9 @@ class SystemIterator:
 if __name__ == "__main__":
     # -- Get raw data --
     use_saved_data = True
-    sym_list = ['LINK', 'ZRX', 'XLM', 'ALGO', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'ETH', 'REP', 'LTC', 'BTC']
+    sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
     if not use_saved_data:
-        cc = CryptoCompare(date_from='2019-10-19 15:30:00 EST', date_to='2019-10-20 08:30:00 EST', exchange='Coinbase')
+        cc = CryptoCompare(date_from='2019-10-22 16:30:00 EST', date_to='2019-10-23 09:30:00 EST', exchange='Coinbase')
         raw_data_list = []
         for sym in sym_list:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -533,7 +588,7 @@ if __name__ == "__main__":
     poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
     poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
     train_len = 500 # Length of data to be used for training
-    test_len = 100
+    test_len = 50
     poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
     # create the polynomial approximation
@@ -549,15 +604,15 @@ if __name__ == "__main__":
 
     initial_xs = [x[0] for x in data_list]
     initial_ys = [np.mean(np.diff(x[0:10])) for x in data_list]
-    omegas = [find_sin_freq(pfit[0:poly_train_ind], poly_t[0:poly_train_ind]) for pfit in poly_list] # TODO setup polynomial approximation to allow more points in omega
+    omegas = [find_sin_freq(pfit[0:poly_train_ind], poly_t[0:poly_train_ind]) for pfit in poly_list]
     zetas = [0 for x in data_list]
-    psm_step_size = 0.01
-    psm_order = 7
+    psm_step_size = 0.02
+    psm_order = 5
     t = np.arange(0, train_len)
     x_list = [x[0:train_len] for x in data_list]
 
     sys_iter = SystemIterator(initial_xs, initial_ys, omegas, zetas, None, 0.001)
-    sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order)
+    # sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order)
     system_fit = sys_iter.propogator
 
     # --  Test Propogator --
@@ -566,14 +621,15 @@ if __name__ == "__main__":
     t = np.arange(0, test_len)
     x_list = [x[train_len:train_len+test_len] for x in data_list]
     system_fit.reset(x0s=test_x0s, y0s=test_y0s)
-    print('omega: ' + num2str(system_fit.omegas[-1], 4))
+
+    system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
 
     for i in range(0, len(sym_list)):
         coeff = coeff_list[i]
         shift = shift_list[i]
         progress_printer(system_fit.N, i, tsk='Evaluationg Polynomials')
-        x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, 0.02, 5, n=i + 1, verbose=i==False)
-        x_raw = concat_data_list[i][train_len:train_len+100]
+        x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=i + 1, verbose=i==False)
+        x_raw = concat_data_list[i][train_len:train_len+test_len]
         plt.figure()
         plt.plot(np.linspace(0, np.max(t), len(x_raw)), x_raw)
         plt.plot(np.linspace(0, np.max(t), len(x_fit)), coeff * x_fit + shift)
