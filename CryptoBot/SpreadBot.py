@@ -32,6 +32,7 @@ from CryptoBot.CryptoBot_Shared_Functions import current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
 from CryptoBot.CryptoBot_Shared_Functions import str_list_to_timestamp
 from CryptoBot.constants import EXCHANGE_CONSTANTS
+from CryptoPredict.CryptoPredict import CryptoCompare
 import re
 
 # SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt.txt'
@@ -793,6 +794,18 @@ class SpreadBot(Bot):
                 print('Sell Order rejected\n')
             else:
                 print('\nSell Order placed')
+
+# class PSMBot(Bot):
+# def __init__(propogator, super_vars) During the init create the first prediction
+# def propogate_next_price
+# def determine_past_propogation_offset_and_std
+# def sort_currencies
+# def list_held_currencies
+# def buy_min_currencies
+# def sell_decisions #This method determines which of the held currencies to sell
+# def sell_max_currencies
+
+
 
 class PortfolioTracker:
 

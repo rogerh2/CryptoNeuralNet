@@ -195,6 +195,7 @@ class SystemPropogator:
         self.polynomials = {t0:[]}
         self.N = len(x0s)
         self.omegas = omegas
+        self.zetas = zetas
         for i in range(0, self.N):
             x0 = x0s[i]
             y0 = y0s[i]
@@ -336,9 +337,9 @@ class SystemPropogator:
                 omega_plus = omegas[i + 1]
             else:
                 omega_plus = 0
-            self.polynomials[self.t0].append(Polynomial(x0, y0, zetas[i], omegas[i], omega_plus))
+            self.polynomials[self.t0].append(Polynomial(x0, y0, self.zetas[i], omegas[i], omega_plus))
 
-    def simulate(self, data_sets, t, step_size, poly_order, eval_lens=None, del_len=10):
+    def simulate(self, data_sets, t, step_size, poly_order, eval_lens=None, del_len=5):
         # This method evaluates the polynomials at each point in eval_lens then puts them together in a continuous way
         if eval_lens is None:
             eval_lens = np.array([30])
@@ -353,7 +354,7 @@ class SystemPropogator:
             eval_t[eval_len] = single_x_sets
 
         while indf < len(t):
-            progress_printer(len(data_sets[0]), ind0, start_ind=del_len, tsk='Simulation')
+            progress_printer(len(data_sets[0])-np.max(eval_len), ind0, start_ind=del_len, tsk='Simulation')
             x0s = [x[ind0] for x in data_sets]
             y0s = [np.mean(np.diff(x[ind0-del_len:ind0])) for x in data_sets]
             current_t = t[ind0:indf] - t[ind0]
@@ -399,199 +400,18 @@ class SystemPropogator:
 
 # -- Fixed Point Iteration to Find All N Omega's and Zeta's --
 
-class Hamiltonian:
-
-    def __init__(self, data, t):
-        dataf, f = fourier_transform(data, t)
-        self.energy_density = np.abs(dataf) ** 2
-        self.frequncies = f
-        self.fft = np.square(np.abs(dataf))
-
-    def normalize(self, ref_value, ref_omega):
-        self.energy_density = ref_value * self.energy_density / ref_omega
-
-    def __getitem__(self, omega):
-        omega_ind = np.argmin( np.abs(self.frequncies - omega) )
-        E = self.energy_density[omega_ind] * omega
-        return E
-
-class SystemIterator:
-
-    def __init__(self, x0s, y0s, omegas, zetas, H_spectrum, epsilon, max_iterations=10, t0=0):
-        self.t0 = t0
-        self.propogator = SystemPropogator(x0s, y0s, omegas, zetas, t0)
-        self.hamiltonian = H_spectrum
-        self.epsilon = epsilon
-        self.max_iter = max_iterations
-
-    def get_nth_initial_conditions(self, omega, H):
-        # generate a random intial velocity and position that satifies the energy spectrum at that frequency
-        # H = (1/2) * ( y^2 + omega^2 * x^2 )
-        # H = self.hamiltonian[omega]
-        x = rand_betwee_plus_and_minus(np.sqrt(2 * H / omega**2))
-        y = np.sqrt(2 * H - omega ** 2 * x ** 2)
-
-        return x, y
-
-    def get_next_nth_omega_zeta(self, n, X=None, X_next=None, X_prev=None):
-        # Upadate omega using fixed point iteration
-        _, omega0, omegaplus, zeta0 = self.propogator[n]
-        if X is None:
-            X, _, _, _ = self.propogator[n]
-        if X_next is None:
-            X_next, _, _, _ = self.propogator[n + 1]
-        if X_prev is None:
-            X_prev, _, _, _ = self.propogator[n - 1]
-
-        Feff = omega0**2 * X_prev[0:len(X_next)] + omegaplus * X_next
-        omegeff = np.sqrt(omega0 ** 2 + omegaplus ** 2)
-
-        omega_squared_numerator = X[1] * Feff[1] - 2 * X[2] * Feff[0] + 4 * X[2] ** 2 - 6 * X[3] * X[1]
-        omega_squared_denominator = X[1]**2 - 2 * X[0] * X[2]
-        zeta_numerator = omegeff * (Feff[0] * X[1] - 2 * X[2] * X[1] - Feff[1] * X[0] - 6 * X[3] * X[0])
-        zeta_denominator = 2 * omega0**2 * omega_squared_denominator
-        omega = np.sqrt(omega_squared_numerator / omega_squared_denominator - omegaplus**2)
-        zeta = zeta_numerator / zeta_denominator
-        # print('omega' + num2str(omega, 3))
-        # TODO add zeta back once you get the no damping case working
-        return omega, 0 #zeta
-
-    def update_propogator(self, X_true_poly, order, data_list):
-        # Used fixed point iteration to create a new propogator
-        initial_polys = [np.array([x[0], np.mean(np.diff(x[0:10]))]) for x in data_list]
-        x0s = []
-        y0s = []
-        omegas = []
-        zetas = []
-
-        for n in range(0, self.propogator.N):
-            poly = np.append(initial_polys[n], X_true_poly[n][2:order+1])
-            if n == self.propogator.N-1:
-                prev_poly = np.append(initial_polys[n-1], X_true_poly[n - 1][2:order + 2])
-                omega, zeta = self.get_next_nth_omega_zeta(n, X_prev=prev_poly, X=poly)
-            elif n == 0:
-                next_poly = np.append(initial_polys[n+1], X_true_poly[n + 1][2:order + 2])
-                omega, zeta = self.get_next_nth_omega_zeta(n, X=poly, X_next=next_poly)
-            else:
-                prev_poly = np.append(initial_polys[n - 1], X_true_poly[n - 1][2:order + 2])
-                next_poly = np.append(initial_polys[n + 1], X_true_poly[n + 1][2:order + 2])
-                omega, zeta = self.get_next_nth_omega_zeta(n, X_prev=prev_poly, X=poly, X_next=next_poly)
-
-            if np.isnan(omega):
-                omega = self.propogator.omegas[n-1]
-
-            x0 = poly[0]
-            y0 = poly[1]
-
-
-            x0s.append(x0)
-            y0s.append(y0)
-            omegas.append(omega)
-            zetas.append(zeta)
-
-        return SystemPropogator(x0s, y0s, omegas, zetas, self.t0)
-
-    def compute_system_err(self, x_list, time, step_size, test_len, propogator=None, start_i=0):
-        err=0
-        if propogator is None:
-            propogator = self.propogator
-        for j in range(0, self.propogator.N):
-            progress_printer(self.propogator.N, j, tsk='Evaluationg Polynomials')
-            x_guess, t_guess = propogator.evaluate_nth_polynomial(time, step_size, psm_order, n=j + 1, verbose=j==0)
-            x = x_list[j]
-            current_err = N_sigma_err(x[start_i:start_i+len(x_guess)], x_guess) / test_len
-            if not np.isinf(current_err):
-                err += current_err
-        err = err / self.propogator.N
-
-        return err, x_guess, t_guess
-
-    def random_walk_optimization(self, t, x_list, step_size, order, val_train_split=0.3, propogation_len=30):
-        segment_start_ind = 0
-        x = x_list[-1]
-        _, x_guess, t_guess = self.compute_system_err(x_list, np.arange(0, propogation_len), step_size, propogation_len, start_i=segment_start_ind) #TODO add validation data
-        last_err = 1
-
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.plot(t, x)
-        line, = ax.plot(t_guess, x_guess)
-        plt.title('Initial Guess'+ ', Error: ' + num2str(last_err, 4))
-        # plt.show()
-        plt.draw()
-        plt.pause(0.1)
-        propogators = [self.propogator]
-        errs = [last_err]
-
-
-        for i in range(0, self.max_iter):
-            segment_start_ind += propogation_len
-            if (segment_start_ind + propogation_len) >= len(t):
-                segment_start_ind = 0
-            # Create a new propogator and compare to data
-            poly = [np.flip(np.polyfit(np.arange(0, propogation_len), a[segment_start_ind:segment_start_ind+propogation_len], 10), axis=0) for a in x_list]
-            input_data = [a[segment_start_ind:segment_start_ind+propogation_len] for a in x_list]
-            new_propogator = self.update_propogator(poly, order, input_data)
-            err, x_guess, t_guess = self.compute_system_err(x_list, np.arange(0, propogation_len), step_size, propogation_len, start_i=segment_start_ind, propogator=new_propogator)
-            line.set_ydata(x_guess)
-            line.set_xdata(t_guess + segment_start_ind)
-            plt.title('Iteration: ' + str(i + 1) + ', Error: ' + num2str(err, 4))
-            ax.relim()
-            ax.autoscale_view()
-            plt.draw()
-            plt.pause(0.01)
-            # plt.close()
-            # Create variables for Monte Carlo
-            if not np.isnan(err):
-                propogators.append(new_propogator)
-                errs.append(err)
-                u = np.random.random()
-                alpha = last_err / err
-                if alpha > u:
-                    self.propogator = new_propogator
-                    last_err = err
-            else:
-                # self.propogator = propogators[np.argmin(np.array([errs]))]
-                print('Final error: ' + num2str(np.min(np.array(errs)), digits=4))
-                break
-
-            if err < self.epsilon:
-                break
-
-
-
-if __name__ == "__main__":
-    # -- Get raw data --
-    use_saved_data = True
-    sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
-    if not use_saved_data:
-        cc = CryptoCompare(date_from='2019-10-24 16:30:00 EST', date_to='2019-10-25 09:30:00 EST', exchange='Coinbase')
-        raw_data_list = []
-        for sym in sym_list:
-            data = cc.minute_price_historical(sym)[sym + '_close'].values
-            raw_data_list.append(data)
-            print(sym)
-
-        data_len = np.min(np.array([len(x) for x in raw_data_list]))
-        concat_data_list = [x[0:data_len] for x in raw_data_list]
-        pickle.dump(concat_data_list, open("psm_test.pickle", "wb"))
-    else:
-        concat_data_list = pickle.load(open( "/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/psm_test.pickle", "rb" ))
-
+def create_propogator_from_data(raw_data_list, initial_t=0):
+    data_len = np.min(np.array([len(x) for x in raw_data_list]))
+    concat_data_list = [x[0:data_len] for x in raw_data_list]
     data_list = [(x - np.mean(x)) / (np.max(x) - np.min(x)) for x in concat_data_list]
     coeff_list = [(np.max(x) - np.min(x)) for x in concat_data_list]
     shift_list = [np.mean(x) for x in concat_data_list]
+    poly_list = []  # This list will contain polynomial approximations for finding the frequency
+    t = np.arange(0, data_len)  # Time in minutes
+    poly_len = 5000  # Length of the polynomial approximation (certain size needed for frequency resolution)
+    poly_t = np.linspace(0, len(data_list[0]), poly_len)  # Time stamps for polynomials
 
-    # -- Set Up Initial Guess --
-    poly_list = [] # This list will contain polynomial approximations for finding the frequency
-    t = np.arange(0, len(data_list[0])) # Time in minutes
-    poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
-    poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
-    train_len = 500 # Length of data to be used for training
-    test_len = 50
-    poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
-
-    # create the polynomial approximation
+    # create the polynomial approximation to be used to find the nominal frequency
     for i in range(0, len(data_list)):
         coeff = construct_piecewise_polynomial_for_data(data_list[i], 15, t=t)
         poly_fit, _ = piece_wise_fit_eval(coeff, t=poly_t)
@@ -600,82 +420,40 @@ if __name__ == "__main__":
             poly_fit, start_stop = piece_wise_fit_eval(coeff, t=poly_t)
             poly_t = poly_t[start_stop[0]:start_stop[1]]
 
-
     initial_xs = [x[0] for x in data_list]
     initial_ys = [np.mean(np.diff(x[0:10])) for x in data_list]
-    omegas = [find_sin_freq(pfit[0:poly_train_ind], poly_t[0:poly_train_ind]) for pfit in poly_list]
+    omegas = [find_sin_freq(pfit, poly_t) for pfit in poly_list]
     zetas = [0 for x in data_list]
+
+    return SystemPropogator(initial_xs, initial_ys, omegas, zetas, t0=initial_t), coeff_list, shift_list
+
+
+if __name__ == "__main__":
+    use_saved_data = False
+    sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
+    if not use_saved_data:
+        cc = CryptoCompare(date_from='2019-11-03 00:30:00 EST', exchange='Coinbase')
+        raw_data_list = []
+        for sym in sym_list:
+            data = cc.minute_price_historical(sym)[sym + '_close'].values
+            raw_data_list.append(data)
+            print(sym)
+
+        pickle.dump(raw_data_list, open("psm_test.pickle", "wb"))
+    else:
+        raw_data_list = pickle.load(
+            open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/psm_test.pickle", "rb"))
+
+    train_len = 500  # Length of data to be used for training
+    test_len = 100
+    t = np.arange(0, test_len)
     psm_step_size = 0.02
     psm_order = 5
-    t = np.arange(0, train_len)
-    x_list = [x[0:train_len] for x in data_list]
+    train_list = [x[0:train_len] for x in raw_data_list]
 
-    sys_iter = SystemIterator(initial_xs, initial_ys, omegas, zetas, None, 0.001)
-    # sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order)
-    system_fit = sys_iter.propogator
+    system_fit, coeff_list, shift_list = create_propogator_from_data(train_list)
 
-    # --  Test Propogator --
-    test_x0s = [x[train_len] for x in data_list]
-    test_y0s = [np.mean(np.diff(x[train_len-10:train_len])) for x in data_list]
-    t = np.arange(0, test_len)
-    x_list = [x[train_len:train_len+test_len] for x in data_list]
-    system_fit.reset(x0s=test_x0s, y0s=test_y0s)
-
-    system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
-
-    for i in range(0, len(sym_list)):
-        coeff = coeff_list[i]
-        shift = shift_list[i]
-        progress_printer(system_fit.N, i, tsk='Evaluationg Polynomials')
-        x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=i + 1, verbose=i==False)
-        x_raw = concat_data_list[i][train_len:train_len+test_len]
-        plt.figure()
-        plt.plot(np.linspace(0, np.max(t), len(x_raw)), x_raw)
-        plt.plot(np.linspace(0, np.max(t), len(x_fit)), coeff * x_fit + shift)
-        plt.legend(('true', 'fit'))
-        plt.title( sym_list[i] + ' Predicted Price Vs Actual')
-        plt.xlabel('Time (min)')
-        plt.ylabel('Price ($)')
-    plt.show()
-
-
-
-    # initial_xs = [0.5, -0.5]
-    # initial_ys = [0, 0.7]
-    # omegas = [np.sqrt(0.4), np.sqrt(0.8)]
-    # zetas = [0, 0]
-    # t = np.arange(0, 50, 0.05)
-    # step_size = 0.04
-    # order = 10
-    # E_ref = (1/2) * ( initial_ys[1]**2 + omegas[1] ** 2 * initial_xs[1] **2 )
-    #
-    # system = SystemPropogator(initial_xs, initial_ys, omegas, zetas)
-    # x2, t2 = system.evaluate_nth_polynomial(t, step_size, order, n=2)
-    # x1, t1 = system.evaluate_nth_polynomial(t, step_size, order, n=1)
-    #
-    # # H = Hamiltonian(x1, np.linspace(0, np.max(t), len(x1)))
-    # # H.normalize(E_ref, omegas[1])
-    #
-    # sys_iter = SystemIterator([0.5, -0.5], [0, 0.7], [np.sqrt(0.9), np.sqrt(0.2)], [0, 0], None, 0.0004)
-    # sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(x1)), [x1, x2], step_size, order)
-    #
-    # system_fit = sys_iter.propogator
-    # x2_fit, t2_fit = system_fit.evaluate_nth_polynomial(t, step_size, order, n=2)
-    # x1_fit, t1_fit = system_fit.evaluate_nth_polynomial(t, step_size, order, n=1)
-    #
-    # plt.close()
-    # plt.ioff()
-    # # plt.plot(H.frequncies, H.energy_density * H.frequncies)
-    # plt.figure()
-    # plt.plot(np.linspace(0, np.max(t), len(x2)), x2)
-    # plt.plot(np.linspace(0, np.max(t), len(x2_fit)), x2_fit)
-    # plt.plot([np.min(t), np.max(t)], [0, 0], 'r--')
-    # plt.legend(('true', 'fit'))
-    # plt.title('2')
-    # plt.figure()
-    # plt.plot(np.linspace(0, np.max(t), len(x1)), x1)
-    # plt.plot(np.linspace(0, np.max(t), len(x1_fit)), x1_fit)
-    # plt.title('1')
-    # plt.legend(('true', 'fit'))
-    # plt.plot([np.min(t), np.max(t)], [0, 0], 'r--')
-    # plt.show()
+    test_list = [x[train_len:train_len+test_len] for x in raw_data_list]
+    norm_test_list = [(x - shift)/(coeff) for x, shift, coeff, in zip(test_list, shift_list, coeff_list)]
+    system_fit.plot_simulation(norm_test_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list,
+                               eval_lens=[10, 15, 20, 30])

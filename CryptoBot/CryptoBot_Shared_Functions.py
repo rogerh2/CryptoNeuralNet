@@ -131,4 +131,7 @@ def current_est_time():
     est_date = est_date_from.astimezone(est)
     return est_date
 
+def zero(data):
+    return np.zeros(len(data))
+
 # def rate_limited_get(func, limit, )
