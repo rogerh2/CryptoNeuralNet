@@ -14,7 +14,7 @@
 # }]
 
 import matplotlib
-matplotlib.use('Agg')
+# matplotlib.use('Agg')
 import sys
 import cbpro
 import pandas as pd
@@ -31,8 +31,10 @@ from CryptoBot.CryptoBot_Shared_Functions import num2str
 from CryptoBot.CryptoBot_Shared_Functions import current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
 from CryptoBot.CryptoBot_Shared_Functions import str_list_to_timestamp
+from CryptoBot.CryptoBot_Shared_Functions import offset_current_est_time
 from CryptoBot.constants import EXCHANGE_CONSTANTS
 from CryptoPredict.CryptoPredict import CryptoCompare
+from ODESolvers.PSM import create_propogator_from_data
 import re
 
 # SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt.txt'
@@ -40,6 +42,8 @@ import re
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 MIN_SPREAD = 1.005
+TRADE_LEN = 30
+PSM_EVAL_STEP_SIZE = 0.1
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -142,7 +146,13 @@ class Product:
         else:
             return filtered_recent_fills, recent_fills
 
-    def get_num_price_momentum_switches_per_time(self, t_interval=15*60):
+    def get_recent_fill_prices(self, fill_num=1000, return_t=False):
+        fills, _ = self.get_recent_fills(fill_number=fill_num, return_time=return_t)
+        fill_prices = np.array([float(fill['price']) for fill in fills])
+
+        return fill_prices
+
+    def get_num_price_momentum_switches_per_time(self, t_interval_in_seconds=TRADE_LEN * 60):
         fills, fill_ts_ls = self.get_recent_fills(return_time=True)
         if fills is None:
             return None
@@ -154,23 +164,25 @@ class Product:
 
         for ts in fill_ts_ls:
             t = ts - ts0
-            if t >= t_interval:
+            if t >= t_interval_in_seconds:
                 num_trades_per_t.append(num_trades)
                 ts0 = ts
                 num_trades = 0
             else:
                 num_trades += 1
 
-        if t > (0.1 * t_interval):
-            num_trades_per_t.append((t_interval/t) * num_trades)
+        if t > (0.1 * t_interval_in_seconds):
+            num_trades_per_t.append((t_interval_in_seconds / t) * num_trades)
 
         avg_num_trades = np.mean(np.array(num_trades_per_t))
         if (avg_num_trades is None) or np.isnan(avg_num_trades):
-            avg_num_trades = (t_interval/t) * num_trades
+            avg_num_trades = (t_interval_in_seconds / t) * num_trades
 
         return avg_num_trades
 
     def adjust_fill_data(self, mu, std, fill_diff_ratio):
+        # This adjusts the mean and std of the price changes based on a number of trades to represent a particular
+        # amount of time
         avg_num_trades = self.get_num_price_momentum_switches_per_time()
         if avg_num_trades is None:
             return None, None, None
@@ -182,6 +194,15 @@ class Product:
             last_fill = np.sum(fill_diff_ratio[-int(avg_num_trades)::])
 
         return weighted_mu, weighted_std, last_fill
+
+    def normalize_price_changes(self, fill_arr):
+        # This method returns the normalized price changes
+        fill_diff = np.diff(fill_arr)
+        fill_diff_mask = np.abs(fill_diff) > self.usd_res  # ignore small bounces between the minimum resolution
+        fill_diff_ratio = np.append(0, fill_diff) / fill_arr
+        fill_diff_ratio = fill_diff_ratio[1::][fill_diff_mask]
+
+        return fill_diff_ratio
 
     def get_mean_and_std_of_price_changes(self):
         fills, _ = self.get_recent_fills()
@@ -197,6 +218,25 @@ class Product:
 
         # Adjust mu and std to account for number of trades over time
         weighted_mu, weighted_std, last_fill = self.adjust_fill_data(mu, std, fill_diff_ratio)
+
+        return weighted_mu, weighted_std, last_fill
+
+    def get_psm_mean_and_std_of_price_changes(self, predicted_fills):
+        fills, _ = self.get_recent_fills()
+        if fills is None:
+            return None, None, None
+        # Get the standard deviation based on past price movements
+        fill_arr = np.array([float(fill['price']) for fill in fills])
+        fill_diff_ratio = self.normalize_price_changes(fill_arr)
+        std = np.std(fill_diff_ratio)
+
+        # Get the mean based on the predicted price movement
+        t = np.linspace(0, TRADE_LEN, len(predicted_fills))
+        coeff = np.polyfit(t, predicted_fills, 1)
+        weighted_mu = coeff[0] / np.mean(fill_arr) # This does not need to be wheighted because it is already based of time
+
+        # Adjust mu and std to account for number of trades over time
+        _, weighted_std, last_fill = self.adjust_fill_data(0, std, fill_diff_ratio)
 
         return weighted_mu, weighted_std, last_fill
 
@@ -795,17 +835,151 @@ class SpreadBot(Bot):
             else:
                 print('\nSell Order placed')
 
-# class PSMBot(Bot):
-# def __init__(propogator, super_vars) During the init create the first prediction
-# def propogate_next_price
+# class PSMSpreadBot(SpreadBot):
+#     # This class is the same as the spreadbot, except it uses PSM to find the mean price movements
+
+# TODO complete PSMBot
+class PSMSpreadBot(SpreadBot):
+    # class variables
+    # propogator: the object that predicts future prices
+    # predicted_prices: this contains the max, min, standard deviation of prices, and the mean offset for the true and predicted prices
+    # del_len: the number of samples to average over for the price
+
+    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX', 'XTZ'), is_sandbox_api=False, base_currency='USD', slope_avg_len=5):
+        super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
+        raw_data = {}
+        self.fmt = '%Y-%m-%d %H:%M:%S %Z'
+        t_offset_str = offset_current_est_time(600, fmt=self.fmt)
+        cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
+        for sym in syms:
+            data = cc.minute_price_historical(sym)[sym + '_close'].values
+            raw_data[sym] = data
+
+        raw_data_list = [raw_data[sym] for sym in self.symbols]
+
+        self.del_len = slope_avg_len
+        self.propogator, coeff_list, shift_list = create_propogator_from_data(raw_data_list)
+        self.predictions = {}
+        self.coefficients = {}
+        self.shifts = {}
+
+        for i in range(0, len(syms)):
+            sym = syms[i]
+            self.predictions[sym] = None # will use as max, min, true_std, mean_offset
+            self.coefficients[sym] = coeff_list[i]
+            self.shifts[sym] = shift_list[i]
+
+    def collect_next_data(self):
+        # This method sets the propogator initial values to the most recent price
+        raw_data = {}
+        self.fmt = '%Y-%m-%d %H:%M:%S %Z'
+        t_offset_str = offset_current_est_time(600, fmt=self.fmt)
+        cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
+        for sym in self.symbols:
+            data = cc.minute_price_historical(sym)[sym + '_close'].values
+            raw_data[sym] = data
+
+        return raw_data
+
+    def transform(self, raw_data):
+        transform_data = {}
+        syms = self.symbols
+        for sym in syms:
+            transform_data[sym] = self.coefficients[sym] * raw_data[sym] + self.shifts[sym]
+
+        return transform_data
+
+    def inverse_transform(self, raw_data):
+        transform_data = {}
+        syms = self.symbols
+        for sym in syms:
+            transform_data[sym] = (raw_data[sym] - self.shifts[sym]) / self.coefficients[sym]
+
+        return transform_data
+
+    def reset_propogator_start_point(self, raw_data_list):
+        # This method sets the propogator initial values to the most recent price
+        normalized_raw_data = self.inverse_transform(raw_data_list)
+        normalized_raw_data_list = [normalized_raw_data[sym] for sym in self.symbols]
+        x0s = [x[-1] for x in normalized_raw_data_list]
+        y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
+        self.propogator.reset(x0s=x0s, y0s=y0s)
+
+    def get_new_propogator(self, raw_data_list):
+        self.propogator, coeff_list, shift_list = create_propogator_from_data(raw_data_list)
+        self.predictions = {}
+        self.coefficients = {}
+        self.shifts = {}
+        syms = self.symbols
+
+        for i in range(0, len(syms)):
+            sym = syms[i]
+            self.predictions[sym] = None  # will use as max, min, true_std, mean_offset
+            self.coefficients[sym] = coeff_list[i]
+            self.shifts[sym] = shift_list[i]
+
+    def predict(self):
+        # Setup Initial Variables
+        time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
+        step_size = 0.01
+        polynomial_order = 10
+
+        # Collect data and create propogator
+        raw_data = self.collect_next_data()
+        raw_data_list = [raw_data[sym] for sym in self.symbols]
+        self.get_new_propogator(raw_data_list)
+        self.reset_propogator_start_point(raw_data)
+        syms = self.symbols
+        predictions = {}
+
+        # Predict
+        for i in range(0, len(syms)):
+            sym = syms[i]
+            x, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=False)
+            predictions[sym] = x
+
+        self.predictions = self.transform(predictions)
+
+    def determine_price_based_on_std(self, sym, usd_available, side, std_mult=1.0, mu_mult=1.0):
+
+        # initialize variables
+        book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
+
+        wallet = self.portfolio.wallets[sym]
+        predicted_prices = self.predictions[sym]
+        mu, std, last_diff = wallet.product.get_psm_mean_and_std_of_price_changes(predicted_prices)
+        if mu is None:
+            return None, None, None, None, None
+        mu *= mu_mult
+
+        # Calculate the coefficient used to determine the which multiple of the std to use
+        std_coeff = std_mult * self.settings.read_setting_from_file('std')
+
+        # determine trade price
+        std_offset = coeff * (std_coeff * std) + mu
+        order_coeff = 1 + std_offset
+        current_price = wallet.product.get_top_order(book_side)
+        if (side == 'buy') and ((last_diff-1) > np.abs(std_coeff * std + mu)):
+            order_coeff = 1
+            current_price = wallet.product.get_top_order(opposing_book_side)
+        elif (coeff * last_diff < coeff * std_offset):
+            order_coeff -= last_diff
+        # else:
+        #     order_coeff = 1
+        #     current_price = wallet.product.get_top_order(opposing_book_side) + coeff * wallet.product.usd_res
+
+        buy_price = order_coeff * current_price
+        size = usd_available / buy_price
+
+        return buy_price, wallet, size, std, mu
+
 # def determine_past_propogation_offset_and_std
+# def update_propogator
 # def sort_currencies
-# def list_held_currencies
-# def buy_min_currencies
+# def list_held_currenciesencies
+# def buy_min_curr
 # def sell_decisions #This method determines which of the held currencies to sell
 # def sell_max_currencies
-
-
 
 class PortfolioTracker:
 
@@ -894,7 +1068,7 @@ class PortfolioTracker:
         return portfolio_value
 
 
-def run_bot():
+def run_bot(bot_type='psm'):
     # -- Secret/changing variable declerations
     if len(sys.argv) > 2:
         # Definition from a shell file
@@ -909,7 +1083,10 @@ def run_bot():
 
     # Setup initial variables
     print('Initializing bot')
-    bot = SpreadBot(api_input, secret_input, passphrase_input)
+    if bot_type == 'psm':
+        bot = PSMSpreadBot(api_input, secret_input, passphrase_input)
+    else:
+        bot = SpreadBot(api_input, secret_input, passphrase_input)
     bot.portfolio.update_value()
     print('Initializing portfolio tracking')
     portfolio_tracker = PortfolioTracker(bot.portfolio)
@@ -918,15 +1095,22 @@ def run_bot():
 
     sleep(1)
     last_check = 0
+    last_predict = 0
     last_plot = 0
     plot_period = 60
     check_period = 1
+    predict_period = 60 * TRADE_LEN
     err_counter = 0
 
     while (11 < portfolio_value) and (err_counter < 10):
         current_time = datetime.now().timestamp()
+
         if (current_time > (last_check + check_period)):
             try:
+                # Predict using psm
+                if (current_time > (last_predict + predict_period)) and (bot_type == 'psm'):
+                    bot.predict()
+                    last_predict = datetime.now().timestamp()
                 # Trade
                 bot.portfolio.update_value()
                 last_check = datetime.now().timestamp()
@@ -941,6 +1125,7 @@ def run_bot():
                 if (current_time > (last_plot + plot_period)):
                     portfolio_value = portfolio_tracker.plot_returns()
                     last_plot = datetime.now().timestamp()
+
                 err_counter = 0
 
             except Exception as e:
@@ -952,6 +1137,31 @@ def run_bot():
     print('Loop END')
 
 
-
 if __name__ == "__main__":
-    run_bot()
+    run_type = 'run'
+    if run_type == 'run':
+        run_bot()
+    elif run_type == 'other':
+        api_input = input('What is the api key? ')
+        secret_input = input('What is the secret key? ')
+        passphrase_input = input('What is the passphrase? ')
+        psmbot = PSMSpreadBot(api_input, secret_input, passphrase_input)
+        bot = SpreadBot(api_input, secret_input, passphrase_input)
+        psmbot.predict()
+
+        for sym in psmbot.symbols:
+            plt.figure()
+            prediction = psmbot.predictions[sym]
+            plt.plot(prediction)
+            plt.title(sym)
+            plt.xlabel('Time (min)')
+            plt.ylabel('Price ($)')
+            price_psm, _, _, psm_std, psm_mu = psmbot.determine_trade_price(sym, 10, 'buy')
+            price, _, _, std, mu = bot.determine_trade_price(sym, 10, 'buy')
+            print(sym)
+            print('PSM price: ' + num2str(price_psm, 4) + ' , Naive price: '  + num2str(price, 4))
+            print('PSM mu: ' + num2str(100*psm_mu, 4) + '% , Naive mu: ' + num2str(100*mu, 4) + '%')
+            print('PSM std: ' + num2str(100*psm_std, 4) + '% , Naive std: ' + num2str(100*std, 4) + '%')
+            print('--------\n')
+
+        plt.show()

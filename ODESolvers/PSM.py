@@ -103,6 +103,13 @@ def nominal_magnitude(x0, dx0, omega0):
 
     return mag
 
+# This creates an average trend line
+def trend_line(data, order=1):
+    x = np.arange(0, len(data))
+    coeff = np.polyfit(x, data, order)
+    trend = np.polyval(coeff, x)
+    return trend
+
 # -- PSM for N coupled oscillators --
 
 # This class represents the polynomial for a single mass (mass n)
@@ -306,7 +313,9 @@ class SystemPropogator:
         x_arr = np.array([])
         t_arr = np.array([])
         for x_current, t_current in zip(x, t_fit):
-            if t_current in time_arr:
+            closest_time_arr_t = time_arr[np.argmin(np.abs(time_arr - t_current))]
+            closest_fit_t = t_fit[np.argmin(np.abs(closest_time_arr_t- t_fit))]
+            if t_current == closest_fit_t:
                 x_arr = np.append(x_arr, x_current)
                 t_arr = np.append(t_arr, t_current)
 
@@ -320,24 +329,25 @@ class SystemPropogator:
 
         return x, t_fit
 
-    def reset(self, x0s=None, y0s=None):
+    def reset(self, x0s=None, y0s=None, omegas=None):
         # Erase the past data for repropagation
         self.polynomials = {self.t0: []}
         self.N = len(self.omegas)
-        omegas = self.omegas
         if not x0s is None:
             self.x0s = x0s
         if not y0s is None:
             self.y0s = y0s
+        if not omegas is None:
+            self.omegas = omegas
 
         for i in range(0, self.N):
             x0 = self.x0s[i]
             y0 = self.y0s[i]
             if i < (self.N - 1):
-                omega_plus = omegas[i + 1]
+                omega_plus = self.omegas[i + 1]
             else:
                 omega_plus = 0
-            self.polynomials[self.t0].append(Polynomial(x0, y0, self.zetas[i], omegas[i], omega_plus))
+            self.polynomials[self.t0].append(Polynomial(x0, y0, self.zetas[i], self.omegas[i], omega_plus))
 
     def simulate(self, data_sets, t, step_size, poly_order, eval_lens=None, del_len=5):
         # This method evaluates the polynomials at each point in eval_lens then puts them together in a continuous way
@@ -429,31 +439,70 @@ def create_propogator_from_data(raw_data_list, initial_t=0):
 
 
 if __name__ == "__main__":
-    use_saved_data = False
-    sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
+    use_saved_data = True
+    sym_list = ('BTC', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX', 'XTZ', 'ETH')
     if not use_saved_data:
-        cc = CryptoCompare(date_from='2019-11-03 00:30:00 EST', exchange='Coinbase')
+        cc = CryptoCompare(date_from='2019-11-08 11:30:00 EST', exchange='Coinbase')
         raw_data_list = []
         for sym in sym_list:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
             raw_data_list.append(data)
+            data_len = np.min(np.array([len(x) for x in raw_data_list]))
+            concat_data_list = [x[0:data_len] for x in raw_data_list]
             print(sym)
 
         pickle.dump(raw_data_list, open("psm_test.pickle", "wb"))
     else:
         raw_data_list = pickle.load(
-            open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/psm_test.pickle", "rb"))
+            open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ODESolvers/psm_test.pickle", "rb"))
+        data_len = np.min(np.array([len(x) for x in raw_data_list]))
+        concat_data_list = [x[0:data_len] for x in raw_data_list]
 
-    train_len = 500  # Length of data to be used for training
-    test_len = 100
+    train_len = 200  # Length of data to be used for training
+    test_len = 90
     t = np.arange(0, test_len)
-    psm_step_size = 0.02
-    psm_order = 5
+    psm_step_size = 0.01
+    psm_order = 10
     train_list = [x[0:train_len] for x in raw_data_list]
 
     system_fit, coeff_list, shift_list = create_propogator_from_data(train_list)
 
     test_list = [x[train_len:train_len+test_len] for x in raw_data_list]
     norm_test_list = [(x - shift)/(coeff) for x, shift, coeff, in zip(test_list, shift_list, coeff_list)]
-    system_fit.plot_simulation(norm_test_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list,
-                               eval_lens=[10, 15, 20, 30])
+    norm_train_list = [(x - shift)/(coeff) for x, shift, coeff, in zip(train_list, shift_list, coeff_list)]
+    test_x0s = [x[0] for x in norm_test_list]
+    test_y0s = [np.mean(np.diff(x[-100::])) for x in norm_train_list]
+    system_fit.reset(x0s=test_x0s, y0s=test_y0s)
+    # system_fit.plot_simulation(norm_test_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list,
+    #                            eval_lens=[10, 15, 20, 30], del_len=100)
+
+    for i in range(0, len(sym_list)):
+        coeff = coeff_list[i]
+        shift = shift_list[i]
+        progress_printer(system_fit.N, i, tsk='Evaluationg Polynomials')
+        x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=i + 1, verbose=i==False)
+        x_fit = x_fit[~np.isnan(x_fit)]
+        x_raw = concat_data_list[i][train_len:train_len+test_len]
+        x0 = np.mean(concat_data_list[i][train_len-10:train_len])
+        t_plot_raw = np.linspace(0, np.max(t), len(x_raw))
+        t_plot_fit = np.linspace(0, np.max(t), len(x_fit))
+        true_fit = np.polyfit(t, x_raw, 1)
+        true_fit_line = np.polyval(true_fit, t_plot_raw)
+        trend = trend_line(coeff * ( x_fit - x_fit[0] ))
+
+        plt.figure()
+        # fit_len = len(x_fit)
+        plt.plot(t_plot_raw, x_raw) # True data
+        plt.plot(t_plot_fit, trend - trend[0] + x_raw[0]) # Calculated fit line
+        plt.plot(t_plot_raw, true_fit_line) # True fit line
+        plt.plot(np.array([0, np.max(t)]),  np.mean(np.diff(train_list[i][-100::]))*np.ones(2)*np.array([0, np.max(t)]) + x_raw[0]) # Naive fit line
+        plt.legend(('true', 'projected fit', 'actual fit', 'naive fit'))
+        plt.title( sym_list[i] + ' Predicted Price Vs Actual')
+        plt.xlabel('Time (min)')
+        plt.ylabel('Price ($)')
+
+        print(sym_list[i])
+        print('true std: ' + num2str(np.std(np.diff(x_raw)), digits=5))
+        print('psm std: ' + num2str(np.std(np.diff(coeff*x_fit)), digits=5))
+        print('naive std: ' + num2str(np.std(np.diff(train_list[i][-100::])), digits=5))
+    plt.show()

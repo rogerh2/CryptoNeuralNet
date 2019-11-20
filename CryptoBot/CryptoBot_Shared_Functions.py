@@ -3,6 +3,7 @@ import numpy as np
 import scipy.stats
 from tzlocal import get_localzone
 from datetime import datetime
+from datetime import timedelta
 from time import sleep
 import traceback
 
@@ -124,12 +125,20 @@ def print_err_msg(section_text, e, err_counter):
     return err_counter
 
 def current_est_time():
-    naive_date_from = datetime.now()
+    naive_date_from = datetime.utcnow()
     utc = pytz.timezone('UTC')
     est_date_from = utc.localize(naive_date_from)
     est = pytz.timezone('America/New_York')
     est_date = est_date_from.astimezone(est)
     return est_date
+
+def offset_current_est_time(minute_offset, fmt=None):
+    dt = current_est_time() - timedelta(minutes=minute_offset)
+    if not fmt is None:
+        return dt.strftime(fmt)
+    else:
+        return dt
+
 
 def zero(data):
     return np.zeros(len(data))
