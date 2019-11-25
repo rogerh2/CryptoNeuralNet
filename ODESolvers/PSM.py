@@ -458,7 +458,7 @@ if __name__ == "__main__":
         data_len = np.min(np.array([len(x) for x in raw_data_list]))
         concat_data_list = [x[0:data_len] for x in raw_data_list]
 
-    train_len = 200  # Length of data to be used for training
+    train_len = 600  # Length of data to be used for training
     test_len = 90
     t = np.arange(0, test_len)
     psm_step_size = 0.01

@@ -41,20 +41,20 @@ import re
 # SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
-MIN_SPREAD = 1.005
-TRADE_LEN = 30
+MIN_SPREAD = 1.012
+TRADE_LEN = 60
 PSM_EVAL_STEP_SIZE = 0.1
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
-# else:
-#     override_saved_data = input('Override data in current saved data folder? (yes/no)' )
-#     if override_saved_data != 'yes': # TODO change to allow inclusion of a new file name (also print old one)
-#         raise ValueError('Folder for saved plots already taken')
+else:
+    override_saved_data = input('Override data in current saved data folder? (yes/no)' )
+    if override_saved_data != 'yes': # TODO change to allow inclusion of a new file name (also print old one)
+        raise ValueError('Folder for saved plots already taken')
 
 QUOTE_ORDER_MIN = 10
-PUBLIC_SLEEP = 0.01
-PRIVATE_SLEEP = 0.1
+PUBLIC_SLEEP = 0.4
+PRIVATE_SLEEP = 0.21
 
 class Product:
     orders = {'buy': {}, 'sell': {}}
@@ -221,14 +221,14 @@ class Product:
 
         return weighted_mu, weighted_std, last_fill
 
-    def get_psm_mean_and_std_of_price_changes(self, predicted_fills):
-        fills, _ = self.get_recent_fills()
-        if fills is None:
-            return None, None, None
-        # Get the standard deviation based on past price movements
-        fill_arr = np.array([float(fill['price']) for fill in fills])
+    def get_psm_mean_and_std_of_price_changes(self, predicted_fills, fill_arr):
+        # fills, _ = self.get_recent_fills()
+        # if fills is None:
+        #     return None, None, None
+        # # Get the standard deviation based on past price movements
+        # fill_arr = np.array([float(fill['price']) for fill in fills])
         fill_diff_ratio = self.normalize_price_changes(fill_arr)
-        std = np.std(fill_diff_ratio)
+        weighted_std = np.std(fill_diff_ratio)
 
         # Get the mean based on the predicted price movement
         t = np.linspace(0, TRADE_LEN, len(predicted_fills))
@@ -236,7 +236,7 @@ class Product:
         weighted_mu = coeff[0] / np.mean(fill_arr) # This does not need to be wheighted because it is already based of time
 
         # Adjust mu and std to account for number of trades over time
-        _, weighted_std, last_fill = self.adjust_fill_data(0, std, fill_diff_ratio)
+        _, _, last_fill = self.adjust_fill_data(0, 0, fill_diff_ratio)
 
         return weighted_mu, weighted_std, last_fill
 
@@ -618,10 +618,11 @@ class SpreadBot(Bot):
         _, _, coeff = self.get_side_depedent_vars(side)
         price_p, wallet, size_p, std, mu = self.determine_price_based_on_std(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=0.5)
         price_s, size_s = self.determine_price_based_on_fill_size(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=0.5)
-        if coeff * price_p > coeff * price_s: # Always use the more conservative price
-            return price_p, wallet, size_p, std, mu
-        else:
-            return price_s, wallet, size_s, std, mu
+        return price_p, wallet, size_p, std, mu
+        # if coeff * price_p > coeff * price_s: # Always use the more conservative price
+        #     return price_p, wallet, size_p, std, mu
+        # else:
+        #     return price_s, wallet, size_s, std, mu
 
     def cancle_out_of_bound_buy_orders(self, top_syms):
         # Ensure to update portfolio value before running
@@ -856,6 +857,7 @@ class PSMSpreadBot(SpreadBot):
             raw_data[sym] = data
 
         raw_data_list = [raw_data[sym] for sym in self.symbols]
+        self.raw_data = raw_data
 
         self.del_len = slope_avg_len
         self.propogator, coeff_list, shift_list = create_propogator_from_data(raw_data_list)
@@ -906,17 +908,21 @@ class PSMSpreadBot(SpreadBot):
         self.propogator.reset(x0s=x0s, y0s=y0s)
 
     def get_new_propogator(self, raw_data_list):
+        # create the new propogator and set up variables
         self.propogator, coeff_list, shift_list = create_propogator_from_data(raw_data_list)
         self.predictions = {}
         self.coefficients = {}
         self.shifts = {}
         syms = self.symbols
 
+        # reset predictions and set new transformations
         for i in range(0, len(syms)):
             sym = syms[i]
             self.predictions[sym] = None  # will use as max, min, true_std, mean_offset
             self.coefficients[sym] = coeff_list[i]
             self.shifts[sym] = shift_list[i]
+
+        # determine propogator error
 
     def predict(self):
         # Setup Initial Variables
@@ -926,6 +932,7 @@ class PSMSpreadBot(SpreadBot):
 
         # Collect data and create propogator
         raw_data = self.collect_next_data()
+        self.raw_data = raw_data
         raw_data_list = [raw_data[sym] for sym in self.symbols]
         self.get_new_propogator(raw_data_list)
         self.reset_propogator_start_point(raw_data)
@@ -946,8 +953,7 @@ class PSMSpreadBot(SpreadBot):
         book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
 
         wallet = self.portfolio.wallets[sym]
-        predicted_prices = self.predictions[sym]
-        mu, std, last_diff = wallet.product.get_psm_mean_and_std_of_price_changes(predicted_prices)
+        mu, std, last_diff = wallet.product.get_psm_mean_and_std_of_price_changes(self.predictions[sym], self.raw_data[sym])
         if mu is None:
             return None, None, None, None, None
         mu *= mu_mult
