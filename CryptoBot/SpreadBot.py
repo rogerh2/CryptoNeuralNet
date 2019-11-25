@@ -883,11 +883,15 @@ class PSMSpreadBot(SpreadBot):
 
         return raw_data
 
+    def transform_single_sym(self, sym, data):
+        transform_data = self.coefficients[sym] * data + self.shifts[sym]
+        return transform_data
+
     def transform(self, raw_data):
         transform_data = {}
         syms = self.symbols
         for sym in syms:
-            transform_data[sym] = self.coefficients[sym] * raw_data[sym] + self.shifts[sym]
+            transform_data[sym] = self.transform_single_sym(sym, raw_data[sym])
 
         return transform_data
 
@@ -899,9 +903,9 @@ class PSMSpreadBot(SpreadBot):
 
         return transform_data
 
-    def reset_propogator_start_point(self, raw_data_list):
+    def reset_propogator_start_point(self, raw_data):
         # This method sets the propogator initial values to the most recent price
-        normalized_raw_data = self.inverse_transform(raw_data_list)
+        normalized_raw_data = self.inverse_transform(raw_data)
         normalized_raw_data_list = [normalized_raw_data[sym] for sym in self.symbols]
         x0s = [x[-1] for x in normalized_raw_data_list]
         y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
@@ -913,6 +917,7 @@ class PSMSpreadBot(SpreadBot):
         self.predictions = {}
         self.coefficients = {}
         self.shifts = {}
+        self.errors = {}
         syms = self.symbols
 
         # reset predictions and set new transformations
@@ -923,6 +928,26 @@ class PSMSpreadBot(SpreadBot):
             self.shifts[sym] = shift_list[i]
 
         # determine propogator error
+        # Setup Initial Variables
+        training_raw_data_list = {}
+        for sym in self.symbols:
+            training_raw_data_list[sym] = self.raw_data[sym][0:TRADE_LEN]
+        self.reset_propogator_start_point(training_raw_data_list)
+        time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
+        step_size = 0.01
+        polynomial_order = 10
+
+        for i in range(0, len(syms)):
+            sym = syms[i]
+            predicted_price, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=False)
+            predicted_price = self.transform_single_sym(sym, predicted_price)
+            true_price = raw_data_list[i][-TRADE_LEN::]
+
+            predicted_coeff = np.polyfit(time_arr, predicted_price, 1)
+            true_coeff = np.polyfit(np.arange(0, len(true_price)), true_price, 1)
+            self.errors[sym] = np.abs((predicted_coeff[0] - true_coeff[0]) / (true_price[-1]))
+
+
 
     def predict(self):
         # Setup Initial Variables
@@ -1144,7 +1169,7 @@ def run_bot(bot_type='psm'):
 
 
 if __name__ == "__main__":
-    run_type = 'run'
+    run_type = 'other'
     if run_type == 'run':
         run_bot()
     elif run_type == 'other':
@@ -1158,6 +1183,7 @@ if __name__ == "__main__":
         for sym in psmbot.symbols:
             plt.figure()
             prediction = psmbot.predictions[sym]
+            err = psmbot.errors[sym]
             plt.plot(prediction)
             plt.title(sym)
             plt.xlabel('Time (min)')
@@ -1168,6 +1194,7 @@ if __name__ == "__main__":
             print('PSM price: ' + num2str(price_psm, 4) + ' , Naive price: '  + num2str(price, 4))
             print('PSM mu: ' + num2str(100*psm_mu, 4) + '% , Naive mu: ' + num2str(100*mu, 4) + '%')
             print('PSM std: ' + num2str(100*psm_std, 4) + '% , Naive std: ' + num2str(100*std, 4) + '%')
+            print('Calculated Mean Error (percentage of real): ' + num2str(TRADE_LEN*100*err))
             print('--------\n')
 
         plt.show()
