@@ -14,7 +14,7 @@
 # }]
 
 import matplotlib
-# matplotlib.use('Agg')
+matplotlib.use('Agg')
 import sys
 import cbpro
 import pandas as pd
@@ -676,7 +676,7 @@ class SpreadBot(Bot):
             std = top_sym_data[1][4]
             spread = top_sym_data[1][5]
             size = top_sym_data[1][6]
-            if spread < 1.004:
+            if spread < MIN_SPREAD:
                 return_None = True
         else:
             top_sym = []
@@ -1004,6 +1004,30 @@ class PSMSpreadBot(SpreadBot):
 
         return buy_price, wallet, size, std, mu
 
+    def sort_currencies(self, usd_available, print_sym):
+        # setup
+        ranking_dict = {}
+
+        # create dictionary for symbols and relevant data
+        for sym in self.symbols:
+            if print_sym:
+                print(sym)
+            buy_price, wallet, size, std, mu = self.determine_trade_price(sym, usd_available, side='buy')
+            if buy_price is None:
+                continue
+            sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell', mean_multiplier=2) # Use mean_multiplier of 2 to account for movement after the buy
+            current_price = wallet.product.get_top_order('bids')
+            spread = 1 + ( sell_price - buy_price ) / buy_price
+            rank = 1/self.errors[sym]#(sell_price - current_price) / buy_price
+            if spread < MIN_SPREAD:
+                rank = -1 # eliminate trades with low spreads
+            ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
+
+        # sort (by mean first then standard deviation)
+        sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True) #TODO check if ranking highest value first or lowest
+
+        return sorted_syms
+
 # def determine_past_propogation_offset_and_std
 # def update_propogator
 # def sort_currencies
@@ -1169,7 +1193,7 @@ def run_bot(bot_type='psm'):
 
 
 if __name__ == "__main__":
-    run_type = 'other'
+    run_type = 'run'
     if run_type == 'run':
         run_bot()
     elif run_type == 'other':
