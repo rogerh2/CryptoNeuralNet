@@ -41,9 +41,10 @@ import re
 # SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
-MIN_SPREAD = 1.012
-TRADE_LEN = 60
-PSM_EVAL_STEP_SIZE = 0.1
+MIN_SPREAD = 1.012 # This is the minnimum spread before a trade can be made
+TRADE_LEN = 60 # This is the amount of time I desire for trades to be filled in
+PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
+MIN_PORTFOLIO_VALUE = 30 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -769,7 +770,8 @@ class SpreadBot(Bot):
                 else:
                     top_sym = top_syms[i]
                     buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
-                    sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
+                    sell_price = MIN_SPREAD * buy_price  # select a desired value per trade, and just be happy when you get it
+
                     if buy_price is None:
                         continue
 
@@ -1157,7 +1159,7 @@ def run_bot(bot_type='psm'):
     predict_period = 60 * TRADE_LEN
     err_counter = 0
 
-    while (11 < portfolio_value) and (err_counter < 10):
+    while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
         current_time = datetime.now().timestamp()
 
         if (current_time > (last_check + check_period)):
