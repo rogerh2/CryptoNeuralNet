@@ -1,5 +1,6 @@
 import numpy as np
 import pickle
+from time import time
 from matplotlib import pyplot as plt
 from scipy import optimize
 from scipy.fftpack import fft
@@ -187,7 +188,7 @@ class Polynomial:
 # This class represents a system of ode's (all N masses). It holds the polynomials and evolves them over time
 class SystemPropogator:
 
-    def __init__(self, x0s, y0s, omegas, zetas, t0=0):
+    def __init__(self, x0s, y0s, omegas, zetas, t0=0, identifiers=None):
         # TODO add dictionary to map symbols to indices (for instance 'BTC' could be mapped to self.N)
         self.t0 = t0
         self.x0s = x0s
@@ -195,6 +196,8 @@ class SystemPropogator:
         self.polynomials = {t0:[]}
         self.N = len(x0s)
         self.omegas = omegas
+        self.zetas = zetas
+        self.keys = identifiers
         for i in range(0, self.N):
             x0 = x0s[i]
             y0 = y0s[i]
@@ -385,6 +388,16 @@ class SystemPropogator:
 
         plt.show()
 
+    def save(self, file_path):
+        model_topology = {'keys':self.keys, 'omega':self.omegas, 'zeta':self.zetas}
+        pickle.dump(model_topology, open(file_path, "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load(self, file_path):
+        model_topology = pickle.load(open(file_path, "rb"))
+        self.keys = model_topology['keys']
+        self.omegas = model_topology['omega']
+        self.zetas = model_topology['zeta']
+
     def __getitem__(self, n):
         N = len(self.polynomials[self.t0])
         if (n > 0) and (n < (N + 1)):
@@ -417,12 +430,13 @@ class Hamiltonian:
 
 class SystemIterator:
 
-    def __init__(self, x0s, y0s, omegas, zetas, H_spectrum, epsilon, max_iterations=10, t0=0):
+    def __init__(self, x0s, y0s, omegas, zetas, change_coeff, epsilon, max_iterations=10, t0=0, identifiers=None):
         self.t0 = t0
-        self.propogator = SystemPropogator(x0s, y0s, omegas, zetas, t0)
-        self.hamiltonian = H_spectrum
+        self.propogator = SystemPropogator(x0s, y0s, omegas, zetas, t0, identifiers=identifiers)
+        self.min_chang_coeff = change_coeff
         self.epsilon = epsilon
         self.max_iter = max_iterations
+        self.keys = identifiers
 
     def get_nth_initial_conditions(self, omega, H):
         # generate a random intial velocity and position that satifies the energy spectrum at that frequency
@@ -458,38 +472,27 @@ class SystemIterator:
 
     def update_propogator(self, X_true_poly, order, data_list):
         # Used fixed point iteration to create a new propogator
-        initial_polys = [np.array([x[0], np.mean(np.diff(x[0:10]))]) for x in data_list]
+        initial_polys = [np.polyfit(np.arange(0, len(x)), x, 1) for x in data_list]
         x0s = []
         y0s = []
         omegas = []
         zetas = []
 
         for n in range(0, self.propogator.N):
-            poly = np.append(initial_polys[n], X_true_poly[n][2:order+1])
-            if n == self.propogator.N-1:
-                prev_poly = np.append(initial_polys[n-1], X_true_poly[n - 1][2:order + 2])
-                omega, zeta = self.get_next_nth_omega_zeta(n, X_prev=prev_poly, X=poly)
-            elif n == 0:
-                next_poly = np.append(initial_polys[n+1], X_true_poly[n + 1][2:order + 2])
-                omega, zeta = self.get_next_nth_omega_zeta(n, X=poly, X_next=next_poly)
-            else:
-                prev_poly = np.append(initial_polys[n - 1], X_true_poly[n - 1][2:order + 2])
-                next_poly = np.append(initial_polys[n + 1], X_true_poly[n + 1][2:order + 2])
-                omega, zeta = self.get_next_nth_omega_zeta(n, X_prev=prev_poly, X=poly, X_next=next_poly)
+            # poly = np.append(initial_polys[n], X_true_poly[n][2:order+1])
+            current_coeff = X_true_poly[n]
+            omega = self.propogator.omegas[n-1] + (np.random.rand() - 0.5)/50
+            zeta = 0#self.propogator.zetas[n-1] + (np.random.rand() - 0.5)/500
 
-            if np.isnan(omega):
-                omega = self.propogator.omegas[n-1]
-
-            x0 = poly[0]
-            y0 = poly[1]
-
+            x0 = initial_polys[n][1]
+            y0 = initial_polys[n][0]
 
             x0s.append(x0)
             y0s.append(y0)
             omegas.append(omega)
             zetas.append(zeta)
 
-        return SystemPropogator(x0s, y0s, omegas, zetas, self.t0)
+        return SystemPropogator(x0s, y0s, omegas, zetas, self.t0, identifiers=self.keys)
 
     def compute_system_err(self, x_list, time, step_size, test_len, propogator=None, start_i=0):
         err=0
@@ -506,12 +509,12 @@ class SystemIterator:
 
         return err, x_guess, t_guess
 
-    def random_walk_optimization(self, t, x_list, step_size, order, val_train_split=0.3, propogation_len=30):
+    def random_walk_optimization(self, t, x_list, step_size, order, propogation_len=30):
         segment_start_ind = 0
         x = x_list[-1]
         _, x_guess, t_guess = self.compute_system_err(x_list, np.arange(0, propogation_len), step_size, propogation_len, start_i=segment_start_ind) #TODO add validation data
         last_err = 1
-
+        #TODO add validation data
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.plot(t, x)
@@ -562,10 +565,11 @@ class SystemIterator:
 
 if __name__ == "__main__":
     # -- Get raw data --
+    model_save_folder = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/psm_models//'
     use_saved_data = True
     sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
     if not use_saved_data:
-        cc = CryptoCompare(date_from='2019-10-24 16:30:00 EST', date_to='2019-10-25 09:30:00 EST', exchange='Coinbase')
+        cc = CryptoCompare(date_from='2019-12-08 19:30:00 EST', date_to='2019-12-09 18:30:00 EST', exchange='Coinbase')
         raw_data_list = []
         for sym in sym_list:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -574,9 +578,9 @@ if __name__ == "__main__":
 
         data_len = np.min(np.array([len(x) for x in raw_data_list]))
         concat_data_list = [x[0:data_len] for x in raw_data_list]
-        pickle.dump(concat_data_list, open("psm_test.pickle", "wb"))
+        pickle.dump(concat_data_list, open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "wb"))
     else:
-        concat_data_list = pickle.load(open( "/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ToyScripts/psm_test.pickle", "rb" ))
+        concat_data_list = pickle.load(open( "/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "rb" ))
 
     data_list = [(x - np.mean(x)) / (np.max(x) - np.min(x)) for x in concat_data_list]
     coeff_list = [(np.max(x) - np.min(x)) for x in concat_data_list]
@@ -610,18 +614,24 @@ if __name__ == "__main__":
     t = np.arange(0, train_len)
     x_list = [x[0:train_len] for x in data_list]
 
-    sys_iter = SystemIterator(initial_xs, initial_ys, omegas, zetas, None, 0.001)
-    # sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order)
+    # Optimize the model and save parameters
+    sys_iter = SystemIterator(initial_xs, initial_ys, omegas, zetas, None, 0.005, max_iterations=150, identifiers=sym_list)
+    sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order)
     system_fit = sys_iter.propogator
+    system_fit.save(model_save_folder + 'psm_model_' + str(time()) + ''.join(sym_list) + '.pickle')
+
 
     # --  Test Propogator --
-    test_x0s = [x[train_len] for x in data_list]
-    test_y0s = [np.mean(np.diff(x[train_len-10:train_len])) for x in data_list]
+    initial_polys = [np.polyfit(np.arange(0, test_len), x[train_len-test_len:train_len], 1) for x in data_list]
+    # test_x0s0 = [x[train_len] for x in data_list]
+    # test_y0s0 = [np.mean(np.diff(x[train_len-10:train_len])) for x in data_list]
+    test_x0s = [np.polyval(x, test_len) for x in initial_polys]
+    test_y0s = [x[0] for x in initial_polys]
     t = np.arange(0, test_len)
     x_list = [x[train_len:train_len+test_len] for x in data_list]
     system_fit.reset(x0s=test_x0s, y0s=test_y0s)
 
-    system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
+    # system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
 
     for i in range(0, len(sym_list)):
         coeff = coeff_list[i]
