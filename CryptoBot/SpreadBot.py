@@ -42,7 +42,7 @@ import re
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 MIN_SPREAD = 1.012 # This is the minnimum spread before a trade can be made
-TRADE_LEN = 60 # This is the amount of time I desire for trades to be filled in
+TRADE_LEN = 15 # This is the amount of time I desire for trades to be filled in
 PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
 MIN_PORTFOLIO_VALUE = 30 # This is the value that will trigger the bot to stop trading
 
@@ -234,7 +234,7 @@ class Product:
         # Get the mean based on the predicted price movement
         t = np.linspace(0, TRADE_LEN, len(predicted_fills))
         coeff = np.polyfit(t, predicted_fills, 1)
-        weighted_mu = coeff[0] / np.mean(fill_arr) # This does not need to be wheighted because it is already based of time
+        weighted_mu = coeff[0] / np.mean(fill_arr) # This does not need to be wheighted because it is already based off time
 
         # Adjust mu and std to account for number of trades over time
         _, _, last_fill = self.adjust_fill_data(0, 0, fill_diff_ratio)
@@ -551,6 +551,18 @@ class Bot:
 
 class SpreadBot(Bot):
 
+    def determine_current_avg_price(self, sym):
+        dt_str_format = '%Y-%m-%d %H:%M:%S %Z'
+        t_len = 5*TRADE_LEN
+        t_offset_str = offset_current_est_time(t_len, fmt=dt_str_format)
+        cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
+        data = cc.minute_price_historical(sym)[sym + '_close'].values
+        sleep(0.3)
+        coeff = np.polyfit(np.arange(0, t_len), data)
+        price = np.polyval(coeff, t_len)
+
+        return price
+
     def determine_price_based_on_std(self, sym, usd_available, side, std_mult=1.0, mu_mult=1.0):
 
         # initialize variables
@@ -568,12 +580,12 @@ class SpreadBot(Bot):
         # determine trade price
         std_offset = coeff * (std_coeff * std) + mu
         order_coeff = 1 + std_offset
-        current_price = wallet.product.get_top_order(book_side)
-        if (side == 'buy') and ((last_diff-1) > np.abs(std_coeff * std + mu)):
-            order_coeff = 1
-            current_price = wallet.product.get_top_order(opposing_book_side)
-        elif (coeff * last_diff < coeff * std_offset):
-            order_coeff -= last_diff
+        current_price = self.determine_current_avg_price(sym) #wallet.product.get_top_order(book_side)
+        # if (side == 'buy') and ((last_diff-1) > np.abs(std_coeff * std + mu)):
+        #     order_coeff = 1
+        #     # current_price = wallet.product.get_top_order(opposing_book_side)
+        # elif (coeff * last_diff < coeff * std_offset):
+        #     order_coeff -= last_diff
         # else:
         #     order_coeff = 1
         #     current_price = wallet.product.get_top_order(opposing_book_side) + coeff * wallet.product.usd_res
@@ -770,7 +782,7 @@ class SpreadBot(Bot):
                 else:
                     top_sym = top_syms[i]
                     buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
-                    sell_price = MIN_SPREAD * buy_price  # select a desired value per trade, and just be happy when you get it
+                    sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
 
                     if buy_price is None:
                         continue
@@ -810,8 +822,8 @@ class SpreadBot(Bot):
                 continue
 
             # Filter unnecessary currencies
-            if limit_price > e_cutoff_price:
-                available = wallet.value['SYM']
+            # if limit_price > e_cutoff_price:
+            #     available = wallet.value['SYM']
             if (available < wallet.product.base_order_min):
                 continue
             if (available * limit_price < QUOTE_ORDER_MIN):
@@ -821,13 +833,13 @@ class SpreadBot(Bot):
 
             print('Evaluating sell order for ' + sym)
             # Cancel sell orders that have a large resistance
-            if (limit_price > cutoff_price):
-                alt_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=2)
-                print('Reducing sell price because sell price of ' + num2str(limit_price) + ' out of bounds' + '\n')
-                self.update_spread_prices_limits(alt_price, 'sell', sym)
-                self.cancel_out_of_bound_orders('sell', alt_price, sym)
-                available = wallet.get_amnt_available('sell')
-                limit_price = alt_price
+            # if (limit_price > cutoff_price):
+            #     alt_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=2)
+            #     print('Reducing sell price because sell price of ' + num2str(limit_price) + ' out of bounds' + '\n')
+            #     self.update_spread_prices_limits(alt_price, 'sell', sym)
+            #     self.cancel_out_of_bound_orders('sell', alt_price, sym)
+            #     available = wallet.get_amnt_available('sell')
+            #     limit_price = alt_price
 
 
             print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n')

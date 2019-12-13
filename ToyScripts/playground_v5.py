@@ -569,7 +569,7 @@ if __name__ == "__main__":
     use_saved_data = True
     sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
     if not use_saved_data:
-        cc = CryptoCompare(date_from='2019-12-08 19:30:00 EST', date_to='2019-12-09 18:30:00 EST', exchange='Coinbase')
+        cc = CryptoCompare(date_from='2019-12-10 22:00:00 EST', date_to='2019-12-11 22:00:00 EST', exchange='Coinbase')
         raw_data_list = []
         for sym in sym_list:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -615,7 +615,7 @@ if __name__ == "__main__":
     x_list = [x[0:train_len] for x in data_list]
 
     # Optimize the model and save parameters
-    sys_iter = SystemIterator(initial_xs, initial_ys, omegas, zetas, None, 0.005, max_iterations=150, identifiers=sym_list)
+    sys_iter = SystemIterator(initial_xs, initial_ys, omegas, zetas, None, 0.005, max_iterations=10, identifiers=sym_list)
     sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order)
     system_fit = sys_iter.propogator
     system_fit.save(model_save_folder + 'psm_model_' + str(time()) + ''.join(sym_list) + '.pickle')
