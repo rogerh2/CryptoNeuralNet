@@ -509,7 +509,7 @@ class SystemIterator:
 
         return err, x_guess, t_guess
 
-    def random_walk_optimization(self, t, x_list, step_size, order, propogation_len=30):
+    def random_walk_optimization(self, t, x_list, step_size, order, propogation_len=60):
         segment_start_ind = 0
         x = x_list[-1]
         _, x_guess, t_guess = self.compute_system_err(x_list, np.arange(0, propogation_len), step_size, propogation_len, start_i=segment_start_ind) #TODO add validation data
@@ -591,8 +591,8 @@ if __name__ == "__main__":
     t = np.arange(0, len(data_list[0])) # Time in minutes
     poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
     poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
-    train_len = 500 # Length of data to be used for training
-    test_len = 50
+    train_len = 900 # Length of data to be used for training
+    test_len = 5*60
     poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
     # create the polynomial approximation
@@ -616,9 +616,10 @@ if __name__ == "__main__":
 
     # Optimize the model and save parameters
     sys_iter = SystemIterator(initial_xs, initial_ys, omegas, zetas, None, 0.005, max_iterations=10, identifiers=sym_list)
-    sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order)
+    # sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order, propogation_len=test_len)
     system_fit = sys_iter.propogator
-    system_fit.save(model_save_folder + 'psm_model_' + str(time()) + ''.join(sym_list) + '.pickle')
+    # system_fit.save(model_save_folder + 'psm_model_' + str(time()) + ''.join(sym_list) + '.pickle')
+    system_fit.load('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/psm_models/psm_model_1576334162.853399LTCLINKZRXXLMALGOETHEOSETCXRPXTZBCHDASHREPBTC.pickle')
 
 
     # --  Test Propogator --
@@ -636,7 +637,7 @@ if __name__ == "__main__":
     for i in range(0, len(sym_list)):
         coeff = coeff_list[i]
         shift = shift_list[i]
-        progress_printer(system_fit.N, i, tsk='Evaluationg Polynomials')
+        progress_printer(system_fit.N, i, tsk='Evaluating Polynomials')
         x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=i + 1, verbose=i==False)
         x_raw = concat_data_list[i][train_len:train_len+test_len]
         plt.figure()

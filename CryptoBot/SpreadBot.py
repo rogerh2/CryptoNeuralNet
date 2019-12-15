@@ -229,15 +229,15 @@ class Product:
         # # Get the standard deviation based on past price movements
         # fill_arr = np.array([float(fill['price']) for fill in fills])
         fill_diff_ratio = self.normalize_price_changes(fill_arr)
-        weighted_std = np.std(fill_diff_ratio)
+        std = np.std(fill_diff_ratio)
 
         # Get the mean based on the predicted price movement
         t = np.linspace(0, TRADE_LEN, len(predicted_fills))
         coeff = np.polyfit(t, predicted_fills, 1)
-        weighted_mu = coeff[0] / np.mean(fill_arr) # This does not need to be wheighted because it is already based off time
+        weighted_mu = coeff[0] / np.mean(fill_arr) # This does not need to be wheighted because it is already based of time
 
         # Adjust mu and std to account for number of trades over time
-        _, _, last_fill = self.adjust_fill_data(0, 0, fill_diff_ratio)
+        _, weighted_std, last_fill = self.adjust_fill_data(weighted_mu, std, fill_diff_ratio)
 
         return weighted_mu, weighted_std, last_fill
 
@@ -668,7 +668,7 @@ class SpreadBot(Bot):
             current_price = wallet.product.get_top_order('bids')
             spread = 1 + ( sell_price - buy_price ) / buy_price
             rank = (sell_price - current_price) / buy_price
-            if spread < MIN_SPREAD:
+            if (spread < MIN_SPREAD) or (mu < 0):
                 rank = -1 # eliminate trades with low spreads
             ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
 
@@ -1167,8 +1167,8 @@ def run_bot(bot_type='psm'):
     last_predict = 0
     last_plot = 0
     plot_period = 60
-    check_period = 1
-    predict_period = 60 * TRADE_LEN
+    check_period = 5*60
+    predict_period = 5 * TRADE_LEN
     err_counter = 0
 
     while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
