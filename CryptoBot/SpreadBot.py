@@ -516,7 +516,8 @@ class Bot:
         self.spread_price_limits[sym][side] = last_price
         self.settings.write_setting_to_file('limit ' + side, self.spread_price_limits[sym][side])
 
-    def cancel_out_of_bound_orders(self, side, price, sym):
+    def cancel_out_of_bound_orders(self, side, price, sym, widen_spread=False):
+        # If widen_spread flag is set, will cancel orders that are more conservative (lower sells/higher buys)
         orders = list(self.portfolio.wallets[sym].product.auth_client.get_orders(self.portfolio.wallets[sym].product.product_id))
         sleep(PRIVATE_SLEEP)
         keys_to_delete = []
@@ -524,6 +525,7 @@ class Bot:
             coeff = -1
         else:
             coeff = 1
+        coeff = coeff * (-1)**(widen_spread)
         num_cancelled_orders = 0
 
         for order in orders:
@@ -643,7 +645,10 @@ class SpreadBot(Bot):
             # Find price 2 standard deviations below the change (unlikely buy price to hit)
             wallet = self.portfolio.wallets[sym]
             _, _, last_diff = wallet.product.get_mean_and_std_of_price_changes()
-            minimum_buy_price, _, _, std, mu = self.determine_trade_price(sym, 11, 'buy')
+            nominal_buy_price, _, _, std, mu = self.determine_trade_price(sym, 11, 'buy')
+            std_coeff = self.settings.read_setting_from_file('std')
+            high_scale_coeff = 1 + std_coeff * std_coeff
+            low_scale_coeff = 1 - std_coeff * std_coeff
 
             # std_coeff = 1 - (3 * std_coeff * std) + mu * (mu < 0) # only factor in the mean when it gives a wider margin (make it harder to cancel an order due to short changes)
             if mu is None:
@@ -651,7 +656,11 @@ class SpreadBot(Bot):
             if (np.abs(last_diff) > (std + mu)) and (sym in top_syms):
                 # Don't cancel orders due to one big jump, but do cancel orders that are not first choice
                 continue
-            self.cancel_out_of_bound_orders('buy', minimum_buy_price, sym)
+
+            # Cancel orders that are outside of a 2 std neighborhood from nominal
+            self.cancel_out_of_bound_orders('buy', high_scale_coeff * nominal_buy_price, sym, widen_spread=True) # widen the range if the nominal price is 1 std below the current_price
+            self.cancel_out_of_bound_orders('buy', low_scale_coeff * nominal_buy_price, sym,
+                                            widen_spread=False)  # shorten the range if the nominal price is 1 std above the current price
 
     def sort_currencies(self, usd_available, print_sym):
         # setup
@@ -726,7 +735,7 @@ class SpreadBot(Bot):
         print('\n' + top_sym + ' Chosen as best buy')
         print('placing order\n' + 'price: ' + num2str(buy_price,
                                                       wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
-            size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 6) + '\n')
+            size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'spread: ' + num2str(spread, 6) + '\n')
         order_id = self.place_order(buy_price, 'buy', size, top_sym, post_only=False)
         if order_id is None:
             print('Buy Order rejected\n')
@@ -743,7 +752,9 @@ class SpreadBot(Bot):
         # Ensure to update portfolio value before running
         usd_hold = self.portfolio.get_usd_held()
         usd_available = self.portfolio.get_usd_available()
-        buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False, sym_ind=(0, 1, 2))
+        desired_number_of_currencies = 3 # How many currecies (excluding USD) to hold
+        sym_indices = list(range(0, desired_number_of_currencies)) # This chooses the indices to use for determining trades
+        buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False, sym_ind=sym_indices)
         no_viable_trade = False
 
         # Cancel bad buy orders before continuing
@@ -764,7 +775,7 @@ class SpreadBot(Bot):
             if (usd_available > QUOTE_ORDER_MIN):
 
                 # Determine order size
-                nominal_order_size = full_portfolio_value / num_orders
+                nominal_order_size = full_portfolio_value / desired_number_of_currencies
                 if nominal_order_size < QUOTE_ORDER_MIN:
                     # never try to place an order smalle than the minimum
                     nominal_order_size = QUOTE_ORDER_MIN
@@ -775,7 +786,7 @@ class SpreadBot(Bot):
                 else:
                     order_size = nominal_order_size
 
-                print('Evaluating currencies for best buy')
+                # print('Evaluating currencies for best buy')
                 # Determine order properties
                 if no_viable_trade:
                     print('No viable trades found')
@@ -799,6 +810,7 @@ class SpreadBot(Bot):
                     # Scale size based on existing holdings
                     if amnt_held <= (order_size - QUOTE_ORDER_MIN):
                         size -= existing_size
+                    # Don't place order if you already hold greater than or euqal to the nominal_order_size (within the QUOTE_ORDER_MIN)
                     else:
                         continue
 
@@ -1033,7 +1045,7 @@ class PSMSpreadBot(SpreadBot):
             current_price = wallet.product.get_top_order('bids')
             spread = 1 + ( sell_price - buy_price ) / buy_price
             rank = 1/self.errors[sym]#(sell_price - current_price) / buy_price
-            if spread < MIN_SPREAD:
+            if (spread < MIN_SPREAD) or (mu < 0):
                 rank = -1 # eliminate trades with low spreads
             ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
 
