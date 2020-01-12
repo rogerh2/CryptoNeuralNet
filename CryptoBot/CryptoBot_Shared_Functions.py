@@ -143,4 +143,7 @@ def offset_current_est_time(minute_offset, fmt=None):
 def zero(data):
     return np.zeros(len(data))
 
+def nth_max_ind(arr, n=1):
+    return arr.argsort()[::-1][n-1]
+
 # def rate_limited_get(func, limit, )

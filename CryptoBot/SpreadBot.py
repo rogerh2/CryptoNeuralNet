@@ -789,7 +789,7 @@ class SpreadBot(Bot):
                 # print('Evaluating currencies for best buy')
                 # Determine order properties
                 if no_viable_trade:
-                    print('No viable trades found')
+                    pass #print('No viable trades found')
                 else:
                     top_sym = top_syms[i]
                     buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')

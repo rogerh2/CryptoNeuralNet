@@ -7,6 +7,7 @@ from scipy.fftpack import fft
 from CryptoBot.CryptoBot_Shared_Functions import num2str
 from CryptoPredict.CryptoPredict import CryptoCompare
 from CryptoBot.CryptoBot_Shared_Functions import progress_printer
+from CryptoBot.CryptoBot_Shared_Functions import nth_max_ind
 
 
 # -- Auxillary functions --
@@ -75,17 +76,22 @@ def fourier_transform(data, t):
 def sinusoidal_test_func(x, b):
     return np.sin(b * x)
 
-def find_sin_freq(data, t):
+def find_sin_freq(data, t, n=1):
     T = t[1] - t[0]
     N = len(t)
-    dataf = fft(data)
+    dataf = np.abs(fft(data))
     f = np.linspace(0, 2 * np.pi * 1 / (2 * T), int(N / 2))
-    guess_freq = f[np.argmax(dataf[0:int(N / 2)])]
+    guess_freq = f[nth_max_ind(dataf[0:int(N / 2)], n)]
+    # plt.plot(f, dataf[0:int(N / 2)])
 
     try:
         omega, _ = optimize.curve_fit(sinusoidal_test_func, t, data, p0=[guess_freq])
+        # plt.plot(np.array([omega, omega]), np.array([0, np.max(dataf)]), 'r--')
+        # plt.show()
         return omega[0]
     except:
+        # plt.plot(np.array([guess_freq, guess_freq]), np.array([0, np.max(dataf)]), 'r--')
+        # plt.show()
         return guess_freq
 
 # This calculates the nominal magnitude of a sine wave
@@ -560,6 +566,93 @@ class SystemIterator:
 
             if err < self.epsilon:
                 break
+
+
+# TODO finish this to allow multiple frequencies to be combined to simulate one currency (note add the frequencies closer to the wall)
+class MultiFrequencySystem:
+
+    def __init__(self, data_list, t0=0, identifiers=None):
+        self.identifiers = identifiers
+        self.t0 = t0
+        self.data = data_list
+
+    def find_omegas(self, freq_num=1):
+        data = self.data
+        t = np.arange(0, len(data[0]))  # Time in minutes
+        poly_len = 5000  # Length of the polynomial approximation (certain size needed for frequency resolution
+        poly_t = np.linspace(0, len(data[0]), poly_len)  # Time stamps for polynomials
+
+        # create the polynomial approximation
+        for i in range(0, len(data)):
+            coeff = construct_piecewise_polynomial_for_data(data[i], 15, t=t)
+            poly_fit, _ = piece_wise_fit_eval(coeff, t=poly_t)
+            poly_list.append(poly_fit)
+            if not i:
+                poly_fit, start_stop = piece_wise_fit_eval(coeff, t=poly_t)
+                poly_t = poly_t[start_stop[0]:start_stop[1]]
+
+        omegas = []
+        for i in range(1, freq_num+1):
+            j = freq_num - i
+            omega_i = [find_sin_freq(pfit[0:poly_train_ind], poly_t[0:poly_train_ind], n=j) for pfit in poly_list]
+            omegas.append(omega_i)
+
+        return omegas
+
+    def find_x_from_y(self, y, omegas, ratios):
+        y_arr = np.array(y)
+        x2_arr = (omegas**-1) * (ratios - y_arr**2)
+        x_arr = np.sqrt(x2_arr)
+        return x_arr
+
+    def score_y(self, y, omegas, ratios, target_xy_ratio):
+        x_arr = self.find_x_from_y(omegas, ratios, y)
+        return np.abs(np.sum(x_arr) / np.sum(np.array(y)) - target_xy_ratio)
+
+    def find_xs_and_ys(self, freq_num):
+        omega_list = self.find_omegas(freq_num)
+        x_list = []
+        y_list = []
+
+        # The top loop creates the x's and y's for each individual currency
+        omega_range = range(0, len(omega_list))
+        for j in range(0, len(self.data)):
+            H = Hamiltonian(self.data, np.arange(0, len(self.data)))
+            x0 = self.data[-1]
+            y0 = np.mean(np.diff(self.data[-10::]))
+            E_density_0 = np.sum(np.array([H[omega_list[k][j]] for k in omega_range]))
+            # The inner loop goes through each frequency
+            for k in omega_range:
+                # create xs and ys from the energy needed and the nominal x0s and y0s (all x's sum up to the calculated x0
+                # and all y's sum up to the calculated y0 and the hamiltonian is used to determine the ratio of the y0's (the
+                # x0's are then calculated from there
+                # H = 1 / 2 (omega*x^2 + y^2)
+                omega = omega_list[k][j]
+                E_density = H[omega]
+                E_ratio = E_density / E_density_0
+                if len(x_list) == 0:
+                    rand_numx = np.random.rand()
+                    rand_numy = np.random.rand()
+                    while (np.abs(rand_numx) == 0) and (np.abs(rand_numy) == 0): # ensure energy is non zero
+                        rand_numx = np.random.rand()
+                        rand_numy = np.random.rand()
+
+                    x = x0 * rand_numx
+                    y = np.sqrt(2 * E_ratio - omega * x**2)
+                elif len(x_list)%2: # if length is even
+                    x = E_ratio * x0
+                    y = np.sqrt(2 * E_ratio - omega * x ** 2)
+
+                x_list.append(x)
+                y_list.append(y)
+
+
+        #TODO create x0s and y0s from the energy needed and the nominal x0s and y0s (all x's sum up to the calculated x0
+        # and all y's sum up to the calculated y0 and the hamiltonian is used to determine the ratio of the y0's (the
+        # x0's are then calculated from there
+
+
+
 
 
 
