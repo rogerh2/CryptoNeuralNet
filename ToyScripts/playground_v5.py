@@ -592,6 +592,7 @@ class MultiFrequencySystem:
         self.identifiers = identifiers
         self.t0 = t0
         self.data = data_list
+        self.propogators = None
 
     def find_omegas(self, freq_num):
         data = self.data
@@ -706,7 +707,23 @@ class MultiFrequencySystem:
                 propagator = SystemPropogator(x0s, y0s, omegas, np.zeros(len(x0s)), identifiers=ids)
                 propagators.append(propagator)
 
+        self.propogators = propagators
+
         return propagators
+
+    def evaluate_nth_polynomial(self, time_arr, step_size, polynomial_order, poly_n=None, verbose_on=True):
+        x_fit = None
+        for system_fit in self.propogators:
+            # TODO use multiprocessing to evaluate all polynomials at once
+            if x_fit is None:
+                x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=poly_n,
+                                                                  verbose=verbose_on)
+            else:
+                x_fit_omega, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=poly_n,
+                                                                        verbose=verbose_on)
+                x_fit += x_fit_omega
+
+        return x_fit, t_fit
 
 
 
@@ -722,7 +739,7 @@ if __name__ == "__main__":
         use_saved_data = False
         sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-01-15 22:00:00 EST', date_to='2020-01-16 22:00:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-01-17 10:00:00 EST', date_to='2020-01-18 09:00:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values

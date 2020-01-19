@@ -194,7 +194,7 @@ class Polynomial:
 # This class represents a system of ode's (all N masses). It holds the polynomials and evolves them over time
 class SystemPropogator:
 
-    def __init__(self, x0s, y0s, omegas, zetas, t0=0):
+    def __init__(self, x0s, y0s, omegas, zetas, t0=0, identifiers=None):
         # TODO add dictionary to map symbols to indices (for instance 'BTC' could be mapped to self.N)
         self.t0 = t0
         self.x0s = x0s
@@ -203,6 +203,7 @@ class SystemPropogator:
         self.N = len(x0s)
         self.omegas = omegas
         self.zetas = zetas
+        self.keys = identifiers
         for i in range(0, self.N):
             x0 = x0s[i]
             y0 = y0s[i]
@@ -313,9 +314,7 @@ class SystemPropogator:
         x_arr = np.array([])
         t_arr = np.array([])
         for x_current, t_current in zip(x, t_fit):
-            closest_time_arr_t = time_arr[np.argmin(np.abs(time_arr - t_current))]
-            closest_fit_t = t_fit[np.argmin(np.abs(closest_time_arr_t- t_fit))]
-            if t_current == closest_fit_t:
+            if np.any(np.isclose(t_current, time_arr)):
                 x_arr = np.append(x_arr, x_current)
                 t_arr = np.append(t_arr, t_current)
 
@@ -329,27 +328,26 @@ class SystemPropogator:
 
         return x, t_fit
 
-    def reset(self, x0s=None, y0s=None, omegas=None):
+    def reset(self, x0s=None, y0s=None):
         # Erase the past data for repropagation
         self.polynomials = {self.t0: []}
         self.N = len(self.omegas)
+        omegas = self.omegas
         if not x0s is None:
             self.x0s = x0s
         if not y0s is None:
             self.y0s = y0s
-        if not omegas is None:
-            self.omegas = omegas
 
         for i in range(0, self.N):
             x0 = self.x0s[i]
             y0 = self.y0s[i]
             if i < (self.N - 1):
-                omega_plus = self.omegas[i + 1]
+                omega_plus = omegas[i + 1]
             else:
                 omega_plus = 0
-            self.polynomials[self.t0].append(Polynomial(x0, y0, self.zetas[i], self.omegas[i], omega_plus))
+            self.polynomials[self.t0].append(Polynomial(x0, y0, self.zetas[i], omegas[i], omega_plus))
 
-    def simulate(self, data_sets, t, step_size, poly_order, eval_lens=None, del_len=5):
+    def simulate(self, data_sets, t, step_size, poly_order, eval_lens=None, del_len=10):
         # This method evaluates the polynomials at each point in eval_lens then puts them together in a continuous way
         if eval_lens is None:
             eval_lens = np.array([30])
@@ -364,7 +362,7 @@ class SystemPropogator:
             eval_t[eval_len] = single_x_sets
 
         while indf < len(t):
-            progress_printer(len(data_sets[0])-np.max(eval_len), ind0, start_ind=del_len, tsk='Simulation')
+            progress_printer(len(data_sets[0]), ind0, start_ind=del_len, tsk='Simulation')
             x0s = [x[ind0] for x in data_sets]
             y0s = [np.mean(np.diff(x[ind0-del_len:ind0])) for x in data_sets]
             current_t = t[ind0:indf] - t[ind0]
@@ -395,6 +393,16 @@ class SystemPropogator:
             plt.ylabel('Price ($)')
 
         plt.show()
+
+    def save(self, file_path):
+        model_topology = {'keys':self.keys, 'omega':self.omegas, 'zeta':self.zetas}
+        pickle.dump(model_topology, open(file_path, "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load(self, file_path):
+        model_topology = pickle.load(open(file_path, "rb"))
+        self.keys = model_topology['keys']
+        self.omegas = model_topology['omega']
+        self.zetas = model_topology['zeta']
 
     def __getitem__(self, n):
         N = len(self.polynomials[self.t0])
