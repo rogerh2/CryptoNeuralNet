@@ -35,6 +35,7 @@ from CryptoBot.CryptoBot_Shared_Functions import offset_current_est_time
 from CryptoBot.constants import EXCHANGE_CONSTANTS
 from CryptoPredict.CryptoPredict import CryptoCompare
 from ODESolvers.PSM import create_propogator_from_data
+from ODESolvers.PSM import create_multifrequency_propogator_from_data
 import re
 
 # SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt.txt'
@@ -42,8 +43,8 @@ import re
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 MIN_SPREAD = 1.012 # This is the minnimum spread before a trade can be made
-TRADE_LEN = 15 # This is the amount of time I desire for trades to be filled in
-PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
+TRADE_LEN = 30 # This is the amount of time I desire for trades to be filled in
+PSM_EVAL_STEP_SIZE = 0.01 # This is the step size for PSM
 MIN_PORTFOLIO_VALUE = 30 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
@@ -234,10 +235,11 @@ class Product:
         # Get the mean based on the predicted price movement
         t = np.linspace(0, TRADE_LEN, len(predicted_fills))
         coeff = np.polyfit(t, predicted_fills, 1)
-        weighted_mu = coeff[0] / np.mean(fill_arr) # This does not need to be wheighted because it is already based of time
+        weighted_mu = coeff[0] # / np.mean(fill_arr) # This does not need to be wheighted because it is already based off time
+        weighted_std = np.std(predicted_fills - np.polyval(coeff, np.arange(0, len(predicted_fills))))
 
         # Adjust mu and std to account for number of trades over time
-        _, weighted_std, last_fill = self.adjust_fill_data(weighted_mu, std, fill_diff_ratio)
+        _, _, last_fill = self.adjust_fill_data(weighted_mu, std, fill_diff_ratio)
 
         return weighted_mu, weighted_std, last_fill
 
@@ -560,8 +562,8 @@ class SpreadBot(Bot):
         cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
         data = cc.minute_price_historical(sym)[sym + '_close'].values
         sleep(0.3)
-        coeff = np.polyfit(np.arange(0, t_len), data)
-        price = np.polyval(coeff, t_len)
+        coeff = np.polyfit(np.arange(0, len(data)), data, 1)
+        price = np.polyval(coeff, len(data))
 
         return price
 
@@ -876,7 +878,7 @@ class PSMSpreadBot(SpreadBot):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
-        t_offset_str = offset_current_est_time(600, fmt=self.fmt)
+        t_offset_str = offset_current_est_time(120, fmt=self.fmt)
         cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
         for sym in syms:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -886,7 +888,7 @@ class PSMSpreadBot(SpreadBot):
         self.raw_data = raw_data
 
         self.del_len = slope_avg_len
-        self.propogator, coeff_list, shift_list = create_propogator_from_data(raw_data_list)
+        self.propogator, coeff_list, shift_list = create_multifrequency_propogator_from_data(raw_data_list, self.symbols)
         self.predictions = {}
         self.coefficients = {}
         self.shifts = {}
@@ -901,7 +903,7 @@ class PSMSpreadBot(SpreadBot):
         # This method sets the propogator initial values to the most recent price
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
-        t_offset_str = offset_current_est_time(600, fmt=self.fmt)
+        t_offset_str = offset_current_est_time(120, fmt=self.fmt)
         cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
         for sym in self.symbols:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -933,13 +935,16 @@ class PSMSpreadBot(SpreadBot):
         # This method sets the propogator initial values to the most recent price
         normalized_raw_data = self.inverse_transform(raw_data)
         normalized_raw_data_list = [normalized_raw_data[sym] for sym in self.symbols]
-        x0s = [x[-1] for x in normalized_raw_data_list]
-        y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
+        # x0s = [x[-1] for x in normalized_raw_data_list]
+        # y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
+        initial_polys = [np.polyfit(np.arange(0, len(x)), x, 1) for x in normalized_raw_data_list]
+        x0s = [np.polyval(x, len(normalized_raw_data_list[0])) for x in normalized_raw_data_list]
+        y0s = [x[0] for x in initial_polys]
         self.propogator.reset(x0s=x0s, y0s=y0s)
 
     def get_new_propogator(self, raw_data_list):
         # create the new propogator and set up variables
-        self.propogator, coeff_list, shift_list = create_propogator_from_data(raw_data_list)
+        self.propogator, coeff_list, shift_list = create_multifrequency_propogator_from_data(raw_data_list, self.symbols)
         self.predictions = {}
         self.coefficients = {}
         self.shifts = {}
@@ -1219,10 +1224,11 @@ def run_bot(bot_type='psm'):
 
 
 if __name__ == "__main__":
-    run_type = 'run'
+    run_type = 'other'
     if run_type == 'run':
         run_bot()
     elif run_type == 'other':
+        # TODO fix this!
         api_input = input('What is the api key? ')
         secret_input = input('What is the secret key? ')
         passphrase_input = input('What is the passphrase? ')

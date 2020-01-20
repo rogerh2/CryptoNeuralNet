@@ -541,11 +541,11 @@ class CryptoCompare:
             self.date_to = None
 
     def datedelta(self, units):
-        d1_ts = time.mktime(self.date_from.timetuple())
+        d1_ts = datetime.timestamp(self.date_from)
         if self.date_to:
-            d2_ts = time.mktime(self.date_to.timetuple())
+            d2_ts = datetime.timestamp(self.date_to)
         else:
-            d2_ts = time.mktime(datetime.now().timetuple())
+            d2_ts = datetime.timestamp(datetime.now())
 
         if units == "days":
             del_date = int((d2_ts-d1_ts)/86400)

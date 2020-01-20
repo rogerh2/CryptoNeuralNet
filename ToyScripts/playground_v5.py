@@ -94,6 +94,8 @@ def find_sin_freq(data, t, n=1):
         # plt.show()
         return guess_freq
 
+
+
 # This calculates the nominal magnitude of a sine wave
 def nominal_magnitude(x0, dx0, omega0):
     x0_norm = np.abs(x0)
@@ -585,7 +587,6 @@ class SystemIterator:
                 break
 
 
-# TODO finish this to allow multiple frequencies to be combined to simulate one currency (note add the frequencies closer to the wall)
 class MultiFrequencySystem:
 
     def __init__(self, data_list, identifiers, t0=0):
@@ -617,7 +618,6 @@ class MultiFrequencySystem:
             H = Hamiltonian(pfit, poly_t)
             omegas.append(omega_i)
             hamiltonians.append(H)
-        # TODO add hamiltonian creation to this method so that it can use the polynomial fit
         return omegas, hamiltonians
 
     def find_x_from_y_squared(self, y_sq, omegas, ratios):
@@ -631,36 +631,19 @@ class MultiFrequencySystem:
         score = np.abs(np.sum(x_arr) / np.sum(np.sqrt(y_sq)) - target_xy_ratio)
         return score
 
-    def find_xs_and_ys(self, freq_num):
-        omega_list, hamiltonian_list = self.find_omegas(freq_num)
-        x_list = []
-        y_list = []
+    def find_xs_and_ys_for_single_currency(self, x0, y0, freq_num, omegas, H):
+        E_densities = np.array(H[omegas])
+        E_density_0 = np.sum(E_densities)
 
-        # The top loop creates the x's and y's for each individual currency
-        omega_range = range(0, len(omega_list[0]))
-        for j in range(0, len(self.data)):
-            # Setup the Hamiltonian and IC's
-            data = self.data[j]
-            H = hamiltonian_list[j]
-            xy_coeff = np.polyfit(np.arange(0, len(data)), data, 1)
-            x0 = np.polyval(xy_coeff, len(data))
-            y0 = xy_coeff[0]
-            omegas = np.array([omega_list[j][k] for k in omega_range])
-            E_densities = np.array(H[omegas])
-            E_density_0 = np.sum(E_densities)
+        # Express variables in ratios
+        target_xy_ratio = x0 / y0
+        E_ratios = E_densities / E_density_0
+        func_bounds = optimize.Bounds(np.zeros(len(E_ratios)) + np.finfo(float).eps, 0.99 * E_ratios)
 
-            # Express variables in ratios
-            target_xy_ratio = x0 / y0
-            E_ratios = E_densities / E_density_0
-            func_bounds = optimize.Bounds(np.zeros(len(E_ratios)) + np.finfo(float).eps, 0.99*E_ratios)
-
-
-            y_results = optimize.minimize(lambda y_guess: self.score_y_sq(y_guess, omegas, E_ratios, target_xy_ratio), 0.1*E_ratios*np.ones(freq_num), bounds=func_bounds)
-            if y_results.success:
-                y_unscaled = np.sqrt(y_results.x)
-            else:
-                y_unscaled = np.sqrt(y_results.x)
-                print(y_results.message)
+        y_results = optimize.minimize(lambda y_guess: self.score_y_sq(y_guess, omegas, E_ratios, target_xy_ratio),
+                                      0.1 * E_ratios * np.ones(freq_num), bounds=func_bounds)
+        if y_results.success:
+            y_unscaled = np.sqrt(y_results.x)
             x_unscaled = self.find_x_from_y_squared(y_results.x, omegas, E_ratios)
 
             yscale = y0 / np.sum(y_unscaled)
@@ -673,10 +656,53 @@ class MultiFrequencySystem:
             if np.isnan(np.sum(x)):
                 x = np.zeros(len(x))
                 y = np.zeros(len(x))
+        else:
+            y = np.append(y0, np.zeros(freq_num-1))
+            x = np.append(x0, np.zeros(freq_num - 1))
+            print(y_results.message)
+
+        return x, y
+
+    def find_xs_and_ys(self, freq_num, x0s=None, y0s=None):
+        omega_list, hamiltonian_list = self.find_omegas(freq_num)
+        x_list = []
+        y_list = []
+
+        # The top loop creates the x's and y's for each individual currency
+        omega_range = range(0, len(omega_list[0]))
+        for j in range(0, len(self.data)):
+            # Setup the Hamiltonian and IC's
+            data = self.data[j]
+            H = hamiltonian_list[j]
+            xy_coeff = np.polyfit(np.arange(0, len(data)), data, 1)
+            if x0s is None:
+                x0 = np.polyval(xy_coeff, len(data))
+            else:
+                x0 = x0s[j]
+            if y0s is None:
+                y0 = xy_coeff[0]
+            else:
+                y0 = y0s[j]
+            omegas = np.array([omega_list[j][k] for k in omega_range])
+            x, y = self.find_xs_and_ys_for_single_currency(x0, y0, freq_num, omegas, H)
             x_list.append(x)
             y_list.append(y)
 
         return x_list, y_list, omega_list
+
+    def reset(self, x0s, y0s):
+        freq_num = len(self.propogators)
+        x_list, y_list, omega_list = self.find_xs_and_ys(freq_num, x0s=x0s, y0s=y0s)
+        for k in range(0, freq_num):
+            x0s = []
+            y0s = []
+            for j in range(0, len(self.data)):
+                x = x_list[j][k]
+                y = y_list[j][k]
+                x0s.append(x)
+                y0s.append(y)
+
+            self.propogators[k].reset(x0s=x0s, y0s=y0s)
 
     def create_propogator(self, freq_num, calc_freq_num=None):
         if not calc_freq_num:
@@ -703,31 +729,27 @@ class MultiFrequencySystem:
                 y0s.append(y)
                 omegas.append(omega)
                 ids.append(id)
-            if k <= (freq_num - 1):
-                propagator = SystemPropogator(x0s, y0s, omegas, np.zeros(len(x0s)), identifiers=ids)
-                propagators.append(propagator)
+
+            propagator = SystemPropogator(x0s, y0s, omegas, np.zeros(len(x0s)), identifiers=ids)
+            propagators.append(propagator)
 
         self.propogators = propagators
 
         return propagators
 
-    def evaluate_nth_polynomial(self, time_arr, step_size, polynomial_order, poly_n=None, verbose_on=True):
+    def evaluate_nth_polynomial(self, time_arr, step_size, polynomial_order, n=None, verbose=True):
         x_fit = None
         for system_fit in self.propogators:
             # TODO use multiprocessing to evaluate all polynomials at once
             if x_fit is None:
-                x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=poly_n,
-                                                                  verbose=verbose_on)
+                x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                  verbose=verbose)
             else:
-                x_fit_omega, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=poly_n,
-                                                                        verbose=verbose_on)
+                x_fit_omega, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                        verbose=verbose)
                 x_fit += x_fit_omega
 
         return x_fit, t_fit
-
-
-
-
 
 
 if __name__ == "__main__":
@@ -736,10 +758,10 @@ if __name__ == "__main__":
     if run_type == 'crypto':
         # -- Get raw data --
         model_save_folder = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/psm_models//'
-        use_saved_data = False
+        use_saved_data = True
         sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-01-17 10:00:00 EST', date_to='2020-01-18 09:00:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-01-18 18:00:00 EST', date_to='2020-01-18 21:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -793,18 +815,19 @@ if __name__ == "__main__":
         x_train_list = [(x[0:train_len] - np.mean(x[0:train_len])) / (np.max(x[0:train_len]) - np.min(x[0:train_len])) for x in concat_data_list]
         coeff_list = [(np.max(x[0:train_len]) - np.min(x[0:train_len])) for x in concat_data_list]
         shift_list = [np.mean(x[0:train_len]) for x in concat_data_list]
-        multi = MultiFrequencySystem(x_train_list, sym_list)
-        system_fits = multi.create_propogator(freq_num=5, calc_freq_num=20)
+        system_fit = MultiFrequencySystem(x_train_list, sym_list)
+        system_fit.create_propogator(freq_num=5, calc_freq_num=20)
 
 
         # --  Test Propogator --
-        initial_polys = [np.polyfit(np.arange(0, test_len), x[train_len-test_len:train_len], 1) for x in data_list]
+        initial_polys = [np.polyfit(np.arange(0, len(x)), x, 1) for x in x_train_list]
         # test_x0s0 = [x[train_len] for x in data_list]
         # test_y0s0 = [np.mean(np.diff(x[train_len-10:train_len])) for x in data_list]
-        test_x0s = [np.polyval(x, test_len) for x in initial_polys]
+        test_x0s = [np.polyval(x, len(x_train_list[0])) for x in initial_polys]
         test_y0s = [x[0] for x in initial_polys]
         test_t = np.arange(0, test_len)
-        all_ids = system_fits[0].keys
+        all_ids = system_fit.propogators[0].keys
+        system_fit.reset(x0s=test_x0s, y0s=test_y0s)
 
         # system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
 
@@ -812,23 +835,14 @@ if __name__ == "__main__":
             coeff = coeff_list[i]
             shift = shift_list[i]
             N = all_ids.index(sym_list[i])
-            progress_printer(system_fits[0].N, i, tsk='Evaluating Polynomials')
-            x_fit = None
-            for system_fit in system_fits:
-                # TODO use multiprocessing to evaluate all polynomials at once
-                if x_fit is None:
-                    x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=N + 1, verbose=i==False)
-                else:
-                    x_fit_omega, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=N + 1,
-                                                                      verbose=i == False)
-                    x_fit += x_fit_omega
+            progress_printer(system_fit.propogators[0].N, i, tsk='Evaluating Polynomials')
+            x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=N + 1, verbose=i==False)
 
             x_fit_coeff = np.polyfit(np.linspace(0, np.max(test_t), len(x_fit)), x_fit, 1)
             x_plot_fit = np.polyval(x_fit_coeff, np.linspace(0, np.max(test_t), len(x_fit)))
             minmax = 0.5*np.std(x_fit - x_plot_fit)
 
             x_raw = concat_data_list[i][train_len-10:train_len+test_len]
-            shift = np.mean(x_raw[0:10]) - coeff * x_plot_fit[0]
             plt.figure()
             plt.plot(np.linspace(-10, np.max(test_t), len(x_raw)), x_raw)
             plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * x_plot_fit + shift)
