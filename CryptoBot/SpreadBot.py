@@ -1190,9 +1190,9 @@ def run_bot(bot_type='psm'):
     last_update = datetime.now().timestamp()
     last_plot = 0
     plot_period = 60
-    check_period = 5*60
-    predict_period = TRADE_LEN
-    update_period = 8*TRADE_LEN
+    check_period = 60
+    predict_period = TRADE_LEN*60
+    update_period = 8*TRADE_LEN*60
     err_counter = 0
 
     while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
