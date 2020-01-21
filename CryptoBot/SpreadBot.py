@@ -980,7 +980,7 @@ class PSMSpreadBot(SpreadBot):
 
 
 
-    def predict(self, verbose_on=False):
+    def predict(self, verbose_on=False, get_new_propogator=True):
         # Setup Initial Variables
         time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
         step_size = PSM_EVAL_STEP_SIZE
@@ -990,7 +990,8 @@ class PSMSpreadBot(SpreadBot):
         raw_data = self.collect_next_data()
         self.raw_data = raw_data
         raw_data_list = [raw_data[sym] for sym in self.symbols]
-        self.get_new_propogator(raw_data_list, verbose_on=verbose_on)
+        if get_new_propogator:
+            self.get_new_propogator(raw_data_list, verbose_on=verbose_on)
         self.reset_propogator_start_point(raw_data)
         syms = self.symbols
         predictions = {}
@@ -1186,10 +1187,12 @@ def run_bot(bot_type='psm'):
     sleep(1)
     last_check = 0
     last_predict = 0
+    last_update = datetime.now().timestamp()
     last_plot = 0
     plot_period = 60
     check_period = 5*60
-    predict_period = 5 * TRADE_LEN
+    predict_period = TRADE_LEN
+    update_period = 8*TRADE_LEN
     err_counter = 0
 
     while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
@@ -1199,8 +1202,13 @@ def run_bot(bot_type='psm'):
             try:
                 # Predict using psm
                 if (current_time > (last_predict + predict_period)) and (bot_type == 'psm'):
+                    bot.predict(get_new_propogator=False)
+                    last_predict = datetime.now().timestamp()
+                # Update propogator frequencies
+                if (current_time > (last_update + update_period)) and (bot_type == 'psm'):
                     bot.predict()
                     last_predict = datetime.now().timestamp()
+                    last_update = datetime.now().timestamp()
                 # Trade
                 bot.portfolio.update_value()
                 last_check = datetime.now().timestamp()
