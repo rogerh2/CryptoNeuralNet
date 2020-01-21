@@ -43,8 +43,8 @@ import re
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 MIN_SPREAD = 1.012 # This is the minnimum spread before a trade can be made
-TRADE_LEN = 30 # This is the amount of time I desire for trades to be filled in
-PSM_EVAL_STEP_SIZE = 0.01 # This is the step size for PSM
+TRADE_LEN = 15 # This is the amount of time I desire for trades to be filled in
+PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
 MIN_PORTFOLIO_VALUE = 30 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
@@ -235,8 +235,8 @@ class Product:
         # Get the mean based on the predicted price movement
         t = np.linspace(0, TRADE_LEN, len(predicted_fills))
         coeff = np.polyfit(t, predicted_fills, 1)
-        weighted_mu = coeff[0] # / np.mean(fill_arr) # This does not need to be wheighted because it is already based off time
-        weighted_std = np.std(predicted_fills - np.polyval(coeff, np.arange(0, len(predicted_fills))))
+        weighted_mu = coeff[0] / np.mean(fill_arr) # This does not need to be wheighted because it is already based off time
+        weighted_std = np.std(predicted_fills - np.polyval(coeff, np.arange(0, len(predicted_fills)))) / np.mean(fill_arr)
 
         # Adjust mu and std to account for number of trades over time
         _, _, last_fill = self.adjust_fill_data(weighted_mu, std, fill_diff_ratio)
@@ -679,7 +679,7 @@ class SpreadBot(Bot):
             current_price = wallet.product.get_top_order('bids')
             spread = 1 + ( sell_price - buy_price ) / buy_price
             rank = (sell_price - current_price) / buy_price
-            if (spread < MIN_SPREAD) or (mu < 0):
+            if (spread < MIN_SPREAD):
                 rank = -1 # eliminate trades with low spreads
             ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
 
@@ -938,11 +938,11 @@ class PSMSpreadBot(SpreadBot):
         # x0s = [x[-1] for x in normalized_raw_data_list]
         # y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
         initial_polys = [np.polyfit(np.arange(0, len(x)), x, 1) for x in normalized_raw_data_list]
-        x0s = [np.polyval(x, len(normalized_raw_data_list[0])) for x in normalized_raw_data_list]
+        x0s = [np.polyval(x, len(normalized_raw_data_list[0])) for x in initial_polys]
         y0s = [x[0] for x in initial_polys]
         self.propogator.reset(x0s=x0s, y0s=y0s)
 
-    def get_new_propogator(self, raw_data_list):
+    def get_new_propogator(self, raw_data_list, verbose_on=False):
         # create the new propogator and set up variables
         self.propogator, coeff_list, shift_list = create_multifrequency_propogator_from_data(raw_data_list, self.symbols)
         self.predictions = {}
@@ -965,32 +965,32 @@ class PSMSpreadBot(SpreadBot):
             training_raw_data_list[sym] = self.raw_data[sym][0:TRADE_LEN]
         self.reset_propogator_start_point(training_raw_data_list)
         time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
-        step_size = 0.01
+        step_size = PSM_EVAL_STEP_SIZE
         polynomial_order = 10
 
         for i in range(0, len(syms)):
             sym = syms[i]
-            predicted_price, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=False)
+
+            predicted_price, predict_t = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose_on)
             predicted_price = self.transform_single_sym(sym, predicted_price)
             true_price = raw_data_list[i][-TRADE_LEN::]
-
-            predicted_coeff = np.polyfit(time_arr, predicted_price, 1)
+            predicted_coeff = np.polyfit(predict_t, predicted_price, 1)
             true_coeff = np.polyfit(np.arange(0, len(true_price)), true_price, 1)
             self.errors[sym] = np.abs((predicted_coeff[0] - true_coeff[0]) / (true_price[-1]))
 
 
 
-    def predict(self):
+    def predict(self, verbose_on=False):
         # Setup Initial Variables
         time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
-        step_size = 0.01
+        step_size = PSM_EVAL_STEP_SIZE
         polynomial_order = 10
 
         # Collect data and create propogator
         raw_data = self.collect_next_data()
         self.raw_data = raw_data
         raw_data_list = [raw_data[sym] for sym in self.symbols]
-        self.get_new_propogator(raw_data_list)
+        self.get_new_propogator(raw_data_list, verbose_on=verbose_on)
         self.reset_propogator_start_point(raw_data)
         syms = self.symbols
         predictions = {}
@@ -998,7 +998,7 @@ class PSMSpreadBot(SpreadBot):
         # Predict
         for i in range(0, len(syms)):
             sym = syms[i]
-            x, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=False)
+            x, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose_on)
             predictions[sym] = x
 
         self.predictions = self.transform(predictions)
@@ -1013,6 +1013,10 @@ class PSMSpreadBot(SpreadBot):
         if mu is None:
             return None, None, None, None, None
         mu *= mu_mult
+        if side == 'buy':
+            mu *= TRADE_LEN / 2
+        else:
+            mu *= TRADE_LEN
 
         # Calculate the coefficient used to determine the which multiple of the std to use
         std_coeff = std_mult * self.settings.read_setting_from_file('std')
@@ -1224,17 +1228,16 @@ def run_bot(bot_type='psm'):
 
 
 if __name__ == "__main__":
-    run_type = 'other'
+    run_type = 'run'
     if run_type == 'run':
         run_bot()
     elif run_type == 'other':
-        # TODO fix this!
         api_input = input('What is the api key? ')
         secret_input = input('What is the secret key? ')
         passphrase_input = input('What is the passphrase? ')
         psmbot = PSMSpreadBot(api_input, secret_input, passphrase_input)
         bot = SpreadBot(api_input, secret_input, passphrase_input)
-        psmbot.predict()
+        psmbot.predict(verbose_on=True)
 
         for sym in psmbot.symbols:
             plt.figure()

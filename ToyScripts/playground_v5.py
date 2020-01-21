@@ -22,20 +22,23 @@ def rand_betwee_plus_and_minus(A):
 # construct_piecewise_polynomial_for_data, constructs a piecewise polynomial of desired order to approximate data
 def construct_piecewise_polynomial_for_data(data, order, t=None):
     data_len = len(data)
-    fit_len = 5 * order
+    fit_len = 3 * order
     if 2 * fit_len > data_len:
        raise ValueError('Not enough data for fit')
 
     fits = [fit_len]
     if t is None:
-        t = np.arange(0, fit_len)
+        fit_t = np.arange(0, fit_len)
     else:
-        t = t[0:fit_len]
+        fit_t = t[0:fit_len]
 
-    for ind in range(fit_len, data_len - fit_len, fit_len):
+    for ind in range(0, data_len - fit_len, fit_len):
+        if ind >= (data_len - 2*fit_len):
+            fit_len = data_len - ind
+            fit_t = t[0:fit_len]
         x = data[ind:ind+fit_len]
-        coeffs = np.polyfit(t, x, order)
-        fits.append((coeffs, ind))
+        coeffs = np.polyfit(fit_t, x, order)
+        fits.append((coeffs, t[ind+fit_len-2], t[ind]))
 
     return fits
 
@@ -43,16 +46,18 @@ def construct_piecewise_polynomial_for_data(data, order, t=None):
 def piece_wise_fit_eval(coeffs, t=None):
     fit_len = coeffs[0]
     if t is None:
-        t = np.arange(0, fit_len)
-    else:
-        t = t[0:fit_len]
+        t = np.arange(0, coeffs[-1] + fit_len)
     fit = np.array([])
     start_ind = coeffs[1][1]
     stop_ind = coeffs[-1][1] + fit_len
 
     for coeff_data in coeffs[1::]:
         coeff = coeff_data[0]
-        current_fit = np.polyval(coeff, t)
+        t_max = coeff_data[1]
+        t_min = coeff_data[2]
+        t_mask = (t>=t_min) * (t<t_max)
+        fit_t = t[t_mask] - t_min
+        current_fit = np.polyval(coeff, fit_t)
         fit = np.append(fit, current_fit)
 
     return fit, [start_ind, stop_ind]
@@ -63,14 +68,40 @@ def N_sigma_err(data, fit, N=3, norm=True):
     err = (np.abs(np.mean(res)) + N * np.std(res))/(np.max(data) - np.min(data))**norm
     return err
 
+def evaluate_fourier_coefficients(a0, a_coeffs, b_coeffs, omegas, t):
+    sol = a0 / 2
+    for a, b, omega in zip(a_coeffs, b_coeffs, omegas):
+        sol += a * np.cos(omega * t) + b * np.sin(omega * t)
+
+    return sol
+
 # simple FFT wrapper
-def fourier_transform(data, t):
+def fourier_transform(data, t, return_type='magnitude'):
     T = t[1] - t[0]
     N = len(t)
-    dataf = np.abs(fft(data))
+    dataf = fft(data)/t.size
     f = np.linspace(0, 2 * np.pi * 1 / (2 * T), int(N / 2))
 
-    return dataf[0:int(N / 2)], f
+    if return_type=='magnitude':
+        return np.abs(dataf[0:int(N / 2)]), f
+    elif return_type=='complex':
+        return dataf[0:int(N / 2)], f
+    elif return_type=='real':
+        dataf *= 2
+        return dataf[0].real, dataf[1:int(N / 2)-1].real, -dataf[1:int(N / 2)-1].imag, f
+    else:
+        dataf *= 2
+        return dataf[0].real, dataf[1:int(N / 2) - 1].real, -dataf[1:int(N / 2) - 1].imag, np.abs(dataf[0:int(N / 2)]), f
+
+def top_N_real_fourier_coefficients(data, t, N):
+    a0, a, b, mag, f = fourier_transform(data, t, return_type='all')
+    max_inds = [nth_max_ind(mag[1::], n) for n  in np.arange(2, N+1)]
+    T = np.max(t) - np.min(t)
+    omegas = 2 * np.pi * np.array(max_inds) / T
+    a_max = a[max_inds]
+    b_max = b[max_inds]
+
+    return a0, a_max, b_max, omegas
 
 # sinusoidal_test_func and find_sin_freq together guess the frequency of the primary sinusoidal component in data
 def sinusoidal_test_func(x, b):
@@ -93,8 +124,6 @@ def find_sin_freq(data, t, n=1):
         # plt.plot(np.array([guess_freq, guess_freq]), np.array([0, np.max(dataf)]), 'r--')
         # plt.show()
         return guess_freq
-
-
 
 # This calculates the nominal magnitude of a sine wave
 def nominal_magnitude(x0, dx0, omega0):
@@ -453,6 +482,7 @@ class Hamiltonian:
 
         return E
 
+
 class SystemIterator:
 
     def __init__(self, x0s, y0s, omegas, zetas, change_coeff, epsilon, max_iterations=10, t0=0, identifiers=None):
@@ -604,21 +634,32 @@ class MultiFrequencySystem:
 
         # create the polynomial approximation
         for i in range(0, len(data)):
-            coeff = construct_piecewise_polynomial_for_data(data[i], 3, t=t)
+            coeff = construct_piecewise_polynomial_for_data(data[i], 5, t=t)
             poly_fit, start_stop = piece_wise_fit_eval(coeff, t=poly_t)
             poly_list.append(poly_fit)
             if not i:
-                poly_fit, start_stop = piece_wise_fit_eval(coeff, t=poly_t)
-                poly_t = poly_t[start_stop[0]:start_stop[1]]
+                poly_fit_t = np.linspace(coeff[1][2], coeff[-1][1], len(poly_fit))
 
         omegas = []
-        hamiltonians = []
-        for pfit in poly_list:
-            omega_i = [find_sin_freq(pfit, poly_t, n=j) for j in range(1, freq_num+1)]
-            H = Hamiltonian(pfit, poly_t)
+        a0s = []
+        a_coeffs = []
+        b_coeffs = []
+        for i in range(0, len(poly_list)):
+            pfit = poly_list[i]
+            a0_i, a_i, b_i, omega_i = top_N_real_fourier_coefficients(pfit, poly_fit_t, freq_num)
+            # sol = evaluate_fourier_coefficients(a0_i, a_i, b_i, omega_i, poly_fit_t)
+            # start_pt = evaluate_fourier_coefficients(a0_i, a_i, b_i, omega_i, t[-1])
+            # data_set = data[i]
+            # plt.plot(poly_fit_t, sol)
+            # plt.plot(t[-1], start_pt, 'rx')
+            # plt.plot(t, data_set)
+            # plt.show()
             omegas.append(omega_i)
-            hamiltonians.append(H)
-        return omegas, hamiltonians
+            a0s.append(a0_i)
+            a_coeffs.append(a_i)
+            b_coeffs.append(b_i)
+
+        return omegas, a0s, a_coeffs, b_coeffs
 
     def find_x_from_y_squared(self, y_sq, omegas, ratios):
         y_sq_arr = np.array(y_sq)
@@ -631,60 +672,41 @@ class MultiFrequencySystem:
         score = np.abs(np.sum(x_arr) / np.sum(np.sqrt(y_sq)) - target_xy_ratio)
         return score
 
-    def find_xs_and_ys_for_single_currency(self, x0, y0, freq_num, omegas, H):
-        E_densities = np.array(H[omegas])
-        E_density_0 = np.sum(E_densities)
-
-        # Express variables in ratios
-        target_xy_ratio = x0 / y0
-        E_ratios = E_densities / E_density_0
-        func_bounds = optimize.Bounds(np.zeros(len(E_ratios)) + np.finfo(float).eps, 0.99 * E_ratios)
-
-        y_results = optimize.minimize(lambda y_guess: self.score_y_sq(y_guess, omegas, E_ratios, target_xy_ratio),
-                                      0.1 * E_ratios * np.ones(freq_num), bounds=func_bounds)
-        if y_results.success:
-            y_unscaled = np.sqrt(y_results.x)
-            x_unscaled = self.find_x_from_y_squared(y_results.x, omegas, E_ratios)
-
-            yscale = y0 / np.sum(y_unscaled)
-            xscale = x0 / np.sum(x_unscaled)
-            scale = np.mean(np.array([xscale, yscale]))
-            y_sign = (-1) ** ((y0 < 0) == (scale > 0))
-            x_sign = (-1) ** ((x0 < 0) == (scale > 0))
-            x = x_sign * scale * x_unscaled
-            y = y_sign * scale * y_unscaled
-            if np.isnan(np.sum(x)):
-                x = np.zeros(len(x))
-                y = np.zeros(len(x))
-        else:
-            y = np.append(y0, np.zeros(freq_num-1))
-            x = np.append(x0, np.zeros(freq_num - 1))
-            print(y_results.message)
+    def find_xs_and_ys_for_single_currency(self, x0, y0, omega_list, a0, a_list, b_list, T):
+        possible_xs = evaluate_fourier_coefficients(a0, a_list, b_list, omega_list, np.arange(0, T, T / 1000))
+        # The possible_ys come from the derivative of the Fourier series
+        t_arr = np.arange(0, T, T / 1000)
+        possible_ys = evaluate_fourier_coefficients(0, omega_list * b_list, - omega_list * a_list, omega_list, t_arr)
+        x_distance = possible_xs - x0
+        y_distance = possible_ys - y0
+        tot_distance_sq = x_distance**2 + y_distance**2
+        best_ind = np.argmin(tot_distance_sq)
+        eval_t = t_arr[best_ind]
+        x = a0 / 2 + a_list * np.cos(omega_list * eval_t) + b_list * np.sin(omega_list * eval_t)
+        y = - omega_list * a_list * np.sin(omega_list * eval_t) + omega_list * b_list * np.cos( omega_list * eval_t)
 
         return x, y
 
     def find_xs_and_ys(self, freq_num, x0s=None, y0s=None):
-        omega_list, hamiltonian_list = self.find_omegas(freq_num)
+        omega_list, a0_list, a_list, b_list = self.find_omegas(freq_num)
         x_list = []
         y_list = []
 
         # The top loop creates the x's and y's for each individual currency
-        omega_range = range(0, len(omega_list[0]))
+        eval_t = len(self.data[0])
         for j in range(0, len(self.data)):
-            # Setup the Hamiltonian and IC's
             data = self.data[j]
-            H = hamiltonian_list[j]
-            xy_coeff = np.polyfit(np.arange(0, len(data)), data, 1)
+            xy_coeff = np.polyfit(np.arange(0, len(data[-11::])), data[-11::], 1)
             if x0s is None:
-                x0 = np.polyval(xy_coeff, len(data))
+                x0 = np.polyval(xy_coeff, 11)
             else:
                 x0 = x0s[j]
             if y0s is None:
                 y0 = xy_coeff[0]
             else:
                 y0 = y0s[j]
-            omegas = np.array([omega_list[j][k] for k in omega_range])
-            x, y = self.find_xs_and_ys_for_single_currency(x0, y0, freq_num, omegas, H)
+            # Setup the Hamiltonian and IC's
+            x, y = self.find_xs_and_ys_for_single_currency(x0, y0, omega_list[j], a0_list[j], a_list[j], b_list[j], eval_t)
             x_list.append(x)
             y_list.append(y)
 
@@ -693,7 +715,7 @@ class MultiFrequencySystem:
     def reset(self, x0s, y0s):
         freq_num = len(self.propogators)
         x_list, y_list, omega_list = self.find_xs_and_ys(freq_num, x0s=x0s, y0s=y0s)
-        for k in range(0, freq_num):
+        for k in range(0, freq_num-1):
             x0s = []
             y0s = []
             for j in range(0, len(self.data)):
@@ -710,7 +732,7 @@ class MultiFrequencySystem:
         x_list, y_list, omega_list = self.find_xs_and_ys(calc_freq_num)
         propagators = []
 
-        for k in range(0, freq_num):
+        for k in range(0, freq_num-1):
             x0s = []
             y0s = []
             omegas = []
@@ -761,7 +783,7 @@ if __name__ == "__main__":
         use_saved_data = True
         sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-01-18 18:00:00 EST', date_to='2020-01-18 21:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-01-18 10:00:00 EST', date_to='2020-01-19 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -794,14 +816,14 @@ if __name__ == "__main__":
             poly_list.append(poly_fit)
             if not i:
                 poly_fit, start_stop = piece_wise_fit_eval(coeff, t=poly_t)
-                poly_t = poly_t[start_stop[0]:start_stop[1]]
+                poly_t = np.linspace(0, len(data_list[i]), len(poly_fit))
 
 
         initial_xs = [x[0] for x in data_list]
         initial_ys = [np.mean(np.diff(x[0:10])) for x in data_list]
         omegas = [find_sin_freq(pfit[0:poly_train_ind], poly_t[0:poly_train_ind]) for pfit in poly_list]
         zetas = [0 for x in data_list]
-        psm_step_size = 0.02
+        psm_step_size = 0.1
         psm_order = 5
         t = np.arange(0, train_len)
         x_list = [x[0:train_len] for x in data_list]
@@ -816,11 +838,11 @@ if __name__ == "__main__":
         coeff_list = [(np.max(x[0:train_len]) - np.min(x[0:train_len])) for x in concat_data_list]
         shift_list = [np.mean(x[0:train_len]) for x in concat_data_list]
         system_fit = MultiFrequencySystem(x_train_list, sym_list)
-        system_fit.create_propogator(freq_num=5, calc_freq_num=20)
+        system_fit.create_propogator(freq_num=5)
 
 
         # --  Test Propogator --
-        initial_polys = [np.polyfit(np.arange(0, len(x)), x, 1) for x in x_train_list]
+        initial_polys = [np.polyfit(np.arange(0, len(x)), x, 2) for x in x_train_list]
         # test_x0s0 = [x[train_len] for x in data_list]
         # test_y0s0 = [np.mean(np.diff(x[train_len-10:train_len])) for x in data_list]
         test_x0s = [np.polyval(x, len(x_train_list[0])) for x in initial_polys]
@@ -836,19 +858,21 @@ if __name__ == "__main__":
             shift = shift_list[i]
             N = all_ids.index(sym_list[i])
             progress_printer(system_fit.propogators[0].N, i, tsk='Evaluating Polynomials')
-            x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=N + 1, verbose=i==False)
+            x_fit, t_fit = system_fit.evaluate_nth_polynomial(test_t, psm_step_size, psm_order, n=N + 1, verbose=i==False)
 
-            x_fit_coeff = np.polyfit(np.linspace(0, np.max(test_t), len(x_fit)), x_fit, 1)
+            x_fit_coeff = np.polyfit(np.linspace(0, 15, 15), x_fit[0:15], 1)
             x_plot_fit = np.polyval(x_fit_coeff, np.linspace(0, np.max(test_t), len(x_fit)))
-            minmax = 0.5*np.std(x_fit - x_plot_fit)
+            minmax = 0.1*np.std(x_fit - x_plot_fit)
 
-            x_raw = concat_data_list[i][train_len-10:train_len+test_len]
+            x_raw = concat_data_list[i][train_len-10:train_len+2*test_len]
+            shift = x_raw[10] - coeff * x_plot_fit[0]
             plt.figure()
-            plt.plot(np.linspace(-10, np.max(test_t), len(x_raw)), x_raw)
+            plt.plot(np.linspace(-10, 2*test_len, len(x_raw)), x_raw)
+            plt.plot(t_fit, coeff * x_fit + shift)
             plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * x_plot_fit + shift)
             plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * ( x_plot_fit + minmax ) + shift, 'r--')
             plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * ( x_plot_fit - minmax ) + shift, 'r--')
-            plt.legend(('true', 'fit'))
+            plt.legend(('true', 'fit', 'mean', 'bounds'))
             plt.title( sym_list[i] + ' Predicted Price Vs Actual')
             plt.xlabel('Time (min)')
             plt.ylabel('Price ($)')
