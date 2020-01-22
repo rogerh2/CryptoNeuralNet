@@ -677,8 +677,8 @@ class MultiFrequencySystem:
         # The possible_ys come from the derivative of the Fourier series
         t_arr = np.arange(0, T, T / 1000)
         possible_ys = evaluate_fourier_coefficients(0, omega_list * b_list, - omega_list * a_list, omega_list, t_arr)
-        x_distance = possible_xs - x0
-        y_distance = possible_ys - y0
+        x_distance = possible_xs / x0 - 1
+        y_distance = possible_ys / y0 - 1
         tot_distance_sq = x_distance**2 + y_distance**2
         best_ind = np.argmin(tot_distance_sq)
         eval_t = t_arr[best_ind]
@@ -783,7 +783,7 @@ if __name__ == "__main__":
         use_saved_data = True
         sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-01-18 10:00:00 EST', date_to='2020-01-19 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-01-20 10:00:00 EST', date_to='2020-01-21 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -806,7 +806,7 @@ if __name__ == "__main__":
         poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
         poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
         train_len = 120 # Length of data to be used for training
-        test_len = 30
+        test_len = 15
         poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
         # create the polynomial approximation
@@ -860,12 +860,12 @@ if __name__ == "__main__":
             progress_printer(system_fit.propogators[0].N, i, tsk='Evaluating Polynomials')
             x_fit, t_fit = system_fit.evaluate_nth_polynomial(test_t, psm_step_size, psm_order, n=N + 1, verbose=i==False)
 
-            x_fit_coeff = np.polyfit(np.linspace(0, 15, 15), x_fit[0:15], 1)
+            x_fit_coeff = np.polyfit(np.linspace(0, np.max(t_fit), len(x_fit)), x_fit, 1)
             x_plot_fit = np.polyval(x_fit_coeff, np.linspace(0, np.max(test_t), len(x_fit)))
-            minmax = 0.1*np.std(x_fit - x_plot_fit)
+            minmax = 0.5*np.std(x_fit - x_plot_fit)
 
             x_raw = concat_data_list[i][train_len-10:train_len+2*test_len]
-            shift = x_raw[10] - coeff * x_plot_fit[0]
+            shift = x_raw[10] - coeff * x_fit[0]
             plt.figure()
             plt.plot(np.linspace(-10, 2*test_len, len(x_raw)), x_raw)
             plt.plot(t_fit, coeff * x_fit + shift)

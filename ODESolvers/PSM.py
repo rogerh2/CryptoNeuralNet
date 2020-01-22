@@ -546,8 +546,8 @@ class MultiFrequencySystem:
         # The possible_ys come from the derivative of the Fourier series
         t_arr = np.arange(0, T, T / 1000)
         possible_ys = evaluate_fourier_coefficients(0, omega_list * b_list, - omega_list * a_list, omega_list, t_arr)
-        x_distance = possible_xs - x0
-        y_distance = possible_ys - y0
+        x_distance = possible_xs / x0 - 1
+        y_distance = possible_ys / y0 - 1
         tot_distance_sq = x_distance**2 + y_distance**2
         best_ind = np.argmin(tot_distance_sq)
         eval_t = t_arr[best_ind]

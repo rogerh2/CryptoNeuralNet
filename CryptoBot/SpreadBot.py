@@ -1187,7 +1187,7 @@ def run_bot(bot_type='psm'):
     sleep(1)
     last_check = 0
     last_predict = 0
-    last_update = datetime.now().timestamp()
+    last_update = 0
     last_plot = 0
     plot_period = 60
     check_period = 60
@@ -1200,15 +1200,15 @@ def run_bot(bot_type='psm'):
 
         if (current_time > (last_check + check_period)):
             try:
-                # Predict using psm
-                if (current_time > (last_predict + predict_period)) and (bot_type == 'psm'):
-                    bot.predict(get_new_propogator=False)
-                    last_predict = datetime.now().timestamp()
                 # Update propogator frequencies
                 if (current_time > (last_update + update_period)) and (bot_type == 'psm'):
                     bot.predict()
                     last_predict = datetime.now().timestamp()
                     last_update = datetime.now().timestamp()
+                # Predict using psm
+                elif (current_time > (last_predict + predict_period)) and (bot_type == 'psm'):
+                    bot.predict(get_new_propogator=False)
+                    last_predict = datetime.now().timestamp()
                 # Trade
                 bot.portfolio.update_value()
                 last_check = datetime.now().timestamp()
