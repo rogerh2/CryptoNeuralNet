@@ -963,7 +963,7 @@ class PSMSpreadBot(SpreadBot):
         # Setup Initial Variables
         training_raw_data_list = {}
         for sym in self.symbols:
-            training_raw_data_list[sym] = self.raw_data[sym][-2*TRADE_LEN:TRADE_LEN]
+            training_raw_data_list[sym] = self.raw_data[sym][-2*TRADE_LEN:-TRADE_LEN]
         self.reset_propogator_start_point(training_raw_data_list)
         time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
         step_size = PSM_EVAL_STEP_SIZE
