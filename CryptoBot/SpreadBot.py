@@ -799,6 +799,7 @@ class SpreadBot(Bot):
 
                     if buy_price is None:
                         continue
+                    self.cancel_out_of_bound_orders('buy', buy_price*1.001, top_sym, widen_spread=True)
 
                     existing_size = (wallet.value['SYM'])
                     orders = list(self.portfolio.wallets[top_sym].product.auth_client.get_orders(
@@ -962,11 +963,11 @@ class PSMSpreadBot(SpreadBot):
         # Setup Initial Variables
         training_raw_data_list = {}
         for sym in self.symbols:
-            training_raw_data_list[sym] = self.raw_data[sym][0:TRADE_LEN]
+            training_raw_data_list[sym] = self.raw_data[sym][-2*TRADE_LEN:TRADE_LEN]
         self.reset_propogator_start_point(training_raw_data_list)
         time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
         step_size = PSM_EVAL_STEP_SIZE
-        polynomial_order = 10
+        polynomial_order = 5
 
         for i in range(0, len(syms)):
             sym = syms[i]
@@ -984,7 +985,7 @@ class PSMSpreadBot(SpreadBot):
         # Setup Initial Variables
         time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
         step_size = PSM_EVAL_STEP_SIZE
-        polynomial_order = 10
+        polynomial_order = 5
 
         # Collect data and create propogator
         raw_data = self.collect_next_data()
@@ -1010,14 +1011,19 @@ class PSMSpreadBot(SpreadBot):
         book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
 
         wallet = self.portfolio.wallets[sym]
-        mu, std, last_diff = wallet.product.get_psm_mean_and_std_of_price_changes(self.predictions[sym], self.raw_data[sym])
+        predicted_evolution = self.predictions[sym]
+        mu, std, last_diff = wallet.product.get_psm_mean_and_std_of_price_changes(predicted_evolution, self.raw_data[sym])
         if mu is None:
             return None, None, None, None, None
         mu *= mu_mult
+        sell_ind = np.argmax(predicted_evolution)
         if side == 'buy':
-            mu *= TRADE_LEN / 2
+            if sell_ind > 0:
+                mu *= TRADE_LEN * (np.argmin(predicted_evolution[0::]) / len(predicted_evolution[0::]))
+            else:
+                mu = 0
         else:
-            mu *= TRADE_LEN
+            mu *= TRADE_LEN * (sell_ind / len(predicted_evolution))
 
         # Calculate the coefficient used to determine the which multiple of the std to use
         std_coeff = std_mult * self.settings.read_setting_from_file('std')
@@ -1191,8 +1197,8 @@ def run_bot(bot_type='psm'):
     last_plot = 0
     plot_period = 60
     check_period = 60
-    predict_period = TRADE_LEN*60
-    update_period = 8*TRADE_LEN*60
+    predict_period = 2*60
+    update_period = 2*TRADE_LEN*60
     err_counter = 0
 
     while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
