@@ -1,11 +1,14 @@
 import pytz
 import numpy as np
 import scipy.stats
+import traceback
 from tzlocal import get_localzone
 from datetime import datetime
 from datetime import timedelta
+from scipy.signal import find_peaks
 from time import sleep
-import traceback
+from matplotlib import pyplot as plt
+
 
 
 def num2str(num, digits=2, round_down=True):
@@ -145,5 +148,11 @@ def zero(data):
 
 def nth_max_ind(arr, n=1):
     return arr.argsort()[::-1][n-1]
+
+def nth_max_peaks(arr, n=1):
+    peak_inds, peak_data = find_peaks(arr, height=(None, None))
+    nth_peak_ind = nth_max_ind(peak_data['peak_heights'], n=n)
+    return peak_inds[nth_peak_ind]
+
 
 # def rate_limited_get(func, limit, )

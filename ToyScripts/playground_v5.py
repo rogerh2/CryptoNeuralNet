@@ -7,7 +7,7 @@ from scipy.fftpack import fft
 from CryptoBot.CryptoBot_Shared_Functions import num2str
 from CryptoPredict.CryptoPredict import CryptoCompare
 from CryptoBot.CryptoBot_Shared_Functions import progress_printer
-from CryptoBot.CryptoBot_Shared_Functions import nth_max_ind
+from CryptoBot.CryptoBot_Shared_Functions import nth_max_peaks
 
 
 # -- Auxillary functions --
@@ -95,7 +95,7 @@ def fourier_transform(data, t, return_type='magnitude'):
 
 def top_N_real_fourier_coefficients(data, t, N):
     a0, a, b, mag, f = fourier_transform(data, t, return_type='all')
-    max_inds = [nth_max_ind(mag[1::], n) for n  in np.arange(2, N+1)]
+    max_inds = [nth_max_peaks(mag[1::], n) for n  in np.arange(2, N+1)]
     T = np.max(t) - np.min(t)
     omegas = 2 * np.pi * np.array(max_inds) / T
     a_max = a[max_inds]
@@ -112,7 +112,7 @@ def find_sin_freq(data, t, n=1):
     N = len(t)
     dataf = np.abs(fft(data))
     f = np.linspace(0, 2 * np.pi * 1 / (2 * T), int(N / 2))
-    guess_freq = f[nth_max_ind(dataf[0:int(N / 2)], n)]
+    guess_freq = f[nth_max_peaks(dataf[1:int(N / 2)], n) + 1]
     # plt.plot(f, dataf[0:int(N / 2)])
 
     try:
@@ -316,7 +316,7 @@ class SystemPropogator:
                 t_poly.sort()
                 max_i = len(t_poly)
 
-            time_mask = (t_poly[i] <= time) * (time <= t_poly[next_i])
+            time_mask = (t_poly[i] <= time) * (time < t_poly[next_i])
             if len(time_mask) == 0:
                 time_mask = i
             t_current = time[time_mask]
@@ -624,6 +624,7 @@ class MultiFrequencySystem:
         self.t0 = t0
         self.data = data_list
         self.propogators = None
+        self.t_reversed_propogators = None
 
     def find_omegas(self, freq_num):
         data = self.data
@@ -725,12 +726,14 @@ class MultiFrequencySystem:
                 y0s.append(y)
 
             self.propogators[k].reset(x0s=x0s, y0s=y0s)
+            self.t_reversed_propogators[k].reset(x0s=x0s, y0s=[-y0_k for y0_k in  y0s])
 
     def create_propogator(self, freq_num, calc_freq_num=None):
         if not calc_freq_num:
             calc_freq_num = freq_num
         x_list, y_list, omega_list = self.find_xs_and_ys(calc_freq_num)
         propagators = []
+        t_reversed_propogators = []
 
         for k in range(0, freq_num-1):
             x0s = []
@@ -753,8 +756,11 @@ class MultiFrequencySystem:
                 ids.append(id)
 
             propagator = SystemPropogator(x0s, y0s, omegas, np.zeros(len(x0s)), identifiers=ids)
+            t_reversed_propagator = SystemPropogator(x0s, [-y0_k for y0_k in  y0s], omegas, np.zeros(len(x0s)), identifiers=ids)
             propagators.append(propagator)
+            t_reversed_propogators.append(t_reversed_propagator)
 
+        self.t_reversed_propogators = t_reversed_propogators
         self.propogators = propagators
 
         return propagators
@@ -773,6 +779,28 @@ class MultiFrequencySystem:
 
         return x_fit, t_fit
 
+    def evaluate_nth_t_reversed_polynomial(self, time_arr, step_size, polynomial_order, n=None, verbose=True):
+        x_fit = None
+        for system_fit in self.t_reversed_propogators:
+            # TODO use multiprocessing to evaluate all polynomials at once
+            if x_fit is None:
+                x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                  verbose=verbose)
+            else:
+                x_fit_omega, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                        verbose=verbose)
+                x_fit += x_fit_omega
+
+        return x_fit, t_fit
+
+    def err(self, step_size, order, n, coeff, shift):
+        forward_time = np.arange(0, len(self.data[0]))
+        xr_fit, tr_fit = self.evaluate_nth_t_reversed_polynomial(forward_time, step_size, order, n=n, verbose=False)
+        x = np.flip(xr_fit, 0)
+        real_data = self.data[n-1][-int(np.max(tr_fit)+1)::]
+        err = np.std(coeff * real_data - coeff * x) / np.mean(coeff * real_data + shift)
+
+        return err
 
 if __name__ == "__main__":
     run_type = 'crypto'
@@ -781,9 +809,9 @@ if __name__ == "__main__":
         # -- Get raw data --
         model_save_folder = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/psm_models//'
         use_saved_data = True
-        sym_list = ['LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
+        sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-01-20 10:00:00 EST', date_to='2020-01-21 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-01-22 10:00:00 EST', date_to='2020-01-23 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -806,7 +834,7 @@ if __name__ == "__main__":
         poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
         poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
         train_len = 120 # Length of data to be used for training
-        test_len = 15
+        test_len = 120
         poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
         # create the polynomial approximation
@@ -838,7 +866,7 @@ if __name__ == "__main__":
         coeff_list = [(np.max(x[0:train_len]) - np.min(x[0:train_len])) for x in concat_data_list]
         shift_list = [np.mean(x[0:train_len]) for x in concat_data_list]
         system_fit = MultiFrequencySystem(x_train_list, sym_list)
-        system_fit.create_propogator(freq_num=5)
+        system_fit.create_propogator(freq_num=10)
 
 
         # --  Test Propogator --
@@ -852,30 +880,52 @@ if __name__ == "__main__":
         system_fit.reset(x0s=test_x0s, y0s=test_y0s)
 
         # system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
-
+        forward_errs = np.array([])
+        reversed_errs = np.array([])
+        mean_prices = np.array([])
         for i in range(0, len(sym_list)):
             coeff = coeff_list[i]
             shift = shift_list[i]
             N = all_ids.index(sym_list[i])
             progress_printer(system_fit.propogators[0].N, i, tsk='Evaluating Polynomials')
-            x_fit, t_fit = system_fit.evaluate_nth_polynomial(test_t, psm_step_size, psm_order, n=N + 1, verbose=i==False)
+            xf_fit, tf_fit = system_fit.evaluate_nth_polynomial(test_t, psm_step_size, psm_order, n=N + 1, verbose=i==False)
+            xr_fit, tr_fit = system_fit.evaluate_nth_t_reversed_polynomial(test_t, psm_step_size, psm_order, n=N + 1,
+                                                              verbose=i == False)
+            x_fit = np.append(np.flip(xr_fit, 0), xf_fit)
+            t_fit = np.append(np.flip(-tr_fit, 0), tf_fit)
 
-            x_fit_coeff = np.polyfit(np.linspace(0, np.max(t_fit), len(x_fit)), x_fit, 1)
-            x_plot_fit = np.polyval(x_fit_coeff, np.linspace(0, np.max(test_t), len(x_fit)))
-            minmax = 0.5*np.std(x_fit - x_plot_fit)
+            # x_fit_coeff = np.polyfit(np.linspace(0, np.max(t_fit), len(x_fit)), x_fit, 1)
+            # x_plot_fit = np.polyval(x_fit_coeff, np.linspace(0, np.max(test_t), len(x_fit)))
+            # minmax = 0.5*np.std(x_fit - x_plot_fit)
+            test_len = int(np.max(t_fit))
 
-            x_raw = concat_data_list[i][train_len-10:train_len+2*test_len]
-            shift = x_raw[10] - coeff * x_fit[0]
+            x_raw = concat_data_list[i][train_len-test_len:train_len+2*test_len]
+            shift = x_raw[test_len] - coeff * x_fit[test_len]
+            err = np.std(x_raw[0:test_len] - coeff * x_fit[0:test_len] - shift) / np.mean(x_raw[0:test_len])#system_fit.err(psm_step_size, psm_order, N+1, coeff, shift)#
+            err_f = np.std(x_raw[test_len:2*test_len] - coeff * x_fit[test_len:2*test_len] + shift) / np.mean(x_raw[test_len:2*test_len])
+            forward_errs = np.append(forward_errs, err_f)
+            reversed_errs = np.append(reversed_errs, err)
+            mean_prices = np.append(mean_prices, np.mean(x_raw))
             plt.figure()
-            plt.plot(np.linspace(-10, 2*test_len, len(x_raw)), x_raw)
+            plt.plot(np.linspace(-test_len, 2*test_len, len(x_raw)), x_raw)
             plt.plot(t_fit, coeff * x_fit + shift)
-            plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * x_plot_fit + shift)
-            plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * ( x_plot_fit + minmax ) + shift, 'r--')
-            plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * ( x_plot_fit - minmax ) + shift, 'r--')
-            plt.legend(('true', 'fit', 'mean', 'bounds'))
-            plt.title( sym_list[i] + ' Predicted Price Vs Actual')
+            # plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * x_plot_fit + shift)
+            # plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * ( x_plot_fit + minmax ) + shift, 'r--')
+            # plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * ( x_plot_fit - minmax ) + shift, 'r--')
+            plt.legend(('true', 'fit'))
+            plt.title( sym_list[i] + ' Predicted Price Vs Actual\nerror: ' + str(err))
             plt.xlabel('Time (min)')
             plt.ylabel('Price ($)')
+        plt.figure()
+        plt.plot(reversed_errs, forward_errs, 'rx')
+        plt.title('Calculated errors vs Real')
+        plt.xlabel('calculated')
+        plt.ylabel('real')
+        plt.figure()
+        plt.plot(mean_prices, forward_errs, 'rx')
+        plt.title('Calculated errors vs Mean Price')
+        plt.xlabel('price')
+        plt.ylabel('err')
         plt.show()
 
     else:
