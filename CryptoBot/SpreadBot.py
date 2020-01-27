@@ -43,7 +43,7 @@ import re
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 MIN_SPREAD = 1.012 # This is the minnimum spread before a trade can be made
-TRADE_LEN = 15 # This is the amount of time I desire for trades to be filled in
+TRADE_LEN = 60 # This is the amount of time I desire for trades to be filled in
 PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
 MIN_PORTFOLIO_VALUE = 30 # This is the value that will trigger the bot to stop trading
 
@@ -486,7 +486,7 @@ class Bot:
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
     spread = 1.01
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX', 'XTZ'), is_sandbox_api=False, base_currency='USD'):
+    def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD'):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         current_offset = self.settings.read_setting_from_file('portfolio value offset')
         self.portfolio = CombinedPortfolio(api_key, secret_key, passphrase, syms, is_sandbox=is_sandbox_api, offset_value=current_offset, base_currency=base_currency)
@@ -771,7 +771,7 @@ class SpreadBot(Bot):
         # Check available cash after canceling the non_optimal buy orders and place the next order
         full_portfolio_value = self.get_full_portfolio_value()
         num_orders = len(top_syms)
-        for ind in range(1, num_orders + 1):
+        for ind in range(1, desired_number_of_currencies + 33):
             i = num_orders - ind
             usd_available = self.portfolio.get_usd_available()
             if (usd_available > QUOTE_ORDER_MIN):
@@ -961,23 +961,13 @@ class PSMSpreadBot(SpreadBot):
 
         # determine propogator error
         # Setup Initial Variables
-        training_raw_data_list = {}
-        for sym in self.symbols:
-            training_raw_data_list[sym] = self.raw_data[sym][-2*TRADE_LEN:-TRADE_LEN]
-        self.reset_propogator_start_point(training_raw_data_list)
         time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
         step_size = PSM_EVAL_STEP_SIZE
         polynomial_order = 5
 
         for i in range(0, len(syms)):
             sym = syms[i]
-
-            predicted_price, predict_t = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose_on)
-            predicted_price = self.transform_single_sym(sym, predicted_price)
-            true_price = raw_data_list[i][-TRADE_LEN::]
-            predicted_coeff = np.polyfit(predict_t, predicted_price, 1)
-            true_coeff = np.polyfit(np.arange(0, len(true_price)), true_price, 1)
-            self.errors[sym] = np.abs((predicted_coeff[0] - true_coeff[0]) / (true_price[-1]))
+            self.errors[sym], _, _ = self.propogator.err(step_size, polynomial_order, i + 1, coeff_list[i], shift_list[i], verbose=verbose_on)
 
 
 
@@ -1198,7 +1188,7 @@ def run_bot(bot_type='psm'):
     plot_period = 60
     check_period = 60
     predict_period = 2*60
-    update_period = 2*TRADE_LEN*60
+    update_period = TRADE_LEN*60
     err_counter = 0
 
     while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):

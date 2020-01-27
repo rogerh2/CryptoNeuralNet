@@ -793,14 +793,61 @@ class MultiFrequencySystem:
 
         return x_fit, t_fit
 
-    def err(self, step_size, order, n, coeff, shift):
+    def err(self, step_size, order, n, coeff, shift, verbose=False):
         forward_time = np.arange(0, len(self.data[0]))
-        xr_fit, tr_fit = self.evaluate_nth_t_reversed_polynomial(forward_time, step_size, order, n=n, verbose=False)
+        xr_fit, tr_fit = self.evaluate_nth_t_reversed_polynomial(forward_time, step_size, order, n=n, verbose=verbose)
         x = np.flip(xr_fit, 0)
         real_data = self.data[n-1][-int(np.max(tr_fit)+1)::]
         err = np.std(coeff * real_data - coeff * x) / np.mean(coeff * real_data + shift)
 
-        return err
+        return err, x, real_data
+
+    def get_total_err_from_x0_and_y0(self, step_size, order, coeff_list, shift_list, x0s_guess, y0s_guess, verbose=False):
+        self.reset(x0s_guess, y0s_guess)
+        err_tot = 0
+        x=None
+        dat=None
+        for n in range(1, len(self.data)+1):
+            coeff = coeff_list[n-1]
+            shift = shift_list[n-1]
+            progress_printer(self.propogators[0].N, n-1, tsk='Evaluating Polynomials for Error Estimation')
+            err_partial, x, dat = self.err(step_size, order, n, coeff, shift, verbose=not (n-1))
+            err_tot += err_partial
+
+        return err_tot / (len(self.data)+1), x, dat
+
+    def optimize_x_and_y(self, step_size, order, coefficients, shifts, x0s_guess, y0s_guess, max_num_steps=10, min_alpha=0, verbose=False, plot=False):
+        last_err, x, dat= self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose)
+        if plot:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            ax.plot(dat)
+            line, = ax.plot(x)
+            plt.title('Iteration: 0, Error: ' + num2str(last_err, 4))
+            plt.draw()
+            plt.pause(0.01)
+        x0s = x0s_guess
+        y0s = y0s_guess
+        for i in range(0, max_num_steps):
+            x0s_guess = x0s + (np.random.rand(len(x0s_guess)) - 0.5)
+            y0s_guess = y0s + (np.random.rand(len(x0s_guess)) - 0.5) / len(dat)
+            err, x, dat = self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose)
+            if plot:
+                line.set_ydata(x)
+                plt.title('Iteration: ' + str(i + 1) + ', Error: ' + num2str(err, 4))
+                plt.draw()
+                plt.pause(0.01)
+            if not np.isnan(err):
+                alpha = err / last_err
+                u = np.random.random()
+                if alpha < min_alpha:
+                    break
+                elif alpha < u:
+                    x0s = x0s_guess
+                    y0s = y0s_guess
+                    last_err = err
+
+        self.reset(x0s, y0s)
 
 if __name__ == "__main__":
     run_type = 'crypto'
@@ -811,7 +858,7 @@ if __name__ == "__main__":
         use_saved_data = True
         sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-01-22 10:00:00 EST', date_to='2020-01-23 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-01-25 10:00:00 EST', date_to='2020-01-26 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -834,7 +881,7 @@ if __name__ == "__main__":
         poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
         poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
         train_len = 120 # Length of data to be used for training
-        test_len = 120
+        test_len = 30
         poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
         # create the polynomial approximation
@@ -877,7 +924,7 @@ if __name__ == "__main__":
         test_y0s = [x[0] for x in initial_polys]
         test_t = np.arange(0, test_len)
         all_ids = system_fit.propogators[0].keys
-        system_fit.reset(x0s=test_x0s, y0s=test_y0s)
+        # system_fit.optimize_x_and_y(psm_step_size, psm_order, coeff_list, shift_list, test_x0s, test_y0s, verbose=True, plot=True)
 
         # system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
         forward_errs = np.array([])
@@ -901,7 +948,7 @@ if __name__ == "__main__":
 
             x_raw = concat_data_list[i][train_len-test_len:train_len+2*test_len]
             shift = x_raw[test_len] - coeff * x_fit[test_len]
-            err = np.std(x_raw[0:test_len] - coeff * x_fit[0:test_len] - shift) / np.mean(x_raw[0:test_len])#system_fit.err(psm_step_size, psm_order, N+1, coeff, shift)#
+            err, _, _ = system_fit.err(psm_step_size, psm_order, N+1, coeff, shift)#np.std(x_raw[0:test_len] - coeff * x_fit[0:test_len] - shift) / np.mean(x_raw[0:test_len])#
             err_f = np.std(x_raw[test_len:2*test_len] - coeff * x_fit[test_len:2*test_len] + shift) / np.mean(x_raw[test_len:2*test_len])
             forward_errs = np.append(forward_errs, err_f)
             reversed_errs = np.append(reversed_errs, err)

@@ -6,7 +6,7 @@ from scipy.fftpack import fft
 from CryptoBot.CryptoBot_Shared_Functions import num2str
 from CryptoPredict.CryptoPredict import CryptoCompare
 from CryptoBot.CryptoBot_Shared_Functions import progress_printer
-from CryptoBot.CryptoBot_Shared_Functions import nth_max_ind
+from CryptoBot.CryptoBot_Shared_Functions import nth_max_peaks
 
 
 # -- Auxillary functions --
@@ -94,7 +94,7 @@ def fourier_transform(data, t, return_type='magnitude'):
 
 def top_N_real_fourier_coefficients(data, t, N):
     a0, a, b, mag, f = fourier_transform(data, t, return_type='all')
-    max_inds = [nth_max_ind(mag[1::], n) for n  in np.arange(2, N+1)]
+    max_inds = [nth_max_peaks(mag[1::], n) for n  in np.arange(2, N+1)]
     T = np.max(t) - np.min(t)
     omegas = 2 * np.pi * np.array(max_inds) / T
     a_max = a[max_inds]
@@ -111,7 +111,7 @@ def find_sin_freq(data, t, n=1):
     N = len(t)
     dataf = np.abs(fft(data))
     f = np.linspace(0, 2 * np.pi * 1 / (2 * T), int(N / 2))
-    guess_freq = f[nth_max_ind(dataf[0:int(N / 2)], n)]
+    guess_freq = f[nth_max_peaks(dataf[0:int(N / 2)], n)]
     # plt.plot(f, dataf[0:int(N / 2)])
 
     try:
@@ -322,7 +322,7 @@ class SystemPropogator:
                 t_poly.sort()
                 max_i = len(t_poly)
 
-            time_mask = (t_poly[i] <= time) * (time <= t_poly[next_i])
+            time_mask = (t_poly[i] <= time) * (time < t_poly[next_i])
             if len(time_mask) == 0:
                 time_mask = i
             t_current = time[time_mask]
@@ -493,6 +493,7 @@ class MultiFrequencySystem:
         self.t0 = t0
         self.data = data_list
         self.propogators = None
+        self.t_reversed_propogators = None
 
     def find_omegas(self, freq_num):
         data = self.data
@@ -546,9 +547,8 @@ class MultiFrequencySystem:
         # The possible_ys come from the derivative of the Fourier series
         t_arr = np.arange(0, T, T / 1000)
         possible_ys = evaluate_fourier_coefficients(0, omega_list * b_list, - omega_list * a_list, omega_list, t_arr)
-        eps = np.sqrt(np.finfo(float).eps)
-        x_distance = possible_xs / (x0 + eps) - 1
-        y_distance = possible_ys / (y0 + eps) - 1
+        x_distance = possible_xs / x0 - 1
+        y_distance = possible_ys / y0 - 1
         tot_distance_sq = x_distance**2 + y_distance**2
         best_ind = np.argmin(tot_distance_sq)
         eval_t = t_arr[best_ind]
@@ -595,12 +595,14 @@ class MultiFrequencySystem:
                 y0s.append(y)
 
             self.propogators[k].reset(x0s=x0s, y0s=y0s)
+            self.t_reversed_propogators[k].reset(x0s=x0s, y0s=[-y0_k for y0_k in  y0s])
 
     def create_propogator(self, freq_num, calc_freq_num=None):
         if not calc_freq_num:
             calc_freq_num = freq_num
         x_list, y_list, omega_list = self.find_xs_and_ys(calc_freq_num)
         propagators = []
+        t_reversed_propogators = []
 
         for k in range(0, freq_num-1):
             x0s = []
@@ -623,8 +625,11 @@ class MultiFrequencySystem:
                 ids.append(id)
 
             propagator = SystemPropogator(x0s, y0s, omegas, np.zeros(len(x0s)), identifiers=ids)
+            t_reversed_propagator = SystemPropogator(x0s, [-y0_k for y0_k in  y0s], omegas, np.zeros(len(x0s)), identifiers=ids)
             propagators.append(propagator)
+            t_reversed_propogators.append(t_reversed_propagator)
 
+        self.t_reversed_propogators = t_reversed_propogators
         self.propogators = propagators
 
         return propagators
@@ -643,6 +648,29 @@ class MultiFrequencySystem:
 
         return x_fit, t_fit
 
+    def evaluate_nth_t_reversed_polynomial(self, time_arr, step_size, polynomial_order, n=None, verbose=True):
+        x_fit = None
+        for system_fit in self.t_reversed_propogators:
+            # TODO use multiprocessing to evaluate all polynomials at once
+            if x_fit is None:
+                x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                  verbose=verbose)
+            else:
+                x_fit_omega, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                        verbose=verbose)
+                x_fit += x_fit_omega
+
+        return x_fit, t_fit
+
+    def err(self, step_size, order, n, coeff, shift, verbose=False):
+        forward_time = np.arange(0, len(self.data[0]))
+        xr_fit, tr_fit = self.evaluate_nth_t_reversed_polynomial(forward_time, step_size, order, n=n, verbose=verbose)
+        x = np.flip(xr_fit, 0)
+        real_data = self.data[n-1][-int(np.max(tr_fit)+1)::]
+        err = np.std(coeff * real_data - coeff * x) / np.mean(coeff * real_data + shift)
+
+        return err, x, real_data
+
 # -- Create the Propogator --
 
 def create_multifrequency_propogator_from_data(raw_data_list, sym_list):
@@ -652,7 +680,7 @@ def create_multifrequency_propogator_from_data(raw_data_list, sym_list):
     coeff_list = [(np.max(x) - np.min(x)) for x in concat_data_list]
     shift_list = [np.mean(x) for x in concat_data_list]
     system_fit = MultiFrequencySystem(data_list, sym_list)
-    system_fit.create_propogator(freq_num=6)
+    system_fit.create_propogator(freq_num=10)
 
     return system_fit, coeff_list, shift_list
 
