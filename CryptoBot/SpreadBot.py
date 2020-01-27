@@ -272,7 +272,7 @@ class Product:
 
 
 
-    def place_order(self, price, side, size, coeff=1, post_only=True):
+    def place_order(self, price, side, size, coeff=1, post_only=True, time_out=False):
         # TODO ensure it never rounds up to the point that the order is larger than available
 
         if not side in ['buy', 'sell']:
@@ -288,7 +288,10 @@ class Product:
         price_str = num2str(price, self.usd_decimal_num)
         size_str = num2str(coeff * size, self.base_decimal_num)
 
-        order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only)
+        if time_out:
+            order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, time_in_force='GTT', cancel_after='hour')
+        else:
+            order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only)
         sleep(PRIVATE_SLEEP)
 
         if type(order_info) == dict:
@@ -504,8 +507,8 @@ class Bot:
                 top_order = self.portfolio.wallets[sym].product.get_top_order(side)
                 self.current_price[sym][side] = top_order
 
-    def place_order(self, price, side, size, sym, post_only=True):
-        order_id = self.portfolio.wallets[sym].product.place_order(price, side, size, post_only=post_only)
+    def place_order(self, price, side, size, sym, post_only=True, time_out=False):
+        order_id = self.portfolio.wallets[sym].product.place_order(price, side, size, post_only=post_only, time_out=time_out)
         return order_id
 
     def get_full_portfolio_value(self):
@@ -738,7 +741,7 @@ class SpreadBot(Bot):
         print('placing order\n' + 'price: ' + num2str(buy_price,
                                                       wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
             size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'spread: ' + num2str(spread, 6) + '\n')
-        order_id = self.place_order(buy_price, 'buy', size, top_sym, post_only=False)
+        order_id = self.place_order(buy_price, 'buy', size, top_sym, post_only=False, time_out=True)
         if order_id is None:
             print('Buy Order rejected\n')
         else:
@@ -771,7 +774,8 @@ class SpreadBot(Bot):
         # Check available cash after canceling the non_optimal buy orders and place the next order
         full_portfolio_value = self.get_full_portfolio_value()
         num_orders = len(top_syms)
-        for ind in range(1, desired_number_of_currencies + 33):
+        num_currencies_to_loop = np.max(np.array([len(top_syms) + 1, desired_number_of_currencies + 3]))
+        for ind in range(1, num_currencies_to_loop):
             i = num_orders - ind
             usd_available = self.portfolio.get_usd_available()
             if (usd_available > QUOTE_ORDER_MIN):
@@ -1003,17 +1007,25 @@ class PSMSpreadBot(SpreadBot):
         wallet = self.portfolio.wallets[sym]
         predicted_evolution = self.predictions[sym]
         mu, std, last_diff = wallet.product.get_psm_mean_and_std_of_price_changes(predicted_evolution, self.raw_data[sym])
+        current_price = wallet.product.get_top_order(opposing_book_side)
         if mu is None:
             return None, None, None, None, None
         mu *= mu_mult
         sell_ind = np.argmax(predicted_evolution)
         if side == 'buy':
             if sell_ind > 0:
-                mu *= TRADE_LEN * (np.argmin(predicted_evolution[0::]) / len(predicted_evolution[0::]))
+                mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
             else:
                 mu = 0
+            buy_diff = np.min(predicted_evolution[0:sell_ind]) - current_price
         else:
+            buy_diff = np.max(predicted_evolution) - current_price
             mu *= TRADE_LEN * (sell_ind / len(predicted_evolution))
+        # TODO fix up this method to be more consistent
+        if coeff * buy_diff < 0:
+            buy_price = current_price
+        else:
+            buy_price = current_price + 0.7 * buy_diff
 
         # Calculate the coefficient used to determine the which multiple of the std to use
         std_coeff = std_mult * self.settings.read_setting_from_file('std')
@@ -1031,7 +1043,7 @@ class PSMSpreadBot(SpreadBot):
         #     order_coeff = 1
         #     current_price = wallet.product.get_top_order(opposing_book_side) + coeff * wallet.product.usd_res
 
-        buy_price = order_coeff * current_price
+        # buy_price = order_coeff * current_price
         size = usd_available / buy_price
 
         return buy_price, wallet, size, std, mu
