@@ -43,7 +43,7 @@ import re
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 MIN_SPREAD = 1.012 # This is the minnimum spread before a trade can be made
-TRADE_LEN = 60 # This is the amount of time I desire for trades to be filled in
+TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
 PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
 MIN_PORTFOLIO_VALUE = 30 # This is the value that will trigger the bot to stop trading
 
@@ -943,7 +943,7 @@ class PSMSpreadBot(SpreadBot):
         # x0s = [x[-1] for x in normalized_raw_data_list]
         # y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
         initial_polys = [np.polyfit(np.arange(0, len(x[-11::])), x[-11::], 1) for x in normalized_raw_data_list]
-        x0s = [x[0] for x in normalized_raw_data_list]
+        x0s = [np.polyval(x, 11) for x in initial_polys]
         y0s = [x[0] for x in initial_polys]
         self.propogator.reset(x0s=x0s, y0s=y0s)
 
@@ -1066,7 +1066,7 @@ class PSMSpreadBot(SpreadBot):
             current_price = wallet.product.get_top_order('bids')
             spread = 1 + ( sell_price - buy_price ) / buy_price
             rank = 1/self.errors[sym]#(sell_price - current_price) / buy_price
-            if (spread < MIN_SPREAD) or (mu < 0):
+            if (spread < MIN_SPREAD):
                 rank = -1 # eliminate trades with low spreads
             ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
 
