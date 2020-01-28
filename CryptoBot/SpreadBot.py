@@ -774,7 +774,7 @@ class SpreadBot(Bot):
         # Check available cash after canceling the non_optimal buy orders and place the next order
         full_portfolio_value = self.get_full_portfolio_value()
         num_orders = len(top_syms)
-        num_currencies_to_loop = np.max(np.array([len(top_syms) + 1, desired_number_of_currencies + 3]))
+        num_currencies_to_loop = np.min(np.array([len(top_syms) + 1, desired_number_of_currencies + 3]))
         for ind in range(1, num_currencies_to_loop):
             i = num_orders - ind
             usd_available = self.portfolio.get_usd_available()
@@ -942,8 +942,8 @@ class PSMSpreadBot(SpreadBot):
         normalized_raw_data_list = [normalized_raw_data[sym] for sym in self.symbols]
         # x0s = [x[-1] for x in normalized_raw_data_list]
         # y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
-        initial_polys = [np.polyfit(np.arange(0, len(x)), x, 1) for x in normalized_raw_data_list]
-        x0s = [np.polyval(x, len(normalized_raw_data_list[0])) for x in initial_polys]
+        initial_polys = [np.polyfit(np.arange(0, len(x[-11::])), x[-11::], 1) for x in normalized_raw_data_list]
+        x0s = [x[0] for x in normalized_raw_data_list]
         y0s = [x[0] for x in initial_polys]
         self.propogator.reset(x0s=x0s, y0s=y0s)
 
@@ -1008,6 +1008,7 @@ class PSMSpreadBot(SpreadBot):
         predicted_evolution = self.predictions[sym]
         mu, std, last_diff = wallet.product.get_psm_mean_and_std_of_price_changes(predicted_evolution, self.raw_data[sym])
         current_price = wallet.product.get_top_order(opposing_book_side)
+        std_coeff = std_mult * self.settings.read_setting_from_file('std')
         if mu is None:
             return None, None, None, None, None
         mu *= mu_mult
@@ -1015,9 +1016,11 @@ class PSMSpreadBot(SpreadBot):
         if side == 'buy':
             if sell_ind > 0:
                 mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
+                buy_diff = np.min(predicted_evolution[0:sell_ind]) - current_price
+
             else:
+                buy_diff = 0
                 mu = 0
-            buy_diff = np.min(predicted_evolution[0:sell_ind]) - current_price
         else:
             buy_diff = np.max(predicted_evolution) - current_price
             mu *= TRADE_LEN * (sell_ind / len(predicted_evolution))
@@ -1025,7 +1028,7 @@ class PSMSpreadBot(SpreadBot):
         if coeff * buy_diff < 0:
             buy_price = current_price
         else:
-            buy_price = current_price + 0.7 * buy_diff
+            buy_price = current_price + std_coeff * buy_diff
 
         # Calculate the coefficient used to determine the which multiple of the std to use
         std_coeff = std_mult * self.settings.read_setting_from_file('std')
