@@ -834,11 +834,13 @@ class SpreadBot(Bot):
             wallet = self.portfolio.wallets[sym]
             limit_price = self.spread_price_limits[sym]['sell']
             cutoff_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
-            e_cutoff_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell', std_mult=3)
+            alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
             available = wallet.get_amnt_available('sell')
 
             if limit_price is None:
                 continue
+            elif alt_price > limit_price:
+                limit_price = alt_price
 
             # Filter unnecessary currencies
             # if limit_price > e_cutoff_price:
@@ -1022,13 +1024,13 @@ class PSMSpreadBot(SpreadBot):
                 buy_diff = 0
                 mu = 0
         else:
-            buy_diff = np.max(predicted_evolution) - current_price
+            buy_diff = std_coeff * np.max(predicted_evolution) - current_price
             mu *= TRADE_LEN * (sell_ind / len(predicted_evolution))
         # TODO fix up this method to be more consistent
         if coeff * buy_diff < 0:
             buy_price = current_price
         else:
-            buy_price = current_price + std_coeff * buy_diff
+            buy_price = current_price + buy_diff
 
         # Calculate the coefficient used to determine the which multiple of the std to use
         std_coeff = std_mult * self.settings.read_setting_from_file('std')
