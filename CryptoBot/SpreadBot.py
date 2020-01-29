@@ -42,7 +42,7 @@ import re
 # SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
-MIN_SPREAD = 1.012 # This is the minnimum spread before a trade can be made
+MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
 PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
 MIN_PORTFOLIO_VALUE = 30 # This is the value that will trigger the bot to stop trading
@@ -740,7 +740,7 @@ class SpreadBot(Bot):
         print('\n' + top_sym + ' Chosen as best buy')
         print('placing order\n' + 'price: ' + num2str(buy_price,
                                                       wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
-            size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'spread: ' + num2str(spread, 6) + '\n')
+            size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'projected spread: ' + num2str(spread, 6) + '\n')
         order_id = self.place_order(buy_price, 'buy', size, top_sym, post_only=False, time_out=True)
         if order_id is None:
             print('Buy Order rejected\n')
@@ -821,6 +821,11 @@ class SpreadBot(Bot):
                     else:
                         continue
 
+                    # If the spread is too small don't place the order
+                    spread = 1 + (sell_price - buy_price) / buy_price
+                    if spread < MIN_SPREAD:
+                        continue
+
                     # Place order
                     self.place_order_for_nth_currency(buy_price, sell_price, wallet, size, std, mu, top_sym)
                     self.portfolio.update_value()
@@ -832,15 +837,14 @@ class SpreadBot(Bot):
         for sym in self.portfolio.wallets.keys():
             # Get relevant variables
             wallet = self.portfolio.wallets[sym]
-            limit_price = self.spread_price_limits[sym]['sell']
+            buy_price = self.spread_price_limits[sym]['buy']
+            projected_sell_price = self.spread_price_limits[sym]['buy']
             cutoff_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
-            alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
+            limit_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
             available = wallet.get_amnt_available('sell')
 
-            if limit_price is None:
+            if projected_sell_price is None:
                 continue
-            elif alt_price > limit_price:
-                limit_price = alt_price
 
             # Filter unnecessary currencies
             # if limit_price > e_cutoff_price:
@@ -862,8 +866,8 @@ class SpreadBot(Bot):
             #     available = wallet.get_amnt_available('sell')
             #     limit_price = alt_price
 
-
-            print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n')
+            spread = 1 + (limit_price - buy_price) / buy_price
+            print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n' + 'spread: ' + num2str(spread, 4))
 
             order_id = self.place_order(limit_price, 'sell', available, sym, post_only=False)
             if order_id is None:
