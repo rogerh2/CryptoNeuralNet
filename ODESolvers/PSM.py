@@ -185,11 +185,11 @@ class Polynomial:
 
         # calculate next step
         if (F is not None) and (np.abs(self.zeta) > 0): #If F and zeta are non zero
-            y_next = ( F[n] - 2 * self.zeta * self.omega * y[-1] + ( omega_plus_sq * x_plus + omega_sq * x_minus) - ( omega_sq + omega_plus_sq) * x) / (n + 1)
+            y_next = ( F[n] - 2 * self.zeta * self.omega * y[-1] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
         elif (F is None) and (np.abs(self.zeta) > 0): #If F is zero and zeta is non zero
-            y_next = (2 * self.zeta * self.omega * y[-1] + ( omega_plus_sq * x_plus + omega_sq * x_minus) - ( omega_sq + omega_plus_sq) * x) / (n + 1)
+            y_next = (2 * self.zeta * self.omega * y[-1] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
         elif (F is not None): #If F nonzero and zeta is zero
-            y_next = (F[n] + ( omega_plus_sq * x_plus + omega_sq * x_minus) - ( omega_sq + omega_plus_sq) * x) / (n + 1)
+            y_next = (F[n] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
         else: #If F and zeta are both zero
             y_next = (( omega_plus_sq * x_plus + omega_sq * x_minus) - ( omega_sq + omega_plus_sq) * x) / (n + 1)
 
@@ -671,6 +671,53 @@ class MultiFrequencySystem:
 
         return err, x, real_data
 
+    def get_total_err_from_x0_and_y0(self, step_size, order, coeff_list, shift_list, x0s_guess, y0s_guess, verbose=False):
+        self.reset(x0s_guess, y0s_guess)
+        err_tot = 0
+        x=None
+        dat=None
+        for n in range(1, len(self.data)+1):
+            coeff = coeff_list[n-1]
+            shift = shift_list[n-1]
+            progress_printer(self.propogators[0].N, n-1, tsk='Evaluating Polynomials for Error Estimation')
+            err_partial, x, dat = self.err(step_size, order, n, coeff, shift, verbose=not (n-1))
+            err_tot += err_partial
+
+        return err_tot / (len(self.data)+1), x, dat
+
+    def optimize_x_and_y(self, step_size, order, coefficients, shifts, x0s_guess, y0s_guess, max_num_steps=10, min_alpha=0, verbose=False, plot=False):
+        last_err, x, dat= self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose)
+        if plot:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            ax.plot(dat)
+            line, = ax.plot(x)
+            plt.title('Iteration: 0, Error: ' + num2str(last_err, 4))
+            plt.draw()
+            plt.pause(0.01)
+        x0s = x0s_guess
+        y0s = y0s_guess
+        for i in range(0, max_num_steps):
+            x0s_guess = x0s + (np.random.rand(len(x0s_guess)) - 0.5)
+            y0s_guess = y0s + (np.random.rand(len(x0s_guess)) - 0.5) / len(dat)
+            err, x, dat = self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose)
+            if plot:
+                line.set_ydata(x)
+                plt.title('Iteration: ' + str(i + 1) + ', Error: ' + num2str(err, 4))
+                plt.draw()
+                plt.pause(0.01)
+            if not np.isnan(err):
+                alpha = err / last_err
+                u = np.random.random()
+                if alpha < min_alpha:
+                    break
+                elif alpha < u:
+                    x0s = x0s_guess
+                    y0s = y0s_guess
+                    last_err = err
+
+        self.reset(x0s, y0s)
+
 # -- Create the Propogator --
 
 def create_multifrequency_propogator_from_data(raw_data_list, sym_list):
@@ -714,9 +761,9 @@ def create_propogator_from_data(raw_data_list, initial_t=0):
 
 if __name__ == "__main__":
     use_saved_data = True
-    sym_list = ('BTC', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX', 'XTZ', 'ETH')
+    sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
     if not use_saved_data:
-        cc = CryptoCompare(date_from='2019-11-08 11:30:00 EST', exchange='Coinbase')
+        cc = CryptoCompare(date_from='2020-01-28 10:00:00 EST', date_to='2020-01-29 10:57:00 EST', exchange='Coinbase')
         raw_data_list = []
         for sym in sym_list:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -732,14 +779,14 @@ if __name__ == "__main__":
         data_len = np.min(np.array([len(x) for x in raw_data_list]))
         concat_data_list = [x[0:data_len] for x in raw_data_list]
 
-    train_len = 600  # Length of data to be used for training
-    test_len = 90
+    train_len = 120  # Length of data to be used for training
+    test_len = 120
     t = np.arange(0, test_len)
-    psm_step_size = 0.01
-    psm_order = 10
+    psm_step_size = 0.1
+    psm_order = 5
     train_list = [x[0:train_len] for x in raw_data_list]
 
-    system_fit, coeff_list, shift_list = create_propogator_from_data(train_list)
+    system_fit, coeff_list, shift_list = create_multifrequency_propogator_from_data(train_list, sym_list)
 
     test_list = [x[train_len:train_len+test_len] for x in raw_data_list]
     norm_test_list = [(x - shift)/(coeff) for x, shift, coeff, in zip(test_list, shift_list, coeff_list)]
@@ -753,7 +800,7 @@ if __name__ == "__main__":
     for i in range(0, len(sym_list)):
         coeff = coeff_list[i]
         shift = shift_list[i]
-        progress_printer(system_fit.N, i, tsk='Evaluationg Polynomials')
+        progress_printer(system_fit.propogators[0].N, i, tsk='Evaluationg Polynomials')
         x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=i + 1, verbose=i==False)
         x_fit = x_fit[~np.isnan(x_fit)]
         x_raw = concat_data_list[i][train_len:train_len+test_len]
@@ -767,7 +814,7 @@ if __name__ == "__main__":
         plt.figure()
         # fit_len = len(x_fit)
         plt.plot(t_plot_raw, x_raw) # True data
-        plt.plot(t_plot_fit, trend - trend[0] + x_raw[0]) # Calculated fit line
+        plt.plot(t_fit, coeff * ( x_fit - x_fit[0] ) + x_raw[0]) # Calculated fit line
         plt.plot(t_plot_raw, true_fit_line) # True fit line
         plt.plot(np.array([0, np.max(t)]),  np.mean(np.diff(train_list[i][-100::]))*np.ones(2)*np.array([0, np.max(t)]) + x_raw[0]) # Naive fit line
         plt.legend(('true', 'projected fit', 'actual fit', 'naive fit'))

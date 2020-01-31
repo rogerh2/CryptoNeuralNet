@@ -858,7 +858,7 @@ if __name__ == "__main__":
         use_saved_data = True
         sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-01-25 10:00:00 EST', date_to='2020-01-26 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-01-28 10:00:00 EST', date_to='2020-01-29 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -881,7 +881,7 @@ if __name__ == "__main__":
         poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
         poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
         train_len = 120 # Length of data to be used for training
-        test_len = 30
+        test_len = 120
         poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
         # create the polynomial approximation

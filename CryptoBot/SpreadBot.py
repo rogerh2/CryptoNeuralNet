@@ -838,13 +838,16 @@ class SpreadBot(Bot):
             # Get relevant variables
             wallet = self.portfolio.wallets[sym]
             buy_price = self.spread_price_limits[sym]['buy']
-            projected_sell_price = self.spread_price_limits[sym]['buy']
+            limit_price = self.spread_price_limits[sym]['sell']
             cutoff_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
-            limit_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
+            alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
             available = wallet.get_amnt_available('sell')
 
-            if projected_sell_price is None:
+            if limit_price is None:
                 continue
+            if alt_price > limit_price:
+                print('upping sell price to ' + num2str(alt_price, wallet.product.usd_decimal_num))
+                limit_price = alt_price
 
             # Filter unnecessary currencies
             # if limit_price > e_cutoff_price:
@@ -885,7 +888,7 @@ class PSMSpreadBot(SpreadBot):
     # predicted_prices: this contains the max, min, standard deviation of prices, and the mean offset for the true and predicted prices
     # del_len: the number of samples to average over for the price
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('BTC', 'ETH', 'XRP', 'LTC', 'BCH', 'EOS', 'XLM', 'ETC', 'LINK', 'REP', 'ZRX', 'XTZ'), is_sandbox_api=False, base_currency='USD', slope_avg_len=5):
+    def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', slope_avg_len=5):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
@@ -983,7 +986,7 @@ class PSMSpreadBot(SpreadBot):
 
     def predict(self, verbose_on=False, get_new_propogator=True):
         # Setup Initial Variables
-        time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
+        time_arr = np.arange(0, TRADE_LEN)
         step_size = PSM_EVAL_STEP_SIZE
         polynomial_order = 5
 
@@ -996,12 +999,13 @@ class PSMSpreadBot(SpreadBot):
         self.reset_propogator_start_point(raw_data)
         syms = self.symbols
         predictions = {}
+        transformed_raw_data = self.inverse_transform({syms[i]: raw_data_list[i] for i in range(0, len(raw_data_list))})
 
         # Predict
         for i in range(0, len(syms)):
             sym = syms[i]
             x, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose_on)
-            predictions[sym] = x
+            predictions[sym] = x - x[0] + transformed_raw_data[sym][-1]
 
         self.predictions = self.transform(predictions)
 
@@ -1267,8 +1271,10 @@ if __name__ == "__main__":
         for sym in psmbot.symbols:
             plt.figure()
             prediction = psmbot.predictions[sym]
+            raw_data = psmbot.raw_data[sym]
             err = psmbot.errors[sym]
-            plt.plot(prediction)
+            plt.plot(np.arange(0, len(raw_data)), raw_data)
+            plt.plot(np.arange(len(raw_data), len(prediction) + len(raw_data)), prediction)
             plt.title(sym)
             plt.xlabel('Time (min)')
             plt.ylabel('Price ($)')
