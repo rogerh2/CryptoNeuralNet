@@ -684,7 +684,7 @@ class SpreadBot(Bot):
             rank = (sell_price - current_price) / buy_price
             if (spread < MIN_SPREAD):
                 rank = -1 # eliminate trades with low spreads
-            ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
+            ranking_dict[sym] = (spread, mu, buy_price, wallet, std, rank, size)
 
         # sort (by mean first then standard deviation)
         sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
@@ -693,9 +693,9 @@ class SpreadBot(Bot):
 
     def rank_currencies(self, usd_available, print_sym=True, sym_ind=0):
         sorted_syms = self.sort_currencies(usd_available, print_sym)
-        rank_arr = np.array([curr_sym[1][0] for curr_sym in sorted_syms])
+        rank_arr = np.array([curr_sym[1][5] for curr_sym in sorted_syms])
         rank_std = np.std(rank_arr)
-        min_rank = np.mean(rank_arr[sym_ind]) + 2 * rank_std
+        min_rank = np.mean(rank_arr) - 2 * rank_std
         return_None = False
         if type(sym_ind) == int:
             top_sym_data = sorted_syms[sym_ind]
@@ -704,7 +704,7 @@ class SpreadBot(Bot):
             buy_price = top_sym_data[1][2]
             wallet = top_sym_data[1][3]
             std = top_sym_data[1][4]
-            spread = top_sym_data[1][5]
+            spread = top_sym_data[1][0]
             size = top_sym_data[1][6]
             if spread < MIN_SPREAD:
                 return_None = True
@@ -719,16 +719,16 @@ class SpreadBot(Bot):
 
             for ind in range(0, len(sorted_syms)):
                 top_sym_data = sorted_syms[ind]
-                if top_sym_data[1][5] < MIN_SPREAD:
+                if top_sym_data[1][0] < MIN_SPREAD:
                     continue
-                if top_sym_data[1][0] < min_rank:
-                    break
+                if top_sym_data[1][5] < min_rank:
+                    continue
                 top_sym.append(top_sym_data[0])
                 mu.append(top_sym_data[1][1])
                 buy_price.append(top_sym_data[1][2])
                 wallet.append(top_sym_data[1][3])
                 std.append(top_sym_data[1][4])
-                spread.append(top_sym_data[1][5])
+                spread.append(top_sym_data[1][0])
                 size.append(top_sym_data[1][6])
 
             if len(spread) == 0:
@@ -771,9 +771,9 @@ class SpreadBot(Bot):
         if top_syms is None:
             no_viable_trade = True
             top_syms = self.symbols  # If no viable trades are found then allow any symbol to remain
-        if usd_hold > QUOTE_ORDER_MIN:
-            self.cancle_out_of_bound_buy_orders(top_syms=top_syms)
-            sleep(PRIVATE_SLEEP)
+        # if usd_hold > QUOTE_ORDER_MIN:
+        #     self.cancle_out_of_bound_buy_orders(top_syms=top_syms)
+        #     sleep(PRIVATE_SLEEP)
 
         self.portfolio.update_value()
         # Check available cash after canceling the non_optimal buy orders and place the next order
@@ -850,8 +850,8 @@ class SpreadBot(Bot):
 
             if limit_price is None:
                 continue
-            if alt_price > limit_price:
-                print('upping sell price to ' + num2str(alt_price, wallet.product.usd_decimal_num))
+            if np.abs((alt_price - limit_price)/limit_price) > 0.001:
+                print('changing sell price to ' + num2str(alt_price, wallet.product.usd_decimal_num))
                 limit_price = alt_price
 
             # Filter unnecessary currencies
@@ -875,6 +875,9 @@ class SpreadBot(Bot):
             #     limit_price = alt_price
 
             spread = 1 + (limit_price - buy_price) / buy_price
+            if spread < MIN_SPREAD:
+                limit_price = MIN_SPREAD * buy_price
+                print('Upping sell price to meet minnimum spread requriements')
             print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n' + 'spread: ' + num2str(spread, 4))
 
             order_id = self.place_order(limit_price, 'sell', available, sym, post_only=False)
@@ -1081,7 +1084,7 @@ class PSMSpreadBot(SpreadBot):
             current_price = wallet.product.get_top_order('bids')
             spread = 1 + ( sell_price - buy_price ) / buy_price
             rank = 1/self.errors[sym]#(sell_price - current_price) / buy_price
-            ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
+            ranking_dict[sym] = (spread, mu, buy_price, wallet, std, rank, size)
 
         # sort (by mean first then standard deviation)
         sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True) #TODO check if ranking highest value first or lowest
