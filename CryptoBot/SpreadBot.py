@@ -693,6 +693,9 @@ class SpreadBot(Bot):
 
     def rank_currencies(self, usd_available, print_sym=True, sym_ind=0):
         sorted_syms = self.sort_currencies(usd_available, print_sym)
+        rank_arr = np.array([curr_sym[1][0] for curr_sym in sorted_syms])
+        rank_std = np.std(rank_arr)
+        min_rank = np.mean(rank_arr[sym_ind]) + 2 * rank_std
         return_None = False
         if type(sym_ind) == int:
             top_sym_data = sorted_syms[sym_ind]
@@ -714,10 +717,12 @@ class SpreadBot(Bot):
             mu = []
             size = []
 
-            for ind in sym_ind:
+            for ind in range(0, len(sorted_syms)):
                 top_sym_data = sorted_syms[ind]
                 if top_sym_data[1][5] < MIN_SPREAD:
                     continue
+                if top_sym_data[1][0] < min_rank:
+                    break
                 top_sym.append(top_sym_data[0])
                 mu.append(top_sym_data[1][1])
                 buy_price.append(top_sym_data[1][2])
@@ -774,7 +779,7 @@ class SpreadBot(Bot):
         # Check available cash after canceling the non_optimal buy orders and place the next order
         full_portfolio_value = self.get_full_portfolio_value()
         num_orders = len(top_syms)
-        num_currencies_to_loop = np.min(np.array([len(top_syms) + 1, desired_number_of_currencies + 3]))
+        num_currencies_to_loop = np.min(np.array([len(top_syms) + 1, desired_number_of_currencies + 1]))
         for ind in range(1, num_currencies_to_loop):
             i = num_orders - ind
             usd_available = self.portfolio.get_usd_available()
@@ -1076,8 +1081,6 @@ class PSMSpreadBot(SpreadBot):
             current_price = wallet.product.get_top_order('bids')
             spread = 1 + ( sell_price - buy_price ) / buy_price
             rank = 1/self.errors[sym]#(sell_price - current_price) / buy_price
-            if (spread < MIN_SPREAD):
-                rank = -1 # eliminate trades with low spreads
             ranking_dict[sym] = (rank, mu, buy_price, wallet, std, spread, size)
 
         # sort (by mean first then standard deviation)
