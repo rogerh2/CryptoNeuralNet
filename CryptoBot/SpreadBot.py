@@ -549,8 +549,8 @@ class Bot:
         self.cancel_orders_conditionally(side, sym, order_price, min_size)
 
     def cancel_timed_out_orders(self, side, timeout_time, sym):
-        cancel_time = time() - timeout_time
-        order_time = lambda x: convert_coinbase_timestr_to_timestamp(x['created_at'])
+        cancel_time = -time()
+        order_time = lambda x: -convert_coinbase_timestr_to_timestamp(x['created_at']) - timeout_time
 
         self.cancel_orders_conditionally(side, sym, order_time, cancel_time)
 
