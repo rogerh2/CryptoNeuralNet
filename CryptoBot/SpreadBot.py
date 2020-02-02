@@ -32,6 +32,7 @@ from CryptoBot.CryptoBot_Shared_Functions import current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
 from CryptoBot.CryptoBot_Shared_Functions import str_list_to_timestamp
 from CryptoBot.CryptoBot_Shared_Functions import offset_current_est_time
+from CryptoBot.CryptoBot_Shared_Functions import convert_coinbase_timestr_to_timestamp
 from CryptoBot.constants import EXCHANGE_CONSTANTS
 from CryptoPredict.CryptoPredict import CryptoCompare
 from ODESolvers.PSM import create_propogator_from_data
@@ -268,8 +269,6 @@ class Product:
         weighted_mu, weighted_std, last_fill = self.adjust_fill_data(mu, std, size_arr)
 
         return weighted_mu, weighted_std, last_fill
-
-
 
 
     def place_order(self, price, side, size, coeff=1, post_only=True, time_out=False):
@@ -521,28 +520,40 @@ class Bot:
         self.spread_price_limits[sym][side] = last_price
         self.settings.write_setting_to_file('limit ' + side, self.spread_price_limits[sym][side])
 
+    def cancel_orders_conditionally(self, side, sym, high_condition, low_condition):
+        # High condition is a function of the individual orders
+        orders = list(
+            self.portfolio.wallets[sym].product.auth_client.get_orders(self.portfolio.wallets[sym].product.product_id))
+        keys_to_delete = []
+
+        for order in orders:
+            if order['side'] != side:
+                continue
+            if high_condition(order) > low_condition:
+                keys_to_delete.append(order['id'])
+
+        for id in keys_to_delete:
+            self.portfolio.remove_order(id)
+
     def cancel_out_of_bound_orders(self, side, price, sym, widen_spread=False):
         # If widen_spread flag is set, will cancel orders that are more conservative (lower sells/higher buys)
-        orders = list(self.portfolio.wallets[sym].product.auth_client.get_orders(self.portfolio.wallets[sym].product.product_id))
-        sleep(PRIVATE_SLEEP)
-        keys_to_delete = []
         if side == 'buy':
             coeff = -1
         else:
             coeff = 1
         coeff = coeff * (-1)**(widen_spread)
-        num_cancelled_orders = 0
 
-        for order in orders:
-            if order['side'] != side:
-                continue
-            if coeff * float(order['price']) > coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res):
-                keys_to_delete.append(order['id'])
+        order_price = lambda x: coeff * float(x['price'])
+        min_size = coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res)
 
-        for id in keys_to_delete:
-            num_cancelled_orders += 1
-            print('Cancelled ' + num2str(num_cancelled_orders, 1) + ' out of bounds ' + sym + ' ' + side + ' orders')
-            self.portfolio.remove_order(id)
+        self.cancel_orders_conditionally(side, sym, order_price, min_size)
+
+    def cancel_timed_out_orders(self, side, timeout_time, sym):
+        cancel_time = time() - timeout_time
+        order_time = lambda x: convert_coinbase_timestr_to_timestamp(x['created_at'])
+
+        self.cancel_orders_conditionally(side, sym, order_time, cancel_time)
+
 
     def get_side_depedent_vars(self, side):
         if side == 'buy':
@@ -746,7 +757,7 @@ class SpreadBot(Bot):
         print('placing order\n' + 'price: ' + num2str(buy_price,
                                                       wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
             size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'projected spread: ' + num2str(spread, 6) + '\n')
-        order_id = self.place_order(buy_price, 'buy', size, top_sym, post_only=False, time_out=True)
+        order_id = self.place_order(buy_price, 'buy', size, top_sym, post_only=False)
         if order_id is None:
             print('Buy Order rejected\n')
         else:
@@ -757,6 +768,10 @@ class SpreadBot(Bot):
                 sell_price = spread * buy_price
             self.settings.write_setting_to_file('spread', spread)
             self.update_spread_prices_limits(sell_price, 'sell', top_sym)
+
+    def cancel_old_orders(self):
+        for sym in self.symbols:
+            self.cancel_timed_out_orders('buy', TRADE_LEN * 60, sym)
 
     def place_order_for_top_currencies(self):
         # Ensure to update portfolio value before running
@@ -771,9 +786,9 @@ class SpreadBot(Bot):
         if top_syms is None:
             no_viable_trade = True
             top_syms = self.symbols  # If no viable trades are found then allow any symbol to remain
-        # if usd_hold > QUOTE_ORDER_MIN:
-        #     self.cancle_out_of_bound_buy_orders(top_syms=top_syms)
-        #     sleep(PRIVATE_SLEEP)
+        if usd_hold > QUOTE_ORDER_MIN:
+            self.cancel_old_orders()
+            sleep(PRIVATE_SLEEP)
 
         self.portfolio.update_value()
         # Check available cash after canceling the non_optimal buy orders and place the next order
@@ -850,15 +865,15 @@ class SpreadBot(Bot):
 
             if limit_price is None:
                 continue
-            if np.abs((alt_price - limit_price)/limit_price) > 0.001:
-                print('changing sell price to ' + num2str(alt_price, wallet.product.usd_decimal_num))
-                limit_price = alt_price
 
             # Filter unnecessary currencies
-            # if limit_price > e_cutoff_price:
-            #     available = wallet.value['SYM']
             if (available < wallet.product.base_order_min):
                 continue
+            # if alt_price > 1.005 * limit_price:
+            #     cancel_condition = lambda x: 1
+            #     self.cancel_orders_conditionally('sell', sym, cancel_condition, 0)
+            #     print('changing sell price to ' + num2str(alt_price, wallet.product.usd_decimal_num))
+            #     limit_price = alt_price
             if (available * limit_price < QUOTE_ORDER_MIN):
                 print(
                     'Cannot sell ' + sym + ' because available is less than minnimum Quote order. Manual sell required')
@@ -877,6 +892,7 @@ class SpreadBot(Bot):
             spread = 1 + (limit_price - buy_price) / buy_price
             if spread < MIN_SPREAD:
                 limit_price = MIN_SPREAD * buy_price
+                spread = 1 + (limit_price - buy_price) / buy_price
                 print('Upping sell price to meet minnimum spread requriements')
             print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n' + 'spread: ' + num2str(spread, 4))
 
@@ -914,12 +930,14 @@ class PSMSpreadBot(SpreadBot):
         self.predictions = {}
         self.coefficients = {}
         self.shifts = {}
+        self.buy_cancel_times = {}
 
         for i in range(0, len(syms)):
             sym = syms[i]
             self.predictions[sym] = None # will use as max, min, true_std, mean_offset
             self.coefficients[sym] = coeff_list[i]
             self.shifts[sym] = shift_list[i]
+            self.buy_cancel_times[sym] = TRADE_LEN
 
     def collect_next_data(self):
         # This method sets the propogator initial values to the most recent price
@@ -1035,7 +1053,6 @@ class PSMSpreadBot(SpreadBot):
             if sell_ind > 0:
                 mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
                 buy_diff = np.min(predicted_evolution[0:sell_ind]) - current_price
-
             else:
                 buy_diff = 0
                 mu = 0
@@ -1090,6 +1107,11 @@ class PSMSpreadBot(SpreadBot):
         sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True) #TODO check if ranking highest value first or lowest
 
         return sorted_syms
+
+    def cancel_old_orders(self):
+        # TODO make it such that buy_cancel_times updates when an order is placed
+        for sym in self.symbols:
+            self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
 
 # def determine_past_propogation_offset_and_std
 # def update_propogator

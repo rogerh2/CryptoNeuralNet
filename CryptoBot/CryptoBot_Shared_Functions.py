@@ -24,12 +24,24 @@ def num2str(num, digits=2, round_down=True):
 
     return num_str
 
+
+def convert_coinbase_timestr_to_timestamp(date_str):
+    iso_fmt = '%Y-%m-%dT%H:%M:%S.%fZ'
+    if '.' not in date_str:
+        date_str = date_str[0:-1] + '.000Z'
+
+    trade_ts = datetime.timestamp(pytz.UTC.localize(datetime.strptime(date_str, iso_fmt)))
+
+    return trade_ts
+
+
 def get_current_tz():
     # This function returns the common symbol for a timezone (e.g. 'EST' instead of 'America/New_York')
     now = datetime.now(get_localzone())
     tz = now.strftime('%Z')
 
     return tz
+
 
 def convert_time_to_uct(naive_date_from, tz_str=None):
     # This function converts any time object to utc
@@ -43,6 +55,7 @@ def convert_time_to_uct(naive_date_from, tz_str=None):
     utc_date = sys_tz_date_from.astimezone(utc)
     return utc_date
 
+
 def str_list_to_timestamp(datetime_str_list, fmt='%Y-%m-%dT%H:%M:%S'):
     utc = pytz.UTC
     # TODO fix this so that timestamps without the float will not error
@@ -50,6 +63,7 @@ def str_list_to_timestamp(datetime_str_list, fmt='%Y-%m-%dT%H:%M:%S'):
     time_stamps = np.array([dt.timestamp() for dt in localized_datetime_objects])
 
     return time_stamps
+
 
 def progress_printer(total_len, current_ind, start_ind=0, digit_resolution=1, print_resolution=None, tsk='Task', suppress_output=False):
 
@@ -72,11 +86,13 @@ def progress_printer(total_len, current_ind, start_ind=0, digit_resolution=1, pr
     else:
         pass
 
+
 def rescale_to_fit(data, data_to_scale_to):
     standard_data = (data - np.mean(data))/np.std(data)
     scaled_data = standard_data*np.std(data_to_scale_to) + np.mean(data_to_scale_to)
 
     return scaled_data
+
 
 def create_number_from_bools(*args):
 
@@ -88,12 +104,14 @@ def create_number_from_bools(*args):
 
     return bool_num
 
+
 def mean_confidence_interval(data, confidence=0.95):
     a = data
     n = len(a)
     m, se = np.mean(a), scipy.stats.sem(a)
     h = se * scipy.stats.t.ppf((1 + confidence) / 2., n-1)
     return m, m-h, m+h
+
 
 def multiple_choice_question_with_prompt(prompt_str):
 
@@ -111,12 +129,14 @@ def multiple_choice_question_with_prompt(prompt_str):
 
     return bool_val
 
+
 def fit_to_data(data, data_to_scale_to):
     coeff = np.polyfit(data, data_to_scale_to, 3)
     fit_data = coeff[1]*data + coeff[0]
     predict_point = fit_data[-1]
 
     return predict_point
+
 
 def print_err_msg(section_text, e, err_counter):
     sleep(5)  # Most errors are connection related, so a short time out is warrented
@@ -127,6 +147,7 @@ def print_err_msg(section_text, e, err_counter):
 
     return err_counter
 
+
 def current_est_time():
     naive_date_from = datetime.utcnow()
     utc = pytz.timezone('UTC')
@@ -134,6 +155,7 @@ def current_est_time():
     est = pytz.timezone('America/New_York')
     est_date = est_date_from.astimezone(est)
     return est_date
+
 
 def offset_current_est_time(minute_offset, fmt=None):
     dt = current_est_time() - timedelta(minutes=minute_offset)
@@ -146,8 +168,10 @@ def offset_current_est_time(minute_offset, fmt=None):
 def zero(data):
     return np.zeros(len(data))
 
+
 def nth_max_ind(arr, n=1):
     return arr.argsort()[::-1][n-1]
+
 
 def nth_max_peaks(arr, n=1):
     peak_inds, peak_data = find_peaks(arr, height=(None, None))
