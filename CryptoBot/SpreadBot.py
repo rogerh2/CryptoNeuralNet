@@ -527,6 +527,8 @@ class Bot:
         keys_to_delete = []
 
         for order in orders:
+            if type(order) != dict:
+                continue
             if order['side'] != side:
                 continue
             if high_condition(order) > low_condition:
@@ -678,6 +680,10 @@ class SpreadBot(Bot):
             self.cancel_out_of_bound_orders('buy', low_scale_coeff * nominal_buy_price, sym,
                                             widen_spread=False)  # shorten the range if the nominal price is 1 std above the current price
 
+    def cancel_old_orders(self):
+        for sym in self.symbols:
+            self.cancel_timed_out_orders('buy', TRADE_LEN * 60, sym)
+
     def sort_currencies(self, usd_available, print_sym):
         # setup
         ranking_dict = {}
@@ -768,10 +774,6 @@ class SpreadBot(Bot):
                 sell_price = spread * buy_price
             self.settings.write_setting_to_file('spread', spread)
             self.update_spread_prices_limits(sell_price, 'sell', top_sym)
-
-    def cancel_old_orders(self):
-        for sym in self.symbols:
-            self.cancel_timed_out_orders('buy', TRADE_LEN * 60, sym)
 
     def place_order_for_top_currencies(self):
         # Ensure to update portfolio value before running
