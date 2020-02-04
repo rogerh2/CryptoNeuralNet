@@ -1,0 +1,10 @@
+portfolio value offset: 39.0
+limit buy: None
+limit sell: None
+spread: 1.0129747666208715
+std: 2.0
+ATOM buy price: 1.0
+OXT buy price: 2.0
+LTC buy price: 3.0
+LINK buy price: 4.0
+ZRX buy price: 5

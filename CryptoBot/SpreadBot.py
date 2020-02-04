@@ -162,7 +162,10 @@ class Product:
 
         num_trades_per_t = []
         num_trades = 0
-        ts0 = fill_ts_ls[0]
+        if len(fill_ts_ls) > 0:
+            ts0 = fill_ts_ls[0]
+        else:
+            return None
         t = 0
 
         for ts in fill_ts_ls:
@@ -369,7 +372,7 @@ class LiveRunSettings:
             if setting_name in content:
                 setting_str = self.reg_ex.search(content.replace(' ', ''))
                 if setting_str is not None:
-                    setting_value = float(setting_str.group(0)) # TODO investigate how to get this line to work on python 3.5 (for AWS)
+                    setting_value = float(setting_str.group(0))
 
         return setting_value
 
@@ -518,7 +521,13 @@ class Bot:
 
     def update_spread_prices_limits(self, last_price, side, sym):
         self.spread_price_limits[sym][side] = last_price
-        self.settings.write_setting_to_file('limit ' + side, self.spread_price_limits[sym][side])
+        if side == 'buy':
+            opposing_side = 'sell'
+        else:
+            opposing_side = 'buy'
+        self.settings.write_setting_to_file(sym + ' limit ' + side, self.spread_price_limits[sym][side])
+        self.settings.write_setting_to_file(sym + ' limit ' + opposing_side, self.spread_price_limits[sym][opposing_side])
+        self.settings.write_setting_to_file(sym + ' spread', self.spread)
 
     def cancel_orders_conditionally(self, side, sym, high_condition, low_condition):
         # High condition is a function of the individual orders
@@ -772,7 +781,7 @@ class SpreadBot(Bot):
             if spread < MIN_SPREAD:
                 spread = MIN_SPREAD
                 sell_price = spread * buy_price
-            self.settings.write_setting_to_file('spread', spread)
+            self.spread = spread
             self.update_spread_prices_limits(sell_price, 'sell', top_sym)
 
     def place_order_for_top_currencies(self):
@@ -861,8 +870,8 @@ class SpreadBot(Bot):
             wallet = self.portfolio.wallets[sym]
             buy_price = self.spread_price_limits[sym]['buy']
             limit_price = self.spread_price_limits[sym]['sell']
-            cutoff_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
-            alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
+            # cutoff_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
+            # alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
             available = wallet.get_amnt_available('sell')
 
             if limit_price is None:
@@ -897,7 +906,8 @@ class SpreadBot(Bot):
                 spread = 1 + (limit_price - buy_price) / buy_price
                 print('Upping sell price to meet minnimum spread requriements')
             print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n' + 'spread: ' + num2str(spread, 4))
-
+            self.spread = spread
+            self.update_spread_prices_limits(limit_price, 'sell', sym)
             order_id = self.place_order(limit_price, 'sell', available, sym, post_only=False)
             if order_id is None:
                 print('Sell Order rejected\n')
@@ -1114,6 +1124,10 @@ class PSMSpreadBot(SpreadBot):
         # TODO make it such that buy_cancel_times updates when an order is placed
         for sym in self.symbols:
             self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
+            # cancel old sell orders and replace with new ones
+            alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell')
+            self.update_spread_prices_limits(alt_price, 'sell', sym)
+            self.cancel_timed_out_orders('sell', TRADE_LEN * 60, sym)
 
 # def determine_past_propogation_offset_and_std
 # def update_propogator
