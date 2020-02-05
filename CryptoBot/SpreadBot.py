@@ -46,7 +46,7 @@ SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '
 MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
 PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 30 # This is the value that will trigger the bot to stop trading
+MIN_PORTFOLIO_VALUE = 71 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -787,7 +787,7 @@ class SpreadBot(Bot):
         # Ensure to update portfolio value before running
         usd_hold = self.portfolio.get_usd_held()
         usd_available = self.portfolio.get_usd_available()
-        desired_number_of_currencies = 3 # How many currecies (excluding USD) to hold
+        desired_number_of_currencies = 5 # How many currecies (excluding USD) to hold
         sym_indices = list(range(0, desired_number_of_currencies)) # This chooses the indices to use for determining trades
         buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False, sym_ind=sym_indices)
         no_viable_trade = False
