@@ -12,6 +12,8 @@ class LiveRunSettingsTestCase(unittest.TestCase):
               'ZRX':5}
         for sym in syms.keys():
             settings.write_setting_to_file(sym + ' buy price', syms[sym])
+            settings.write_setting_to_file(sym + ' sell price', syms[sym])
+            settings.write_setting_to_file(sym + ' spread', syms[sym])
 
         settings.update_settings()
         for sym in syms.keys():

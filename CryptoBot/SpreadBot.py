@@ -387,7 +387,7 @@ class LiveRunSettings:
         self.update_settings()
         self.settings[setting_name] = setting_val
         write_str = ''
-        for key in self.settings.keys():
+        for key in sorted(self.settings.keys()):
             write_str = write_str + key + ': ' + str(self.settings[key]) + '\n'
         with open(self.fname, 'w') as f:
             f.write(write_str)
@@ -526,7 +526,6 @@ class Bot:
         else:
             opposing_side = 'buy'
         self.settings.write_setting_to_file(sym + ' limit ' + side, self.spread_price_limits[sym][side])
-        self.settings.write_setting_to_file(sym + ' limit ' + opposing_side, self.spread_price_limits[sym][opposing_side])
         self.settings.write_setting_to_file(sym + ' spread', self.spread)
 
     def cancel_orders_conditionally(self, side, sym, high_condition, low_condition):
@@ -1124,9 +1123,6 @@ class PSMSpreadBot(SpreadBot):
         # TODO make it such that buy_cancel_times updates when an order is placed
         for sym in self.symbols:
             self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
-            # cancel old sell orders and replace with new ones
-            alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell')
-            self.update_spread_prices_limits(alt_price, 'sell', sym)
             self.cancel_timed_out_orders('sell', TRADE_LEN * 60, sym)
 
 # def determine_past_propogation_offset_and_std
