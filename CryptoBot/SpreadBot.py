@@ -45,7 +45,8 @@ SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
-PSM_EVAL_STEP_SIZE = 0.1 # This is the step size for PSM
+NEAR_PREDICTION_LEN = 15
+PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
 MIN_PORTFOLIO_VALUE = 71 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
@@ -1013,19 +1014,17 @@ class PSMSpreadBot(SpreadBot):
         # Setup Initial Variables
         time_arr = np.arange(0, TRADE_LEN, PSM_EVAL_STEP_SIZE)
         step_size = PSM_EVAL_STEP_SIZE
-        polynomial_order = 5
+        polynomial_order = 10
 
         for i in range(0, len(syms)):
             sym = syms[i]
             self.errors[sym], _, _ = self.propogator.err(step_size, polynomial_order, i + 1, coeff_list[i], shift_list[i], verbose=verbose_on)
 
-
-
     def predict(self, verbose_on=False, get_new_propogator=True):
         # Setup Initial Variables
         time_arr = np.arange(0, TRADE_LEN)
         step_size = PSM_EVAL_STEP_SIZE
-        polynomial_order = 5
+        polynomial_order = 10
 
         # Collect data and create propogator
         raw_data = self.collect_next_data()
@@ -1059,7 +1058,7 @@ class PSMSpreadBot(SpreadBot):
         if mu is None:
             return None, None, None, None, None
         mu *= mu_mult
-        sell_ind = np.argmax(predicted_evolution)
+        sell_ind = np.min(np.array([np.argmax(predicted_evolution), NEAR_PREDICTION_LEN])) # Only buy currencies if you predict that the mean will be soon
         if side == 'buy':
             if sell_ind > 0:
                 mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
@@ -1123,15 +1122,153 @@ class PSMSpreadBot(SpreadBot):
         # TODO make it such that buy_cancel_times updates when an order is placed
         for sym in self.symbols:
             self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
-            self.cancel_timed_out_orders('sell', TRADE_LEN * 60, sym)
 
-# def determine_past_propogation_offset_and_std
-# def update_propogator
-# def sort_currencies
-# def list_held_currenciesencies
-# def buy_min_curr
-# def sell_decisions #This method determines which of the held currencies to sell
-# def sell_max_currencies
+class PSMPredictBot(Bot):
+
+    def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', slope_avg_len=5):
+        super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
+        raw_data = {}
+        self.fmt = '%Y-%m-%d %H:%M:%S %Z'
+        t_offset_str = offset_current_est_time(120, fmt=self.fmt)
+        cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
+        for sym in syms:
+            data = cc.minute_price_historical(sym)[sym + '_close'].values
+            raw_data[sym] = data
+
+        raw_data_list = [raw_data[sym] for sym in self.symbols]
+        self.raw_data = raw_data
+
+        self.del_len = slope_avg_len
+        self.propogator, coeff_list, shift_list = create_multifrequency_propogator_from_data(raw_data_list, self.symbols)
+        self.predictions = {}
+        self.coefficients = {}
+        self.shifts = {}
+        self.buy_cancel_times = {}
+
+        for i in range(0, len(syms)):
+            sym = syms[i]
+            self.predictions[sym] = None # will use as max, min, true_std, mean_offset
+            self.coefficients[sym] = coeff_list[i]
+            self.shifts[sym] = shift_list[i]
+            self.buy_cancel_times[sym] = TRADE_LEN
+
+    def update_raw_data(self):
+        raw_data = {}
+        self.fmt = '%Y-%m-%d %H:%M:%S %Z'
+        t_offset_str = offset_current_est_time(120, fmt=self.fmt)
+        cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
+        for sym in self.symbols:
+            data = cc.minute_price_historical(sym)[sym + '_close'].values
+            raw_data[sym] = data
+        self.raw_data = raw_data
+
+    def transform_single_sym(self, sym, data):
+        transform_data = self.coefficients[sym] * data + self.shifts[sym]
+        return transform_data
+
+    def transform(self, raw_data):
+        transform_data = {}
+        syms = self.symbols
+        for sym in syms:
+            transform_data[sym] = self.transform_single_sym(sym, raw_data[sym])
+
+        return transform_data
+
+    def inverse_transform(self, raw_data):
+        transform_data = {}
+        syms = self.symbols
+        for sym in syms:
+            transform_data[sym] = (raw_data[sym] - self.shifts[sym]) / self.coefficients[sym]
+
+        return transform_data
+
+    def get_new_propogator(self):
+        raw_data_list = [self.raw_data[sym] for sym in self.symbols]
+        self.propogator, coeff_list, shift_list = create_multifrequency_propogator_from_data(raw_data_list,
+                                                                                             self.symbols)
+
+    def reset_propogator_start_point(self, raw_data):
+        # This method sets the propogator initial values to the most recent price
+        normalized_raw_data = self.inverse_transform(raw_data)
+        normalized_raw_data_list = [normalized_raw_data[sym] for sym in self.symbols]
+        # x0s = [x[-1] for x in normalized_raw_data_list]
+        # y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
+        initial_polys = [np.polyfit(np.arange(0, len(x[-11::])), x[-11::], 1) for x in normalized_raw_data_list]
+        x0s = [np.polyval(x, 11) for x in initial_polys]
+        y0s = [x[0] for x in initial_polys]
+        self.propogator.reset(x0s=x0s, y0s=y0s)
+
+    def predict(self, verbose_on=False, get_new_propogator=True):
+        # Setup Initial Variables
+        time_arr = np.arange(0, TRADE_LEN)
+        step_size = PSM_EVAL_STEP_SIZE
+        polynomial_order = 10
+
+        # Collect data and create propogator
+        self.update_raw_data()
+        raw_data_list = [self.raw_data[sym] for sym in self.symbols]
+        if get_new_propogator:
+            self.get_new_propogator()
+        self.reset_propogator_start_point(raw_data)
+        syms = self.symbols
+        predictions = {}
+        transformed_raw_data = self.inverse_transform({syms[i]: raw_data_list[i] for i in range(0, len(raw_data_list))})
+
+        # Predict
+        for i in range(0, len(syms)):
+            sym = syms[i]
+            x, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose_on)
+            predictions[sym] = x - x[0] + transformed_raw_data[sym][-1]
+
+        self.predictions = self.transform(predictions)
+
+    def determine_nominal_price(self, sym, usd_available, side, std_mult=1.0):
+
+        # initialize variables
+        book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
+
+        wallet = self.portfolio.wallets[sym]
+        current_price = wallet.product.get_top_order(opposing_book_side)
+
+        predicted_evolution = self.predictions[sym]
+
+        std_coeff = std_mult * self.settings.read_setting_from_file('std')
+        # Only get the min value before the predicted sell value
+        sell_ind = np.argmax(predicted_evolution)
+        if side == 'buy':
+            if sell_ind > 0:
+                buy_diff = np.min(predicted_evolution[0:sell_ind]) - current_price
+            else:
+                buy_diff = 0
+        else:
+            buy_diff = std_coeff * np.max(predicted_evolution) - current_price
+        if coeff * buy_diff < 0:
+            buy_price = current_price
+        else:
+            buy_price = current_price + buy_diff
+
+        size = usd_available / buy_price
+
+        return buy_price, wallet, size
+
+    # def modify_price_based_on_market(self, sym, usd_available, side):
+    #     buy_price = self.spread_price_limits[sym]
+    #     current_value = self.portfolio.wallets[sym].product.get_top_order(side)
+    #     diff = current_value - buy_price
+    #     if diff < 0: # If the price has past the predicted buy price
+    #         mu, _, _ = self.portfolio.wallets[sym].product.get_mean_and_std_of_fill_sizes('buy')
+    #         if mu is None:
+    #             return None
+    #         elif (mu > 0) and (last_diff > 0):
+    #             None
+
+
+    # def determine_price
+    # def modify_price_based_on_market
+    # def score_prices
+    # def place_order_for_top_currencies
+    # def place_limit_sells
+
 
 class PortfolioTracker:
 

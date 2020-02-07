@@ -858,7 +858,7 @@ if __name__ == "__main__":
         use_saved_data = True
         sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-01-28 10:00:00 EST', date_to='2020-01-29 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-02-04 10:00:00 EST', date_to='2020-02-06 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -870,6 +870,7 @@ if __name__ == "__main__":
             pickle.dump(concat_data_list, open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "wb"))
         else:
             concat_data_list = pickle.load(open( "/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "rb" ))
+            concat_data_list = [x[20::] for x in concat_data_list]
 
         data_list = [(x - np.mean(x)) / (np.max(x) - np.min(x)) for x in concat_data_list]
         coeff_list = [(np.max(x) - np.min(x)) for x in concat_data_list]
@@ -898,8 +899,8 @@ if __name__ == "__main__":
         initial_ys = [np.mean(np.diff(x[0:10])) for x in data_list]
         omegas = [find_sin_freq(pfit[0:poly_train_ind], poly_t[0:poly_train_ind]) for pfit in poly_list]
         zetas = [0 for x in data_list]
-        psm_step_size = 0.1
-        psm_order = 5
+        psm_step_size = 0.8
+        psm_order = 10
         t = np.arange(0, train_len)
         x_list = [x[0:train_len] for x in data_list]
 
@@ -947,7 +948,7 @@ if __name__ == "__main__":
             test_len = int(np.max(t_fit))
 
             x_raw = concat_data_list[i][train_len-test_len:train_len+2*test_len]
-            shift = x_raw[test_len] - coeff * x_fit[test_len]
+            # shift = x_raw[test_len] - coeff * x_fit[test_len]
             err, _, _ = system_fit.err(psm_step_size, psm_order, N+1, coeff, shift)#np.std(x_raw[0:test_len] - coeff * x_fit[0:test_len] - shift) / np.mean(x_raw[0:test_len])#
             err_f = np.std(x_raw[test_len:2*test_len] - coeff * x_fit[test_len:2*test_len] + shift) / np.mean(x_raw[test_len:2*test_len])
             forward_errs = np.append(forward_errs, err_f)
