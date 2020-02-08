@@ -45,7 +45,7 @@ SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
 MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
-NEAR_PREDICTION_LEN = 15
+NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
 MIN_PORTFOLIO_VALUE = 71 # This is the value that will trigger the bot to stop trading
 
@@ -852,6 +852,14 @@ class SpreadBot(Bot):
                     else:
                         continue
 
+                    # If you're close to getting a lot of value, just place the order at the top
+                    current_price = wallet.product.get_top_order('buy')
+                    current_spread = 1 + (sell_price - current_price) / current_price
+                    current_val = current_spread - MIN_SPREAD
+                    buy_current_val = (current_price - buy_price) / buy_price
+                    if current_val > buy_current_val:
+                        print('Buying at current price due to expected returns\n')
+                        buy_price = current_price
                     # If the spread is too small don't place the order
                     spread = 1 + (sell_price - buy_price) / buy_price
                     if spread < MIN_SPREAD:
@@ -1062,36 +1070,19 @@ class PSMSpreadBot(SpreadBot):
         if side == 'buy':
             if sell_ind > 0:
                 mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
-                buy_diff = np.min(predicted_evolution[0:sell_ind]) - current_price
+                buy_price = np.min(predicted_evolution[0:sell_ind]) - current_price
             else:
-                buy_diff = 0
+                buy_price = current_price
                 mu = 0
+
         else:
-            buy_diff = std_coeff * np.max(predicted_evolution) - current_price
+            buy_price = std_coeff * np.max(predicted_evolution) - current_price
             mu *= TRADE_LEN * (sell_ind / len(predicted_evolution))
-        # TODO fix up this method to be more consistent
-        if coeff * buy_diff < 0:
+
+        if coeff * buy_price < coeff * current_price:
             buy_price = current_price
-        else:
-            buy_price = current_price + buy_diff
 
-        # Calculate the coefficient used to determine the which multiple of the std to use
-        std_coeff = std_mult * self.settings.read_setting_from_file('std')
 
-        # determine trade price
-        std_offset = coeff * (std_coeff * std) + mu
-        order_coeff = 1 + std_offset
-        current_price = wallet.product.get_top_order(book_side)
-        if (side == 'buy') and ((last_diff-1) > np.abs(std_coeff * std + mu)):
-            order_coeff = 1
-            current_price = wallet.product.get_top_order(opposing_book_side)
-        elif (coeff * last_diff < coeff * std_offset):
-            order_coeff -= last_diff
-        # else:
-        #     order_coeff = 1
-        #     current_price = wallet.product.get_top_order(opposing_book_side) + coeff * wallet.product.usd_res
-
-        # buy_price = order_coeff * current_price
         size = usd_available / buy_price
 
         return buy_price, wallet, size, std, mu
@@ -1122,6 +1113,14 @@ class PSMSpreadBot(SpreadBot):
         # TODO make it such that buy_cancel_times updates when an order is placed
         for sym in self.symbols:
             self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
+
+    def cancel_no_longer_viable_orders(self):
+        for sym in self.symbols:
+            buy_price = self.spread_price_limits[sym]['buy']
+            sell_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell')
+            spread = 1 + (sell_price - buy_price) / buy_price
+            if spread < MIN_SPREAD:
+                self.cancel_out_of_bound_orders('buy', 0, sym, widen_spread=True)
 
 class PSMPredictBot(Bot):
 
@@ -1409,6 +1408,13 @@ def run_bot(bot_type='psm'):
                     last_predict = datetime.now().timestamp()
                 # Trade
                 bot.portfolio.update_value()
+                port_val = bot.portfolio.get_full_portfolio_value()
+                # TODO, remove the below if statement after deposit has been made
+                if port_val > 400:
+                    bot.settings.write_setting_to_file('portfolio value offset', 400)
+                    bot.settings.update_settings()
+                    bot.portfolio.update_offset_value(400)
+                    bot.portfolio.update_value()
                 last_check = datetime.now().timestamp()
                 bot.place_order_for_top_currencies()
                 bot.place_limit_sells()
