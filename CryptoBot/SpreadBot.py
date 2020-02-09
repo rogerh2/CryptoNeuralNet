@@ -529,7 +529,7 @@ class Bot:
         self.settings.write_setting_to_file(sym + ' limit ' + side, self.spread_price_limits[sym][side])
         self.settings.write_setting_to_file(sym + ' spread', self.spread)
 
-    def cancel_orders_conditionally(self, side, sym, high_condition, low_condition):
+    def cancel_orders_conditionally(self, side, sym, high_condition, low_condition, msg=None):
         # High condition is a function of the individual orders
         orders = list(
             self.portfolio.wallets[sym].product.auth_client.get_orders(self.portfolio.wallets[sym].product.product_id))
@@ -542,7 +542,8 @@ class Bot:
                 continue
             if high_condition(order) > low_condition:
                 keys_to_delete.append(order['id'])
-
+        if (len(keys_to_delete) > 0) and (msg is not None):
+            print(msg)
         for id in keys_to_delete:
             self.portfolio.remove_order(id)
 
@@ -556,8 +557,11 @@ class Bot:
 
         order_price = lambda x: coeff * float(x['price'])
         min_size = coeff * (price + coeff * self.portfolio.wallets[sym].product.usd_res)
+        order_type = ' liberal '
+        if widen_spread:
+            order_type = ' conservative '
 
-        self.cancel_orders_conditionally(side, sym, order_price, min_size)
+        self.cancel_orders_conditionally(side, sym, order_price, min_size, 'Cancelled' + order_type + sym + ' ' + side + ' orders due to out of bounds price\n')
 
     def cancel_timed_out_orders(self, side, timeout_time, sym):
         cancel_time = -time()
@@ -834,7 +838,6 @@ class SpreadBot(Bot):
 
                     if buy_price is None:
                         continue
-                    self.cancel_out_of_bound_orders('buy', buy_price*1.001, top_sym, widen_spread=True)
 
                     existing_size = (wallet.value['SYM'])
                     orders = list(self.portfolio.wallets[top_sym].product.auth_client.get_orders(
@@ -853,7 +856,7 @@ class SpreadBot(Bot):
                         continue
 
                     # If you're close to getting a lot of value, just place the order at the top
-                    current_price = wallet.product.get_top_order('buy')
+                    current_price = wallet.product.get_top_order('bids')
                     current_spread = 1 + (sell_price - current_price) / current_price
                     current_val = current_spread - MIN_SPREAD
                     buy_current_val = (current_price - buy_price) / buy_price
@@ -863,6 +866,7 @@ class SpreadBot(Bot):
                     # If the spread is too small don't place the order
                     spread = 1 + (sell_price - buy_price) / buy_price
                     if spread < MIN_SPREAD:
+                        print('Cannot place by order because projected sell price dropped\n')
                         continue
 
                     # Place order
@@ -1070,13 +1074,13 @@ class PSMSpreadBot(SpreadBot):
         if side == 'buy':
             if sell_ind > 0:
                 mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
-                buy_price = np.min(predicted_evolution[0:sell_ind]) - current_price
+                buy_price = np.min(predicted_evolution[0:sell_ind])
             else:
                 buy_price = current_price
                 mu = 0
 
         else:
-            buy_price = std_coeff * np.max(predicted_evolution) - current_price
+            buy_price = std_coeff * np.max(predicted_evolution)
             mu *= TRADE_LEN * (sell_ind / len(predicted_evolution))
 
         if coeff * buy_price < coeff * current_price:
@@ -1118,9 +1122,12 @@ class PSMSpreadBot(SpreadBot):
         for sym in self.symbols:
             buy_price = self.spread_price_limits[sym]['buy']
             sell_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell')
-            spread = 1 + (sell_price - buy_price) / buy_price
-            if spread < MIN_SPREAD:
-                self.cancel_out_of_bound_orders('buy', 0, sym, widen_spread=True)
+            if buy_price:
+                spread = 1 + (sell_price - buy_price) / buy_price
+                if spread < MIN_SPREAD:
+                    self.cancel_out_of_bound_orders('buy', 0, sym, widen_spread=True)
+                else:
+                    self.cancel_out_of_bound_orders('buy', buy_price * 0.99, sym)
 
 class PSMPredictBot(Bot):
 
