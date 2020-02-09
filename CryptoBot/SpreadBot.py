@@ -1074,13 +1074,13 @@ class PSMSpreadBot(SpreadBot):
         if side == 'buy':
             if sell_ind > 0:
                 mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
-                buy_price = np.min(predicted_evolution[0:sell_ind])
+                buy_price = np.min(predicted_evolution[0:sell_ind]) - predicted_evolution[0] + current_price
             else:
                 buy_price = current_price
                 mu = 0
 
         else:
-            buy_price = std_coeff * np.max(predicted_evolution)
+            buy_price = std_coeff * np.max(predicted_evolution - predicted_evolution[0]) + current_price
             mu *= TRADE_LEN * (sell_ind / len(predicted_evolution))
 
         if coeff * buy_price < coeff * current_price:
