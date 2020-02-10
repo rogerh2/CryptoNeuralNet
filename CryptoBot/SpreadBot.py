@@ -501,8 +501,10 @@ class Bot:
         self.spread_price_limits = {}
 
         for sym in syms:
+            current_sell = self.settings.read_setting_from_file(sym + ' limit sell')
+            current_buy = self.settings.read_setting_from_file(sym + ' limit buy')
             self.current_price[sym] = {'asks': None, 'bids': None}
-            self.spread_price_limits[sym] = {'sell': None, 'buy': None}
+            self.spread_price_limits[sym] = {'sell': current_sell, 'buy': current_buy}
 
     def update_current_prices(self):
         for side in ['asks', 'bids']:
@@ -883,7 +885,7 @@ class SpreadBot(Bot):
             buy_price = self.spread_price_limits[sym]['buy']
             limit_price = self.spread_price_limits[sym]['sell']
             # cutoff_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
-            # alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
+            alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
             available = wallet.get_amnt_available('sell')
 
             if limit_price is None:
@@ -892,11 +894,11 @@ class SpreadBot(Bot):
             # Filter unnecessary currencies
             if (available < wallet.product.base_order_min):
                 continue
-            # if alt_price > 1.005 * limit_price:
-            #     cancel_condition = lambda x: 1
-            #     self.cancel_orders_conditionally('sell', sym, cancel_condition, 0)
-            #     print('changing sell price to ' + num2str(alt_price, wallet.product.usd_decimal_num))
-            #     limit_price = alt_price
+            if (alt_price > 1.005 * limit_price) or (alt_price < 0.995 * limit_price):
+                cancel_condition = lambda x: 1
+                self.cancel_orders_conditionally('sell', sym, cancel_condition, 0)
+                print('changing sell price to ' + num2str(alt_price, wallet.product.usd_decimal_num))
+                limit_price = alt_price
             if (available * limit_price < QUOTE_ORDER_MIN):
                 print(
                     'Cannot sell ' + sym + ' because available is less than minnimum Quote order. Manual sell required')
@@ -1116,18 +1118,23 @@ class PSMSpreadBot(SpreadBot):
     def cancel_old_orders(self):
         # TODO make it such that buy_cancel_times updates when an order is placed
         for sym in self.symbols:
+            # Timed out orders
             self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
 
-    def cancel_no_longer_viable_orders(self):
-        for sym in self.symbols:
+            # No longer viable orders
             buy_price = self.spread_price_limits[sym]['buy']
             sell_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell')
+            new_buy_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'buy')
             if buy_price:
                 spread = 1 + (sell_price - buy_price) / buy_price
                 if spread < MIN_SPREAD:
+                    # Cancel orders that are no longer expected to be profitable
                     self.cancel_out_of_bound_orders('buy', 0, sym, widen_spread=True)
+                    self.spread_price_limits[sym]['buy'] = None
                 else:
-                    self.cancel_out_of_bound_orders('buy', buy_price * 0.99, sym)
+                    # Cancel orders that are no longer expected to go through
+                    self.cancel_out_of_bound_orders('buy', new_buy_price * 0.995, sym)
+
 
 class PSMPredictBot(Bot):
 
