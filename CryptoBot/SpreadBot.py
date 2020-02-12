@@ -494,6 +494,7 @@ class Bot:
 
     def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD'):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
+        self.settings.update_settings()
         current_offset = self.settings.read_setting_from_file('portfolio value offset')
         self.portfolio = CombinedPortfolio(api_key, secret_key, passphrase, syms, is_sandbox=is_sandbox_api, offset_value=current_offset, base_currency=base_currency)
         self.symbols = syms
@@ -1130,10 +1131,9 @@ class PSMSpreadBot(SpreadBot):
                 if spread < MIN_SPREAD:
                     # Cancel orders that are no longer expected to be profitable
                     self.cancel_out_of_bound_orders('buy', 0, sym, widen_spread=True)
-                    self.spread_price_limits[sym]['buy'] = None
                 else:
                     # Cancel orders that are no longer expected to go through
-                    self.cancel_out_of_bound_orders('buy', new_buy_price * 0.995, sym)
+                    self.cancel_out_of_bound_orders('buy', new_buy_price * 0.99, sym)
 
 
 class PSMPredictBot(Bot):
