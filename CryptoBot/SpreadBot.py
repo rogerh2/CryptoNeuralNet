@@ -301,8 +301,8 @@ class Product:
 
         new_order_id = None
         # Some orders are not placing due to order size, so the extra subtraction below is to ensure they are small enough
-        price_str = num2str(price - self.usd_res, self.usd_decimal_num)
-        size_str = num2str(coeff * size - self.crypto_res, self.base_decimal_num)
+        price_str = num2str(price, self.usd_decimal_num)
+        size_str = num2str(coeff * size, self.base_decimal_num)
 
         if time_out:
             order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, time_in_force='GTT', cancel_after='hour')
@@ -842,6 +842,7 @@ class SpreadBot(Bot):
         full_portfolio_value = self.get_full_portfolio_value()
         num_orders = len(top_syms)
         num_currencies_to_loop = np.min(np.array([len(top_syms) + 1, desired_number_of_currencies + 1]))
+        fee_rate, _ = self.portfolio.get_fee_rate()
         for ind in range(1, num_currencies_to_loop):
             i = num_orders - ind
             usd_available = self.portfolio.get_usd_available()
@@ -896,6 +897,9 @@ class SpreadBot(Bot):
                     if spread < MIN_SPREAD:
                         print('Cannot place by order because projected sell price dropped\n')
                         continue
+
+                    # Adjust the size to account for the fee rate
+                    size = size / (1 + fee_rate)
 
                     # Place order
                     self.place_order_for_nth_currency(buy_price, sell_price, wallet, size, std, mu, top_sym)
