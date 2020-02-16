@@ -82,6 +82,7 @@ class Product:
         self.quote_order_min = QUOTE_ORDER_MIN
         self.base_order_min = EXCHANGE_CONSTANTS[prediction_ticker]['base order min']
         self.base_decimal_num = EXCHANGE_CONSTANTS[prediction_ticker]['base resolution']
+        self.crypto_res = 10**(-self.base_decimal_num)
         self.filt_fills = None
         self.all_fills = None
         self.filtered_fill_times = None
@@ -300,8 +301,8 @@ class Product:
 
         new_order_id = None
         # Some orders are not placing due to order size, so the extra subtraction below is to ensure they are small enough
-        price_str = num2str(price - self.usd_decimal_num, self.usd_decimal_num)
-        size_str = num2str(coeff * size - self.base_decimal_num, self.base_decimal_num)
+        price_str = num2str(price - self.usd_res, self.usd_decimal_num)
+        size_str = num2str(coeff * size - self.crypto_res, self.base_decimal_num)
 
         if time_out:
             order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, time_in_force='GTT', cancel_after='hour')
