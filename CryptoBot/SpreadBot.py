@@ -33,6 +33,8 @@ from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
 from CryptoBot.CryptoBot_Shared_Functions import str_list_to_timestamp
 from CryptoBot.CryptoBot_Shared_Functions import offset_current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import convert_coinbase_timestr_to_timestamp
+from CryptoBot.CryptoBot_Shared_Functions import calculate_spread
+from CryptoBot.CryptoBot_Shared_Functions import save_file_to_dropbox
 from CryptoBot.constants import EXCHANGE_CONSTANTS
 from CryptoPredict.CryptoPredict import CryptoCompare
 from ODESolvers.PSM import create_propogator_from_data
@@ -41,13 +43,18 @@ import re
 
 # SETTINGS_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/spread_bot_settings.txt.txt'
 # SAVED_DATA_FILE_PATH = r'/Users/rjh2nd/Dropbox (Personal)/crypto/Live Run Data/CryptoFillsBotReturns/Test' + str(current_est_time().date()).replace('-', '')
+def portfolio_file_path_generator():
+    file_path_dt_format = '%Y%m%d_%H%M_%Z'
+    return r'./' + current_est_time().strftime(file_path_dt_format) + '_coinbasepro'
+
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
-SAVED_DATA_FILE_PATH = r'./Test' + str(current_est_time().date()).replace('-', '')
-MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
+SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
+MIN_SPREAD = 2.011 # This is the minnimum spread before a trade can be made
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
+MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell pair
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 71 # This is the value that will trigger the bot to stop trading
+MIN_PORTFOLIO_VALUE = 65 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -248,7 +255,7 @@ class Product:
 
         return weighted_mu, weighted_std, last_fill
 
-    def get_mean_and_std_of_fill_sizes(self, side):
+    def get_mean_and_std_of_fill_sizes(self, side, weighted=True):
         _, fills = self.get_recent_fills()
         if fills is None:
             return None, None, None
@@ -270,13 +277,17 @@ class Product:
         mu = np.mean(size_arr)
 
         # Adjust mu and std to account for number of trades over time
-        weighted_mu, weighted_std, last_fill = self.adjust_fill_data(mu, std, size_arr)
+        if weighted:
+            weighted_mu, weighted_std, last_fill = self.adjust_fill_data(mu, std, size_arr)
+        else:
+            _, _, last_fill = self.adjust_fill_data(mu, std, size_arr)
+            weighted_mu = mu
+            weighted_std = std
+
 
         return weighted_mu, weighted_std, last_fill
 
-
     def place_order(self, price, side, size, coeff=1, post_only=True, time_out=False):
-        # TODO ensure it never rounds up to the point that the order is larger than available
 
         if not side in ['buy', 'sell']:
             raise ValueError(side + ' is not a valid orderbook side')
@@ -288,8 +299,9 @@ class Product:
             return None
 
         new_order_id = None
-        price_str = num2str(price, self.usd_decimal_num)
-        size_str = num2str(coeff * size, self.base_decimal_num)
+        # Some orders are not placing due to order size, so the extra subtraction below is to ensure they are small enough
+        price_str = num2str(price - self.usd_decimal_num, self.usd_decimal_num)
+        size_str = num2str(coeff * size - self.base_decimal_num, self.base_decimal_num)
 
         if time_out:
             order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, time_in_force='GTT', cancel_after='hour')
@@ -358,7 +370,7 @@ class Wallet:
 
 class LiveRunSettings:
 
-    settings = {'portfolio value offset':None, 'limit buy':None, 'limit sell':None, 'spread':1.01, 'std':2}
+    settings = {'portfolio value offset':None, 'minnimum_spread':MIN_SPREAD, 'std':2}
 
     def __init__(self, settings_file_path):
         self.fname = settings_file_path
@@ -374,6 +386,8 @@ class LiveRunSettings:
                 setting_str = self.reg_ex.search(content.replace(' ', ''))
                 if setting_str is not None:
                     setting_value = float(setting_str.group(0))
+        if setting_name not in self.settings.keys():
+            self.settings[setting_name] = setting_value
 
         return setting_value
 
@@ -487,6 +501,14 @@ class CombinedPortfolio:
         for sym in self.symbols:
             self.wallets[sym].update_value(data=wallets_data)
 
+    def get_fee_rate(self):
+        fee_rates = self.auth._send_message('get', '/fees')
+        sleep(PRIVATE_SLEEP)
+        maker_rate = float(fee_rates['maker_fee_rate'])
+        taker_rate = float(fee_rates['taker_fee_rate'])
+        return maker_rate, taker_rate
+
+
 class Bot:
 
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
@@ -584,6 +606,12 @@ class Bot:
             coeff = 1
 
         return book_side, opposing_book_side, coeff
+    
+    def update_min_spread(self):
+        global MIN_SPREAD
+        mkr_fee, _ = self.portfolio.get_fee_rate()
+        MIN_SPREAD = 1 + 2 * mkr_fee + MIN_PROFIT
+        self.settings.write_setting_to_file('minnimum_spread', MIN_SPREAD)
 
 class SpreadBot(Bot):
 
@@ -713,7 +741,7 @@ class SpreadBot(Bot):
                 continue
             sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell', mean_multiplier=2) # Use mean_multiplier of 2 to account for movement after the buy
             current_price = wallet.product.get_top_order('bids')
-            spread = 1 + ( sell_price - buy_price ) / buy_price
+            spread = calculate_spread(buy_price, sell_price)
             rank = (sell_price - current_price) / buy_price
             if (spread < MIN_SPREAD):
                 rank = -1 # eliminate trades with low spreads
@@ -773,7 +801,7 @@ class SpreadBot(Bot):
             return None, None, None, None, None, None, None
 
     def place_order_for_nth_currency(self, buy_price, sell_price, wallet, size, std, mu, top_sym):
-        spread = 1 + (sell_price - buy_price) / buy_price
+        spread = calculate_spread(buy_price, sell_price)
         # place order and record
         print('\n' + top_sym + ' Chosen as best buy')
         print('placing order\n' + 'price: ' + num2str(buy_price,
@@ -821,16 +849,15 @@ class SpreadBot(Bot):
                 # Determine order size
                 nominal_order_size = full_portfolio_value / desired_number_of_currencies
                 if nominal_order_size < QUOTE_ORDER_MIN:
-                    # never try to place an order smalle than the minimum
+                    # never try to place an order smaller than the minimum
                     nominal_order_size = QUOTE_ORDER_MIN
 
                 if nominal_order_size > (usd_available - QUOTE_ORDER_MIN):
-                    # If placing the nominal order leaves an unusable amount of money then skip
+                    # If placing the nominal order leaves an unusable amount of money then only use available
                     order_size = usd_available
                 else:
                     order_size = nominal_order_size
 
-                # print('Evaluating currencies for best buy')
                 # Determine order properties
                 if no_viable_trade:
                     pass #print('No viable trades found')
@@ -838,6 +865,11 @@ class SpreadBot(Bot):
                     top_sym = top_syms[i]
                     buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
                     sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
+
+                    # Always insure the order is small enough to go through in a reasonable amount of time
+                    mean_size, _, _ = wallet.product.get_mean_and_std_of_fill_sizes('asks', weighted=False)
+                    if order_size > (buy_price * mean_size):
+                        order_size = buy_price * mean_size
 
                     if buy_price is None:
                         continue
@@ -858,16 +890,8 @@ class SpreadBot(Bot):
                     else:
                         continue
 
-                    # If you're close to getting a lot of value, just place the order at the top
-                    current_price = wallet.product.get_top_order('bids')
-                    current_spread = 1 + (sell_price - current_price) / current_price
-                    current_val = current_spread - MIN_SPREAD
-                    buy_current_val = (current_price - buy_price) / buy_price
-                    if current_val > buy_current_val:
-                        print('Buying at current price due to expected returns\n')
-                        buy_price = current_price
                     # If the spread is too small don't place the order
-                    spread = 1 + (sell_price - buy_price) / buy_price
+                    spread = calculate_spread(buy_price, sell_price)
                     if spread < MIN_SPREAD:
                         print('Cannot place by order because projected sell price dropped\n')
                         continue
@@ -886,7 +910,7 @@ class SpreadBot(Bot):
             buy_price = self.spread_price_limits[sym]['buy']
             limit_price = self.spread_price_limits[sym]['sell']
             # cutoff_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3)
-            alt_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell') # Check to see if the expected price has changed since the buy order was placed
+            alt_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=3) # Check to see if the expected price has changed since the buy order was placed
             available = wallet.get_amnt_available('sell')
 
             if limit_price is None:
@@ -895,31 +919,28 @@ class SpreadBot(Bot):
             # Filter unnecessary currencies
             if (available < wallet.product.base_order_min):
                 continue
-            if (alt_price > 1.005 * limit_price) or (alt_price < 0.995 * limit_price):
-                cancel_condition = lambda x: 1
-                self.cancel_orders_conditionally('sell', sym, cancel_condition, 0)
-                print('changing sell price to ' + num2str(alt_price, wallet.product.usd_decimal_num))
-                limit_price = alt_price
             if (available * limit_price < QUOTE_ORDER_MIN):
                 print(
                     'Cannot sell ' + sym + ' because available is less than minnimum Quote order. Manual sell required')
                 continue
 
             print('Evaluating sell order for ' + sym)
-            # Cancel sell orders that have a large resistance
-            # if (limit_price > cutoff_price):
-            #     alt_price, _ = self.determine_price_based_on_fill_size(sym, 11, 'sell', std_mult=2)
-            #     print('Reducing sell price because sell price of ' + num2str(limit_price) + ' out of bounds' + '\n')
-            #     self.update_spread_prices_limits(alt_price, 'sell', sym)
-            #     self.cancel_out_of_bound_orders('sell', alt_price, sym)
-            #     available = wallet.get_amnt_available('sell')
-            #     limit_price = alt_price
 
-            spread = 1 + (limit_price - buy_price) / buy_price
-            if spread < MIN_SPREAD:
+            spread = calculate_spread(buy_price, limit_price)
+            current_price = wallet.product.get_top_order('bids')
+            current_value = calculate_spread(buy_price, current_price)
+            e_stop_trigger = 0.931
+            e_stop_spread = 0.93
+
+            if ( current_value <= e_stop_trigger ) and  ( limit_price > e_stop_spread * buy_price ):
+                limit_price = e_stop_spread * buy_price
+                spread = calculate_spread(buy_price, limit_price)
+                self.cancel_out_of_bound_orders('asks', limit_price, sym)
+                print(sym + ' holdings have lost more than 7% of their purchase value, activating stop limit\n')
+            elif spread < MIN_SPREAD:
                 limit_price = MIN_SPREAD * buy_price
-                spread = 1 + (limit_price - buy_price) / buy_price
-                print('Upping sell price to meet minnimum spread requriements')
+                spread = calculate_spread(buy_price, limit_price)
+                print('Upping ' + sym + ' sell price to meet minnimum spread requriements\n')
             print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n' + 'spread: ' + num2str(spread, 4))
             self.spread = spread
             self.update_spread_prices_limits(limit_price, 'sell', sym)
@@ -1107,7 +1128,7 @@ class PSMSpreadBot(SpreadBot):
                 continue
             sell_price, _, _, _, _ = self.determine_trade_price(sym, usd_available, side='sell', mean_multiplier=2) # Use mean_multiplier of 2 to account for movement after the buy
             current_price = wallet.product.get_top_order('bids')
-            spread = 1 + ( sell_price - buy_price ) / buy_price
+            spread = calculate_spread(buy_price, sell_price)
             rank = 1/self.errors[sym]#(sell_price - current_price) / buy_price
             ranking_dict[sym] = (spread, mu, buy_price, wallet, std, rank, size)
 
@@ -1121,20 +1142,6 @@ class PSMSpreadBot(SpreadBot):
         for sym in self.symbols:
             # Timed out orders
             self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
-
-            # No longer viable orders
-            buy_price = self.spread_price_limits[sym]['buy']
-            sell_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'sell')
-            new_buy_price, _, _, _, _ = self.determine_price_based_on_std(sym, 11, 'buy')
-            if buy_price:
-                spread = 1 + (sell_price - buy_price) / buy_price
-                if spread < MIN_SPREAD:
-                    # Cancel orders that are no longer expected to be profitable
-                    self.cancel_out_of_bound_orders('buy', 0, sym, widen_spread=True)
-                else:
-                    # Cancel orders that are no longer expected to go through
-                    self.cancel_out_of_bound_orders('buy', new_buy_price * 0.99, sym)
-
 
 class PSMPredictBot(Bot):
 
@@ -1282,10 +1289,9 @@ class PSMPredictBot(Bot):
     # def place_order_for_top_currencies
     # def place_limit_sells
 
-
 class PortfolioTracker:
 
-    def __init__(self, portfolio):
+    def __init__(self, portfolio, dbx_key=None):
         self.portfolio = portfolio
         percentage_data = {'Market': 100, 'Algorithm': 100}
         current_datetime = current_est_time()
@@ -1294,6 +1300,17 @@ class PortfolioTracker:
         self.initial_value = portfolio.get_full_portfolio_value()
         self.prediction_ticker = 'BTC'
         absolute_data = {'Portfolio Value:':self.initial_value}
+        self.portfolio_value = pd.DataFrame(data=absolute_data, index=[current_datetime])
+        self.dbx_key = dbx_key
+
+    def reset(self):
+        percentage_data = {'Market': 100, 'Algorithm': 100}
+        current_datetime = current_est_time()
+        self.returns = pd.DataFrame(data=percentage_data, index=[current_datetime])
+        self.initial_price = self.portfolio.wallets['BTC'].product.get_top_order('bids')
+        self.initial_value = self.portfolio.get_full_portfolio_value()
+        self.prediction_ticker = 'BTC'
+        absolute_data = {'Portfolio Value:': self.initial_value}
         self.portfolio_value = pd.DataFrame(data=absolute_data, index=[current_datetime])
 
     def format_price_info(self, returns, price):
@@ -1341,6 +1358,7 @@ class PortfolioTracker:
         return portfolio_returns, market_returns, portfolio_value, price
 
     def plot_returns(self):
+
         # Get data
         portfolio_returns, market_returns, portfolio_value, price = self.update_returns_data()
         portfolio_str = self.format_price_info(portfolio_returns, portfolio_value)
@@ -1369,6 +1387,33 @@ class PortfolioTracker:
 
         return portfolio_value
 
+    def move_data_to_drop_box(self):
+        global SAVED_DATA_FILE_PATH
+
+        # Define the dropbox path
+        dbx_path = r'/Roger Hobbies/crypto/Portfolio Returns' + SAVED_DATA_FILE_PATH[1::] # the 1:: is to remove the period at the beginning
+        returns_csv_path = r'/returns.csv'
+        return_png_path = r'/returns.png'
+        value_csv_path = r'/value.csv'
+        value_png_path = r'/value.png'
+        files_to_move = (returns_csv_path, return_png_path, value_csv_path, value_png_path)
+
+        # Move the current folders contents to dropbox
+        for fpath in files_to_move:
+            print(dbx_path + fpath)
+            save_file_to_dropbox(SAVED_DATA_FILE_PATH + fpath, dbx_path + fpath, self.dbx_key)
+
+        # Delete the current folder and create a new one
+        files_in_directory = os.listdir(SAVED_DATA_FILE_PATH)
+        for file in files_in_directory:
+            os.remove(SAVED_DATA_FILE_PATH + r'/' + file)
+        os.rmdir(SAVED_DATA_FILE_PATH)
+        SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
+
+        if not os.path.exists(SAVED_DATA_FILE_PATH):
+            os.mkdir(SAVED_DATA_FILE_PATH)
+
+
 
 def run_bot(bot_type='psm'):
     # -- Secret/changing variable declerations
@@ -1377,11 +1422,12 @@ def run_bot(bot_type='psm'):
         api_input = sys.argv[1]
         secret_input = sys.argv[2]
         passphrase_input = sys.argv[3]
-
+        drop_box_key = sys.argv[4]
     else:
-        api_input = input('What is the api key? ')
-        secret_input = input('What is the secret key? ')
-        passphrase_input = input('What is the passphrase? ')
+        api_input = input('What is the Coinbase api key? ')
+        secret_input = input('What is the Coinbase secret key? ')
+        passphrase_input = input('What is the Coinbase passphrase? ')
+        drop_box_key = input('What is the DropBox Key? ')
 
     # Setup initial variables
     print('Initializing bot')
@@ -1390,8 +1436,9 @@ def run_bot(bot_type='psm'):
     else:
         bot = SpreadBot(api_input, secret_input, passphrase_input)
     bot.portfolio.update_value()
+    bot.update_min_spread()
     print('Initializing portfolio tracking')
-    portfolio_tracker = PortfolioTracker(bot.portfolio)
+    portfolio_tracker = PortfolioTracker(bot.portfolio, dbx_key=drop_box_key)
     portfolio_value = portfolio_tracker.initial_value
     print('SpreadBot starting value ' + num2str(portfolio_value, 2))
 
@@ -1400,10 +1447,12 @@ def run_bot(bot_type='psm'):
     last_predict = 0
     last_update = 0
     last_plot = 0
+    last_portfolio_refresh = datetime.now().timestamp()
     plot_period = 60
     check_period = 60
     predict_period = 2*60
-    update_period = TRADE_LEN*60
+    propogator_update_period = TRADE_LEN*60
+    portfolio_refresh_period = 24*3600
     err_counter = 0
 
     while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
@@ -1411,8 +1460,9 @@ def run_bot(bot_type='psm'):
 
         if (current_time > (last_check + check_period)):
             try:
+
                 # Update propogator frequencies
-                if (current_time > (last_update + update_period)) and (bot_type == 'psm'):
+                if (current_time > (last_update + propogator_update_period)) and (bot_type == 'psm'):
                     bot.predict()
                     last_predict = datetime.now().timestamp()
                     last_update = datetime.now().timestamp()
@@ -1422,13 +1472,6 @@ def run_bot(bot_type='psm'):
                     last_predict = datetime.now().timestamp()
                 # Trade
                 bot.portfolio.update_value()
-                port_val = bot.portfolio.get_full_portfolio_value()
-                # TODO, remove the below if statement after deposit has been made
-                if port_val > 400:
-                    bot.settings.write_setting_to_file('portfolio value offset', 400)
-                    bot.settings.update_settings()
-                    bot.portfolio.update_offset_value(400)
-                    bot.portfolio.update_value()
                 last_check = datetime.now().timestamp()
                 bot.place_order_for_top_currencies()
                 bot.place_limit_sells()
@@ -1441,6 +1484,14 @@ def run_bot(bot_type='psm'):
                 if (current_time > (last_plot + plot_period)):
                     portfolio_value = portfolio_tracker.plot_returns()
                     last_plot = datetime.now().timestamp()
+
+                if (current_time > (portfolio_refresh_period + last_portfolio_refresh)):
+                    bot.update_min_spread()
+                    portfolio_tracker.move_data_to_drop_box()
+                    print('Portfolio Data moved to DropBox\n')
+                    portfolio_tracker.reset()
+                    last_portfolio_refresh = current_time
+
 
                 err_counter = 0
 

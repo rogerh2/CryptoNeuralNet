@@ -70,8 +70,8 @@ class TriangularArbitridgeBot(sb.Bot):
         p2r = float(base_quote.order_book['bids'][0][0])
         p3r = float(quote_usd.order_book['bids'][0][0])
         amt = 100
-        quote_to_base_value = (0.9975 ** 3) * p3 * amt / (p1 * p2) - 100
-        base_to_quote_value = (0.9975 ** 3) * p3r * p2r * amt / p1r - 100
+        quote_to_base_value = (0.9985 ** 3) * p3 * amt / (p1 * p2) - 100
+        base_to_quote_value = (0.9985 ** 3) * p3r * p2r * amt / p1r - 100
 
         # p1 = prod_u.get_top_order('bids')
         # p2 = prod_u.get_top_order('asks')
@@ -103,8 +103,8 @@ class TriangularArbitridgeBot(sb.Bot):
         p2r = float(base_quote.order_book['bids'][0][0])
         p3r = float(quote_usd.order_book['bids'][0][0])
         amt = 100
-        forward_value = (0.9975**0) * p3 * amt / ( p1 * p2 ) - 100
-        reverse_value = (0.9975**0) * p3r * p2r * amt / p1r - 100
+        forward_value = (0.9985**0) * p3 * amt / ( p1 * p2 ) - 100
+        reverse_value = (0.9985**0) * p3r * p2r * amt / p1r - 100
         return forward_value, reverse_value
 
     #TODO make script to find optimal chain
@@ -122,7 +122,7 @@ if __name__ == "__main__":
     i = 0
     print(str(int(time())))
     sym_pairs = DEFAULT_SYM_PAIRS
-    while t < 3600:
+    while t < 60:
 
         i += 1
         t = time() - t0

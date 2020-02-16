@@ -2,11 +2,15 @@ import pytz
 import numpy as np
 import scipy.stats
 import traceback
+import dropbox
+import sys
 from tzlocal import get_localzone
 from datetime import datetime
 from datetime import timedelta
 from scipy.signal import find_peaks
 from time import sleep
+from dropbox.files import WriteMode
+from dropbox.exceptions import ApiError, AuthError
 from matplotlib import pyplot as plt
 
 
@@ -177,6 +181,31 @@ def nth_max_peaks(arr, n=1):
     peak_inds, peak_data = find_peaks(arr, height=(None, None))
     nth_peak_ind = nth_max_ind(peak_data['peak_heights'], n=n)
     return peak_inds[nth_peak_ind]
+
+def calculate_spread(buy_price, sell_price):
+    return 1 + (sell_price - buy_price) / buy_price
+
+def save_file_to_dropbox(data_path, file_path, access_token):
+    dbx = dropbox.Dropbox(access_token)
+
+    with open(data_path, 'rb') as f:
+        # We use WriteMode=overwrite to make sure that the settings in the file
+        # are changed on upload
+        try:
+            dbx.files_upload(f.read(), file_path, mode=WriteMode('overwrite'))
+            print(file_path + ' uploaded!')
+        except ApiError as err:
+            # This checks for the specific error where a user doesn't have
+            # enough Dropbox space quota to upload this file
+            if (err.error.is_path() and
+                    err.error.get_path().reason.is_insufficient_space()):
+                sys.exit("ERROR: Cannot back up; insufficient space.")
+            elif err.user_message_text:
+                print(err.user_message_text)
+                sys.exit()
+            else:
+                print(err)
+                sys.exit()
 
 
 # def rate_limited_get(func, limit, )
