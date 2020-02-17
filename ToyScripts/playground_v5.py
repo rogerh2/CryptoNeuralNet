@@ -95,7 +95,7 @@ def fourier_transform(data, t, return_type='magnitude'):
 
 def top_N_real_fourier_coefficients(data, t, N):
     a0, a, b, mag, f = fourier_transform(data, t, return_type='all')
-    max_inds = [nth_max_peaks(mag[1::], n) for n  in np.arange(2, N+1)]
+    max_inds = [nth_max_peaks(mag[2::], n) for n  in np.arange(2, N+1)]
     T = np.max(t) - np.min(t)
     omegas = 2 * np.pi * np.array(max_inds) / T
     a_max = a[max_inds]
@@ -368,6 +368,17 @@ class SystemPropogator:
             x.append(x_fit)
 
         return x, t_fit
+
+    def get_x_and_y_at_t_for_n(self, t, n):
+        # Find the polynomial that you should evaluate
+        polynomial_keys = np.array(list(self.polynomials.keys()))
+        valid_keys = polynomial_keys[polynomial_keys < t]
+        t_key = np.max(valid_keys)
+        polynomial = self.polynomials[t_key][n]
+
+        x, y = polynomial.get_x_and_y_at_t(t-t_key)
+
+        return x, y
 
     def reset(self, x0s=None, y0s=None):
         # Erase the past data for repropagation
@@ -768,7 +779,6 @@ class MultiFrequencySystem:
     def evaluate_nth_polynomial(self, time_arr, step_size, polynomial_order, n=None, verbose=True):
         x_fit = None
         for system_fit in self.propogators:
-            # TODO use multiprocessing to evaluate all polynomials at once
             if x_fit is None:
                 x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
                                                                   verbose=verbose)
@@ -780,6 +790,20 @@ class MultiFrequencySystem:
         return x_fit, t_fit
 
     def evaluate_nth_t_reversed_polynomial(self, time_arr, step_size, polynomial_order, n=None, verbose=True):
+        x_fit = None
+        for system_fit in self.t_reversed_propogators:
+            # TODO use multiprocessing to evaluate all polynomials at once
+            if x_fit is None:
+                x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                  verbose=verbose)
+            else:
+                x_fit_omega, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                        verbose=verbose)
+                x_fit += x_fit_omega
+
+        return x_fit, t_fit
+
+    def evaluate_nth_t_reversed_derivatives(self, time_arr, step_size, polynomial_order, n=None, verbose=True):
         x_fit = None
         for system_fit in self.t_reversed_propogators:
             # TODO use multiprocessing to evaluate all polynomials at once
@@ -816,6 +840,42 @@ class MultiFrequencySystem:
 
         return err_tot / (len(self.data)+1), x, dat
 
+    def get_next_guess_for_x0_and_y0(self, step_size, order, n, coeff, shift):
+        _, guess, ans = self.err(step_size, order, n, coeff, shift)
+        eval_len = int(len(guess)/2) - 1
+        eval_ans = ans[0:eval_len]
+        err_fun = lambda x: np.std(coeff * eval_ans - coeff * x) / np.mean(coeff * eval_ans + shift)
+        err_list = np.array([])
+        # Shift the propogated polynomial to find where it best fits the true data, then use that for your x0 and y0
+        for i in range(0, eval_len):
+            err_list = np.append(err_list, err_fun(guess[i:i+eval_len]))
+        opt_t = np.argmin(guess)
+
+        # Evaluate all the propogators to find the total x0 and y0
+        x0_guess = 0
+        y0_guess = 0
+        for i in range(0, len(self.t_reversed_propogators)):
+            propogator = self.t_reversed_propogators[i]
+            x0_guess_current, y0_guess_current = propogator.get_x_and_y_at_t_for_n(opt_t, n)
+            x0_guess += x0_guess_current
+            y0_guess += y0_guess_current
+
+        return x0_guess, y0_guess
+
+    def get_next_guess_for_x0s_and_y0s(self, step_size, order, coefficients, shifts):
+
+        xs = np.array([])
+        ys = np.array([])
+
+        for i in range(0, self.t_reversed_propogators[0].N):
+            x_guess, y_guess = self.get_next_guess_for_x0_and_y0(step_size, order, i, coefficients[i], shifts[i])
+            xs = np.append(xs, x_guess)
+            ys = np.append(ys, y_guess)
+
+        return xs, ys
+
+
+
     def optimize_x_and_y(self, step_size, order, coefficients, shifts, x0s_guess, y0s_guess, max_num_steps=10, min_alpha=0, verbose=False, plot=False):
         last_err, x, dat= self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose)
         if plot:
@@ -829,8 +889,9 @@ class MultiFrequencySystem:
         x0s = x0s_guess
         y0s = y0s_guess
         for i in range(0, max_num_steps):
-            x0s_guess = x0s + (np.random.rand(len(x0s_guess)) - 0.5)
-            y0s_guess = y0s + (np.random.rand(len(x0s_guess)) - 0.5) / len(dat)
+            # x0s_guess = x0s + (np.random.rand(len(x0s_guess)) - 0.5)
+            # y0s_guess = y0s + (np.random.rand(len(x0s_guess)) - 0.5) / len(dat)
+            x0s_guess, y0s_guess = self.get_next_guess_for_x0s_and_y0s(step_size, order, coefficients, shifts)
             err, x, dat = self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose)
             if plot:
                 line.set_ydata(x)
@@ -839,7 +900,7 @@ class MultiFrequencySystem:
                 plt.pause(0.01)
             if not np.isnan(err):
                 alpha = err / last_err
-                u = np.random.random()
+                u = 2*alpha#np.random.random()
                 if alpha < min_alpha:
                     break
                 elif alpha < u:
@@ -858,10 +919,10 @@ if __name__ == "__main__":
         use_saved_data = True
         sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-02-04 10:00:00 EST', date_to='2020-02-06 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-02-01 10:00:00 EST', date_to='2020-02-15 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
-                data = cc.minute_price_historical(sym)[sym + '_close'].values
+                data = cc.hourly_price_historical(sym)[sym + '_close'].values
                 raw_data_list.append(data)
                 print(sym)
 
@@ -881,8 +942,8 @@ if __name__ == "__main__":
         t = np.arange(0, len(data_list[0])) # Time in minutes
         poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
         poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
-        train_len = 480 # Length of data to be used for training
-        test_len = 240
+        train_len = 120 # Length of data to be used for training
+        test_len = 120
         poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
         # create the polynomial approximation
@@ -900,7 +961,7 @@ if __name__ == "__main__":
         omegas = [find_sin_freq(pfit[0:poly_train_ind], poly_t[0:poly_train_ind]) for pfit in poly_list]
         zetas = [0 for x in data_list]
         psm_step_size = 0.8
-        psm_order = 10
+        psm_order = 8
         t = np.arange(0, train_len)
         x_list = [x[0:train_len] for x in data_list]
 
@@ -925,7 +986,7 @@ if __name__ == "__main__":
         test_y0s = [x[0] for x in initial_polys]
         test_t = np.arange(0, test_len)
         all_ids = system_fit.propogators[0].keys
-        # system_fit.optimize_x_and_y(psm_step_size, psm_order, coeff_list, shift_list, test_x0s, test_y0s, verbose=True, plot=True)
+        system_fit.optimize_x_and_y(psm_step_size, psm_order, coeff_list, shift_list, test_x0s, test_y0s, verbose=True, plot=True)
 
         # system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
         forward_errs = np.array([])

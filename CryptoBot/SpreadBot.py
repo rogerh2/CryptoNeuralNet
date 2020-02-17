@@ -54,7 +54,7 @@ TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
 MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell pair
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 65 # This is the value that will trigger the bot to stop trading
+MIN_PORTFOLIO_VALUE = 420 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -921,6 +921,23 @@ class SpreadBot(Bot):
             if limit_price is None:
                 continue
 
+            # Ensure the portfolio does not fall below 7%
+            spread = calculate_spread(buy_price, limit_price)
+            current_price = wallet.product.get_top_order('bids')
+            current_value = calculate_spread(buy_price, current_price)
+            e_stop_trigger = 0.931
+            e_stop_spread = 0.93
+
+            if (current_value <= e_stop_trigger) and (limit_price > e_stop_spread * buy_price):
+                limit_price = e_stop_spread * buy_price
+                spread = calculate_spread(buy_price, limit_price)
+                self.cancel_out_of_bound_orders('asks', limit_price, sym)
+                print(sym + ' holdings have lost more than 7% of their purchase value, activating stop limit\n')
+            elif spread < MIN_SPREAD:
+                limit_price = MIN_SPREAD * buy_price
+                spread = calculate_spread(buy_price, limit_price)
+                print('Upping ' + sym + ' sell price to meet minnimum spread requriements\n')
+
             # Filter unnecessary currencies
             if (available < wallet.product.base_order_min):
                 continue
@@ -931,21 +948,6 @@ class SpreadBot(Bot):
 
             print('Evaluating sell order for ' + sym)
 
-            spread = calculate_spread(buy_price, limit_price)
-            current_price = wallet.product.get_top_order('bids')
-            current_value = calculate_spread(buy_price, current_price)
-            e_stop_trigger = 0.931
-            e_stop_spread = 0.93
-
-            if ( current_value <= e_stop_trigger ) and  ( limit_price > e_stop_spread * buy_price ):
-                limit_price = e_stop_spread * buy_price
-                spread = calculate_spread(buy_price, limit_price)
-                self.cancel_out_of_bound_orders('asks', limit_price, sym)
-                print(sym + ' holdings have lost more than 7% of their purchase value, activating stop limit\n')
-            elif spread < MIN_SPREAD:
-                limit_price = MIN_SPREAD * buy_price
-                spread = calculate_spread(buy_price, limit_price)
-                print('Upping ' + sym + ' sell price to meet minnimum spread requriements\n')
             print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n' + 'spread: ' + num2str(spread, 4))
             self.spread = spread
             self.update_spread_prices_limits(limit_price, 'sell', sym)
