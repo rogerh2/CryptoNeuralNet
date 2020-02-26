@@ -52,9 +52,10 @@ SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
 MIN_SPREAD = 2.011 # This is the minnimum spread before a trade can be made
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
 MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell pair
+STOP_SPREAD = 0.002 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 420 # This is the value that will trigger the bot to stop trading
+MIN_PORTFOLIO_VALUE = 400 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -66,6 +67,7 @@ else:
 QUOTE_ORDER_MIN = 10
 PUBLIC_SLEEP = 0.4
 PRIVATE_SLEEP = 0.21
+OPEN_ORDERS = None
 
 class Product:
     orders = {'buy': {}, 'sell': {}}
@@ -110,8 +112,9 @@ class Product:
             self.order_book = order_book
             order_book['time'] = ts
 
-    def get_top_order(self, side):
-        self.get_current_book()
+    def get_top_order(self, side, refresh=True):
+        if refresh:
+            self.get_current_book()
         if not side in ['asks', 'bids']:
             raise ValueError('Side must be either "asks" or "bids"')
         top_order = float(self.order_book[side][0][0])
@@ -288,7 +291,7 @@ class Product:
 
         return weighted_mu, weighted_std, last_fill
 
-    def place_order(self, price, side, size, coeff=1, post_only=True, time_out=False):
+    def place_order(self, price, side, size, coeff=1, post_only=True, time_out=False, stop_price=None):
 
         if not side in ['buy', 'sell']:
             raise ValueError(side + ' is not a valid orderbook side')
@@ -304,7 +307,20 @@ class Product:
         price_str = num2str(price, self.usd_decimal_num)
         size_str = num2str(coeff * size, self.base_decimal_num)
 
-        if time_out:
+        if side == 'buy':
+            stop_type = 'entry'
+        else:
+            stop_type = 'loss'
+
+        if time_out and stop_price:
+            # TODO fix stop order
+            order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str,
+                                                            size=size_str, post_only=post_only, time_in_force='GTT',
+                                                            cancel_after='hour', stop=stop_type)
+        elif stop_price:
+            order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str,
+                                                            size=size_str, post_only=post_only, stop=stop_type)
+        elif time_out:
             order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, time_in_force='GTT', cancel_after='hour')
         else:
             order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only)
@@ -315,8 +331,37 @@ class Product:
                 new_order_id = order_info["id"]
         if new_order_id is None:
             print(order_info)
+        else:
+            self.orders[side][new_order_id] = order_info
 
         return new_order_id
+
+    def get_open_orders(self):
+        if OPEN_ORDERS is None:
+            orders = list(self.auth_client.get_orders(self.product_id))
+            sleep(PRIVATE_SLEEP)
+        else:
+            orders = []
+            for order in OPEN_ORDERS:
+                if self.product_id == order['product_id']:orders.append(order)
+        return orders
+
+    def update_orders(self):
+        # Update still open orders
+        open_orders = self.get_open_orders()
+        open_ids = [x['id'] for x in open_orders]
+        for order in open_orders:
+            id = order['id']
+            # Check to ensure the order was placed by this bot
+            if id in self.orders.keys():
+                side = order['side']
+                self.orders[side][id] = order
+
+        # Remove completed orders
+        for side in ('buy', 'sell'):
+            id_list = list(self.orders[side].keys())
+            for id in id_list:
+                if id not in open_ids: del self.orders[side][id]
 
 class Wallet:
     offset_value = None # Offset value is subtracted from the amount in usd to ensure only the desired amount of money is traded
@@ -509,6 +554,14 @@ class CombinedPortfolio:
         taker_rate = float(fee_rates['taker_fee_rate'])
         return maker_rate, taker_rate
 
+    def get_all_open_orders(self):
+        if OPEN_ORDERS is None:
+            orders = list(self.auth.get_orders())
+            sleep(PRIVATE_SLEEP)
+        else:
+            orders = OPEN_ORDERS
+        return orders
+
 
 class Bot:
 
@@ -536,14 +589,17 @@ class Bot:
                 top_order = self.portfolio.wallets[sym].product.get_top_order(side)
                 self.current_price[sym][side] = top_order
 
-    def place_order(self, price, side, size, sym, post_only=True, time_out=False):
-        order_id = self.portfolio.wallets[sym].product.place_order(price, side, size, post_only=post_only, time_out=time_out)
+    def update_min_spread(self, fee):
+        global MIN_SPREAD
+        MIN_SPREAD = 1 + 2 * fee + MIN_PROFIT
+        self.settings.write_setting_to_file('minnimum_spread', MIN_SPREAD)
+
+    def place_order(self, price, side, size, sym, post_only=True, time_out=False, stop_price=None):
+        order_id = self.portfolio.wallets[sym].product.place_order(price, side, size, post_only=post_only, time_out=time_out, stop_price=stop_price)
         return order_id
 
     def get_full_portfolio_value(self):
-
         full_value = self.portfolio.get_full_portfolio_value()
-
         return full_value
 
     def update_spread_prices_limits(self, last_price, side, sym):
@@ -557,8 +613,7 @@ class Bot:
 
     def cancel_orders_conditionally(self, side, sym, high_condition, low_condition, msg=None):
         # High condition is a function of the individual orders
-        orders = list(
-            self.portfolio.wallets[sym].product.auth_client.get_orders(self.portfolio.wallets[sym].product.product_id))
+        orders = self.portfolio.wallets[sym].product.get_open_orders()
         keys_to_delete = []
 
         for order in orders:
@@ -595,7 +650,10 @@ class Bot:
 
         self.cancel_orders_conditionally(side, sym, order_time, cancel_time)
 
-
+    def cancel_single_order(self, id):
+        self.portfolio.auth.cancel_order(id)
+        sleep(PRIVATE_SLEEP)
+    
     def get_side_depedent_vars(self, side):
         if side == 'buy':
             book_side = 'bids'
@@ -607,12 +665,6 @@ class Bot:
             coeff = 1
 
         return book_side, opposing_book_side, coeff
-    
-    def update_min_spread(self):
-        global MIN_SPREAD
-        mkr_fee, _ = self.portfolio.get_fee_rate()
-        MIN_SPREAD = 1 + 2 * mkr_fee + MIN_PROFIT
-        self.settings.write_setting_to_file('minnimum_spread', MIN_SPREAD)
 
 class SpreadBot(Bot):
 
@@ -842,7 +894,8 @@ class SpreadBot(Bot):
         full_portfolio_value = self.get_full_portfolio_value()
         num_orders = len(top_syms)
         num_currencies_to_loop = np.min(np.array([len(top_syms) + 1, desired_number_of_currencies + 1]))
-        fee_rate, _ = self.portfolio.get_fee_rate()
+        fee_rate, tkr_fee = self.portfolio.get_fee_rate()
+        self.update_min_spread(tkr_fee)
         for ind in range(1, num_currencies_to_loop):
             i = num_orders - ind
             usd_available = self.portfolio.get_usd_available()
@@ -877,8 +930,7 @@ class SpreadBot(Bot):
                         continue
 
                     existing_size = (wallet.value['SYM'])
-                    orders = list(self.portfolio.wallets[top_sym].product.auth_client.get_orders(
-                        self.portfolio.wallets[top_sym].product.product_id))
+                    orders = self.portfolio.wallets[top_sym].product.get_open_orders()
                     for order in orders:
                         if order['side'] == 'buy':
                             existing_size += float(order['size'])
@@ -1150,151 +1202,292 @@ class PSMSpreadBot(SpreadBot):
             # Timed out orders
             self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
 
-class PSMPredictBot(Bot):
+class PSMPredictBot(PSMSpreadBot):
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', slope_avg_len=5):
+    def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', order_csv_path = None):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
-        raw_data = {}
-        self.fmt = '%Y-%m-%d %H:%M:%S %Z'
-        t_offset_str = offset_current_est_time(120, fmt=self.fmt)
-        cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
+        # Read dataframe from file if it exists and use that to initialize the product orders as well
+        if order_csv_path is None:
+            self.orders = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time'])
+            self.order_path = './orders_tracking.csv'
+        else:
+            self.order_path = order_csv_path
+            self.orders = pd.read_csv(order_csv_path, index_col=0)
+            ids = list(self.orders.index)
+            for id in ids:
+                order_info = self.portfolio.auth.get_order(id)
+                sleep(PRIVATE_SLEEP)
+                if 'product_id' in order_info:
+                    sym = order_info['product_id'].split('-')[0]
+                    side = order_info['side']
+                    product = self.portfolio.wallets[sym].product
+                    product.orders[side][id] = order_info
+                else:
+                    self.orders.drop(id)
+
+        # Create a dictionary for placeholder orders
+        place_holder_orders = {}  # This variable stores orders yet to be placed {'BTC':{'side':'buy', 'price':9000, 'time':1582417135.072912}}
         for sym in syms:
-            data = cc.minute_price_historical(sym)[sym + '_close'].values
-            raw_data[sym] = data
+            place_holder_orders[sym] = {'buy':None, 'sell':None}
+        self.place_holder_orders = place_holder_orders
 
-        raw_data_list = [raw_data[sym] for sym in self.symbols]
-        self.raw_data = raw_data
+    # Methods to manage dataframe storing orders
+    def add_order(self, id, sym, side, place_time, corresponding_buy_id):
+        product = self.portfolio.wallets[sym].product
+        # If the id is in the stored orders grab the data
+        if id in product.orders[side].keys():
+            order = product.orders[side][id]
+            new_row_headers = ['product_id', 'side', 'price', 'size', 'filled_size']
+            new_row = []
+            for header in new_row_headers:
+                new_row.append(order[header])
+            new_row.append(corresponding_buy_id)
+            new_row.append(place_time)
+            self.orders.loc[id] = new_row
 
-        self.del_len = slope_avg_len
-        self.propogator, coeff_list, shift_list = create_multifrequency_propogator_from_data(raw_data_list, self.symbols)
-        self.predictions = {}
-        self.coefficients = {}
-        self.shifts = {}
-        self.buy_cancel_times = {}
-
-        for i in range(0, len(syms)):
-            sym = syms[i]
-            self.predictions[sym] = None # will use as max, min, true_std, mean_offset
-            self.coefficients[sym] = coeff_list[i]
-            self.shifts[sym] = shift_list[i]
-            self.buy_cancel_times[sym] = TRADE_LEN
-
-    def update_raw_data(self):
-        raw_data = {}
-        self.fmt = '%Y-%m-%d %H:%M:%S %Z'
-        t_offset_str = offset_current_est_time(120, fmt=self.fmt)
-        cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
-        for sym in self.symbols:
-            data = cc.minute_price_historical(sym)[sym + '_close'].values
-            raw_data[sym] = data
-        self.raw_data = raw_data
-
-    def transform_single_sym(self, sym, data):
-        transform_data = self.coefficients[sym] * data + self.shifts[sym]
-        return transform_data
-
-    def transform(self, raw_data):
-        transform_data = {}
-        syms = self.symbols
-        for sym in syms:
-            transform_data[sym] = self.transform_single_sym(sym, raw_data[sym])
-
-        return transform_data
-
-    def inverse_transform(self, raw_data):
-        transform_data = {}
-        syms = self.symbols
-        for sym in syms:
-            transform_data[sym] = (raw_data[sym] - self.shifts[sym]) / self.coefficients[sym]
-
-        return transform_data
-
-    def get_new_propogator(self):
-        raw_data_list = [self.raw_data[sym] for sym in self.symbols]
-        self.propogator, coeff_list, shift_list = create_multifrequency_propogator_from_data(raw_data_list,
-                                                                                             self.symbols)
-
-    def reset_propogator_start_point(self, raw_data):
-        # This method sets the propogator initial values to the most recent price
-        normalized_raw_data = self.inverse_transform(raw_data)
-        normalized_raw_data_list = [normalized_raw_data[sym] for sym in self.symbols]
-        # x0s = [x[-1] for x in normalized_raw_data_list]
-        # y0s = [np.mean(np.diff(x[-self.del_len*(len(x) > self.del_len)::])) for x in normalized_raw_data_list]
-        initial_polys = [np.polyfit(np.arange(0, len(x[-11::])), x[-11::], 1) for x in normalized_raw_data_list]
-        x0s = [np.polyval(x, 11) for x in initial_polys]
-        y0s = [x[0] for x in initial_polys]
-        self.propogator.reset(x0s=x0s, y0s=y0s)
-
-    def predict(self, verbose_on=False, get_new_propogator=True):
-        # Setup Initial Variables
-        time_arr = np.arange(0, TRADE_LEN)
-        step_size = PSM_EVAL_STEP_SIZE
-        polynomial_order = 10
-
-        # Collect data and create propogator
-        self.update_raw_data()
-        raw_data_list = [self.raw_data[sym] for sym in self.symbols]
-        if get_new_propogator:
-            self.get_new_propogator()
-        self.reset_propogator_start_point(raw_data)
-        syms = self.symbols
-        predictions = {}
-        transformed_raw_data = self.inverse_transform({syms[i]: raw_data_list[i] for i in range(0, len(raw_data_list))})
-
-        # Predict
-        for i in range(0, len(syms)):
-            sym = syms[i]
-            x, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose_on)
-            predictions[sym] = x - x[0] + transformed_raw_data[sym][-1]
-
-        self.predictions = self.transform(predictions)
-
-    def determine_nominal_price(self, sym, usd_available, side, std_mult=1.0):
-
-        # initialize variables
-        book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
-
-        wallet = self.portfolio.wallets[sym]
-        current_price = wallet.product.get_top_order(opposing_book_side)
-
-        predicted_evolution = self.predictions[sym]
-
-        std_coeff = std_mult * self.settings.read_setting_from_file('std')
-        # Only get the min value before the predicted sell value
-        sell_ind = np.argmax(predicted_evolution)
-        if side == 'buy':
-            if sell_ind > 0:
-                buy_diff = np.min(predicted_evolution[0:sell_ind]) - current_price
+    def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None):
+        if side == 'sell':
+            # For sell orders remove if the are no longer in the books
+            stored_ids = self.orders.index
+            if id in stored_ids:
+                self.orders = self.orders.drop(id)
+        else:
+            # For buy orders remove if the are no longer in the books and the sell order for them has already gone through
+            stored_ids = self.orders.index
+            stored_correspondence_ids = self.orders.corresponding_order.values
+            if (id in stored_ids) and (id not in stored_correspondence_ids):
+                self.orders = self.orders.drop(id)
+        self.add_order(id, sym, side, place_time, corresponding_buy_id)
+        # Check if a sell order was cancelled, if so add its sixe to the buy irder corresponding order
+        stored_ids = self.orders.index
+        if (id not in stored_ids) and (corresponding_buy_id in stored_ids):
+            if self.orders.loc[corresponding_buy_id]['corresponding_order']:
+                self.orders.loc[corresponding_buy_id]['corresponding_order'] += size
             else:
-                buy_diff = 0
-        else:
-            buy_diff = std_coeff * np.max(predicted_evolution) - current_price
-        if coeff * buy_diff < 0:
-            buy_price = current_price
-        else:
-            buy_price = current_price + buy_diff
+                self.orders.loc[corresponding_buy_id]['corresponding_order'] = size
 
-        size = usd_available / buy_price
+    def update_orders(self):
+        updated_syms = []
+        for id in self.orders.index:
+            order = self.orders.loc[id]
+            sym = order['product_id'].split('-')[0]
+            if sym not in updated_syms:
+                self.portfolio.wallets[sym].product.update_orders()
+                updated_syms.append(sym)
+            side = order['side']
+            corresponding_order_id = order['corresponding_order']
+            place_time = order['time']
+            size = order['size']
+            self.update_id_in_order_df(id, sym, side, place_time, size, corresponding_buy_id=corresponding_order_id)
 
-        return buy_price, wallet, size
+        self.orders.to_csv(self.order_path)
 
-    # def modify_price_based_on_market(self, sym, usd_available, side):
-    #     buy_price = self.spread_price_limits[sym]
-    #     current_value = self.portfolio.wallets[sym].product.get_top_order(side)
-    #     diff = current_value - buy_price
-    #     if diff < 0: # If the price has past the predicted buy price
-    #         mu, _, _ = self.portfolio.wallets[sym].product.get_mean_and_std_of_fill_sizes('buy')
-    #         if mu is None:
-    #             return None
-    #         elif (mu > 0) and (last_diff > 0):
-    #             None
+    def cancel_old_orders(self):
+        # First remove old placeholder orders
+        for sym in self.symbols:
+            for side in ('buy', 'sell'):
+                placeholder_order = self.place_holder_orders[sym][side]
+                if not placeholder_order is None:
+                    placement_time = placeholder_order['time']
+                    if (time() - placement_time) > TRADE_LEN*60: self.place_holder_orders[sym][side]=None
 
+        # Next remove old current orders
+        for id in self.orders.index:
+            order_time = self.orders.loc[id]['time']
+            if (time() - order_time) > TRADE_LEN * 60: self.cancel_single_order(id)
 
-    # def determine_price
-    # def modify_price_based_on_market
-    # def score_prices
-    # def place_order_for_top_currencies
-    # def place_limit_sells
+    def place_order_for_nth_currency(self, buy_price, sell_price, wallet, size, std, mu, top_sym):
+        # This method creates placeholder orders
+        spread = calculate_spread(buy_price, sell_price)
+        self.place_holder_orders[top_sym]['buy'] = {'price':buy_price, 'size':size, 'time':time()}
+        print('\n' + top_sym + ' Chosen as best buy')
+        print('watching\n' + 'price: ' + num2str(buy_price,
+                                                      wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
+            size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'projected spread: ' + num2str(spread, 6) + '\n')
+
+    def buy_place_holders(self):
+        if available > QUOTE_ORDER_MIN:
+            com_wallet = self.portfolio.get_common_wallet()
+            available = com_wallet.get_amnt_available('buy')
+            for sym in self.place_holder_orders.keys():
+                order = self.place_holder_orders[sym]
+                nominal_price = order['price']
+                nominal_size = order['size']
+                wallet = self.portfolio.wallets[sym]
+                current_price = wallet.product.get_top_order('bids')
+                if current_price < nominal_price * (1-STOP_SPREAD):
+                    limit_price = current_price * (1 + STOP_SPREAD)
+                    stop_price = current_price * (1 + STOP_SPREAD/2)
+                else:
+                    continue
+                size = ( nominal_price * nominal_size ) / limit_price
+                if size < available:
+                    available = size
+                order_id = self.place_order(limit_price, 'buy', available, sym, post_only=False, stop_price=stop_price)
+                if order_id is None:
+                    print(sym + ' buy Order rejected\n')
+                else:
+                    print(sym + ' buy Order placed\n')
+                    self.add_order(order_id, sym, 'buy', time(), 0)
+
+    def place_order_for_top_currencies(self):
+        # Ensure to update portfolio value before running
+        usd_hold = self.portfolio.get_usd_held()
+        usd_available = self.portfolio.get_usd_available()
+        desired_number_of_currencies = 5 # How many currecies (excluding USD) to hold
+        sym_indices = list(range(0, desired_number_of_currencies)) # This chooses the indices to use for determining trades
+        buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False, sym_ind=sym_indices)
+        no_viable_trade = False
+
+        # Cancel bad buy orders before continuing
+        if top_syms is None:
+            no_viable_trade = True
+            top_syms = self.symbols  # If no viable trades are found then allow any symbol to remain
+        if usd_hold > QUOTE_ORDER_MIN:
+            self.cancel_old_orders()
+            sleep(PRIVATE_SLEEP)
+
+        # Check available cash after canceling the non_optimal buy orders and place the next order
+        self.portfolio.update_value()
+        full_portfolio_value = self.get_full_portfolio_value()
+        num_orders = len(top_syms)
+        num_currencies_to_loop = np.min(np.array([len(top_syms) + 1, desired_number_of_currencies + 1]))
+        # Update fee rate
+        fee_rate, tkr_fee = self.portfolio.get_fee_rate()
+        self.update_min_spread(tkr_fee)
+
+        for ind in range(1, num_currencies_to_loop):
+            i = num_orders - ind
+            usd_available = self.portfolio.get_usd_available()
+            top_sym = top_syms[i]
+            current_placeholder = self.place_holder_orders[top_sym]['buy']
+            if current_placeholder is not None:
+                # Don't have more than one placeholder order out at a time
+                continue
+            # Only continue if there are viable trades
+            if (usd_available > QUOTE_ORDER_MIN) and (not no_viable_trade):
+
+                # Determine order size
+                nominal_order_size = full_portfolio_value / desired_number_of_currencies
+                if nominal_order_size < QUOTE_ORDER_MIN:
+                    # never try to place an order smaller than the minimum
+                    nominal_order_size = QUOTE_ORDER_MIN
+
+                if nominal_order_size > (usd_available - QUOTE_ORDER_MIN):
+                    # If placing the nominal order leaves an unusable amount of money then only use available
+                    order_size = usd_available
+                else:
+                    order_size = nominal_order_size
+
+                # Determine order properties
+                buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
+                sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
+
+                # Always insure the order is small enough to go through in a reasonable amount of time
+                mean_size, _, _ = wallet.product.get_mean_and_std_of_fill_sizes('asks', weighted=False)
+                if order_size > (buy_price * mean_size):
+                    order_size = buy_price * mean_size
+
+                if buy_price is None:
+                    continue
+
+                existing_size = (wallet.value['SYM'])
+                orders = self.portfolio.wallets[top_sym].product.get_open_orders()
+                for order in orders:
+                    if order['side'] == 'buy':
+                        existing_size += float(order['size'])
+
+                amnt_held = existing_size * buy_price
+
+                # Scale size based on existing holdings
+                if amnt_held <= (order_size - QUOTE_ORDER_MIN):
+                    size -= existing_size
+                # Don't place order if you already hold greater than or euqal to the nominal_order_size (within the QUOTE_ORDER_MIN)
+                else:
+                    continue
+
+                # If the spread is too small don't place the order
+                spread = calculate_spread(buy_price, sell_price)
+                if spread < MIN_SPREAD:
+                    print('Cannot place by order because projected sell price dropped\n')
+                    continue
+
+                # Adjust the size to account for the fee rate
+                size = size / (1 + fee_rate)
+
+                # Place order
+                self.place_order_for_nth_currency(buy_price, sell_price, wallet, size, std, mu, top_sym)
+                self.portfolio.update_value()
+            else:
+                break
+            self.buy_place_holders()
+
+    def place_limit_sells(self):
+        # Ensure to update portfolio value before running
+        for id in self.orders.index:
+            order = self.orders.loc[id]
+            sym = order['product_id'].split('-')[0]
+            wallet = self.portfolio.wallets[sym]
+            filled = order['filled']
+            if order['corresponding_order']: # Account for already completed sells
+                filled -= order['corresponding_order']
+            # Skip orders that are not relevant
+            if (order['side']=='sell') or (filled < wallet.product.base_order_min):
+                continue
+            # TODO figure out how to handle existing sell orders!
+            # Determine whether or not all of the filled size is accounted for, if so continue
+            already_handled_size = 0
+            existing_ids = []
+            existing_prices = []
+            current_price = wallet.product.get_top_order('bids')
+            for order_id in self.orders.index:
+                order_dat = self.orders.loc[order_id]
+                if order_dat['corresponding_order']==id:
+                    already_handled_size+=order_dat['size']
+                    existing_ids.append(order_id)
+                    existing_prices.append(order_dat['price'])
+            if len(existing_ids) > 0:
+                if len(existing_ids) > 1: # If there is more than one sell order cancel them and consolidate
+                    for order_id in existing_ids: self.cancel_single_order(order_id)
+                elif (not np.isclose(already_handled_size, filled, 2*wallet.product.crypto_res)) or (not np.isclose(existing_prices[0], current_price, 0.003*current_price)):
+                    # If the price has moved out of bounds or the existing orders do not account for the entire value
+                    for order_id in existing_ids: self.cancel_single_order(order_id)
+                else: # If an order already exists and meets the criteria then continue
+                    continue
+
+            # Determine the sell price
+            buy_price = order['price']
+            current_spread = calculate_spread(buy_price, current_price)
+            if current_spread < MIN_SPREAD:
+                continue
+            else:
+                if current_spread > (MIN_SPREAD + 0.001):
+                    limit_price = current_price * (1 - STOP_SPREAD)
+                    stop_price = current_price * (1 - STOP_SPREAD/2)
+                else:
+                    limit_price = current_price * (1 - STOP_SPREAD/2)
+                    stop_price = current_price * (1 - STOP_SPREAD/2)
+            available = wallet.get_amnt_available('sell')
+            if available > filled: # Only sell for this order
+                available = filled
+
+            spread = calculate_spread(buy_price, limit_price)
+            # Filter unnecessary currencies
+            if (available < wallet.product.base_order_min) or (available * limit_price < QUOTE_ORDER_MIN):
+                print('Cannot sell ' + sym + ' because available is less than minnimum allowable order size. Manual sell required')
+                continue
+
+            print('Placing ' + sym + ' spread sell order' + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n' + 'spread: ' + num2str(spread, 4))
+            self.spread = spread
+            self.update_spread_prices_limits(limit_price, 'sell', sym)
+            order_id = self.place_order(limit_price, 'sell', available, sym, post_only=False, stop_price=stop_price)
+            if order_id is None:
+                print('Sell Order rejected\n')
+            else:
+                print('\nSell Order placed')
+                self.add_order(order_id, sym, 'sell', time(), id)
+
+    # TODO add method to change holds into buy stop orders
 
 class PortfolioTracker:
 
@@ -1423,6 +1616,7 @@ class PortfolioTracker:
 
 
 def run_bot(bot_type='psm'):
+    global OPEN_ORDERS
     # -- Secret/changing variable declerations
     if len(sys.argv) > 2:
         # Definition from a shell file
@@ -1443,7 +1637,6 @@ def run_bot(bot_type='psm'):
     else:
         bot = SpreadBot(api_input, secret_input, passphrase_input)
     bot.portfolio.update_value()
-    bot.update_min_spread()
     print('Initializing portfolio tracking')
     portfolio_tracker = PortfolioTracker(bot.portfolio, dbx_key=drop_box_key)
     portfolio_value = portfolio_tracker.initial_value
@@ -1464,10 +1657,10 @@ def run_bot(bot_type='psm'):
 
     while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
         current_time = datetime.now().timestamp()
-
         if (current_time > (last_check + check_period)):
             try:
-
+                OPEN_ORDERS = list(bot.portfolio.auth.get_orders())
+                sleep(PRIVATE_SLEEP)
                 # Update propogator frequencies
                 if (current_time > (last_update + propogator_update_period)) and (bot_type == 'psm'):
                     bot.predict()
@@ -1493,7 +1686,6 @@ def run_bot(bot_type='psm'):
                     last_plot = datetime.now().timestamp()
 
                 if (current_time > (portfolio_refresh_period + last_portfolio_refresh)):
-                    bot.update_min_spread()
                     portfolio_tracker.move_data_to_drop_box()
                     print('Portfolio Data moved to DropBox\n')
                     portfolio_tracker.reset()
