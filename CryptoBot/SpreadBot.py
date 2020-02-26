@@ -1306,9 +1306,9 @@ class PSMPredictBot(PSMSpreadBot):
             size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'projected spread: ' + num2str(spread, 6) + '\n')
 
     def buy_place_holders(self):
+        com_wallet = self.portfolio.get_common_wallet()
+        available = com_wallet.get_amnt_available('buy')
         if available > QUOTE_ORDER_MIN:
-            com_wallet = self.portfolio.get_common_wallet()
-            available = com_wallet.get_amnt_available('buy')
             for sym in self.place_holder_orders.keys():
                 order = self.place_holder_orders[sym]
                 nominal_price = order['price']
