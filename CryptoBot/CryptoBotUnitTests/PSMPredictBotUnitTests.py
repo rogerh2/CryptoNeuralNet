@@ -55,6 +55,13 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
         self.assertNotIn(id_drop, product.orders['sell'].keys(), 'Product loaded old order')
         self.assertNotIn(id_drop, bot.orders.index, 'Bot loaded old order')
 
+    def test_does_turn_placeholders_into_buy_orders(self):
+        bot = PSMPredictBot(self.api_key, self.secret_key, self.passphrase, order_csv_path=CSV_PATH,
+                            is_sandbox_api=True)
+        buy_price = 1000
+        sell_price = 10 ** 6
+        sym = 'BTC'
+
     def tearDown(self):
         # Remove any orders placed on the book
         api_base = 'https://api-public.sandbox.pro.coinbase.com'

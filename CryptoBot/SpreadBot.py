@@ -55,7 +55,7 @@ MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell
 STOP_SPREAD = 0.002 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 400 # This is the value that will trigger the bot to stop trading
+MIN_PORTFOLIO_VALUE = 57 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -591,7 +591,7 @@ class Bot:
 
     def update_min_spread(self, fee):
         global MIN_SPREAD
-        MIN_SPREAD = 1 + 2 * fee + MIN_PROFIT
+        MIN_SPREAD = 1 + 2 * fee + MIN_PROFIT + STOP_SPREAD
         self.settings.write_setting_to_file('minnimum_spread', MIN_SPREAD)
 
     def place_order(self, price, side, size, sym, post_only=True, time_out=False, stop_price=None):
@@ -651,8 +651,11 @@ class Bot:
         self.cancel_orders_conditionally(side, sym, order_time, cancel_time)
 
     def cancel_single_order(self, id):
-        self.portfolio.auth.cancel_order(id)
-        sleep(PRIVATE_SLEEP)
+        try:
+            self.portfolio.auth.cancel_order(id)
+            sleep(PRIVATE_SLEEP)
+        except:
+            print('Cannot cancel order, order not found')
     
     def get_side_depedent_vars(self, side):
         if side == 'buy':
@@ -1310,19 +1313,30 @@ class PSMPredictBot(PSMSpreadBot):
         available = com_wallet.get_amnt_available('buy')
         if available > QUOTE_ORDER_MIN:
             for sym in self.place_holder_orders.keys():
-                order = self.place_holder_orders[sym]
+                order = self.place_holder_orders[sym]['buy']
+                # Skip if there is no order
+                if order is None: continue
+
+                # Setup order variables
                 nominal_price = order['price']
                 nominal_size = order['size']
                 wallet = self.portfolio.wallets[sym]
                 current_price = wallet.product.get_top_order('bids')
+
+                # Determine whether the price is low enough, if so set the limit and stop prices
                 if current_price < nominal_price * (1-STOP_SPREAD):
                     limit_price = current_price * (1 + STOP_SPREAD)
                     stop_price = current_price * (1 + STOP_SPREAD/2)
                 else:
                     continue
+
+                # Scalae the size based on the new price
                 size = ( nominal_price * nominal_size ) / limit_price
+                # Only buy the determined size if it's less than available, else buy all available
                 if size < available:
                     available = size
+
+                #Place the order and print the status
                 order_id = self.place_order(limit_price, 'buy', available, sym, post_only=False, stop_price=stop_price)
                 if order_id is None:
                     print(sym + ' buy Order rejected\n')
@@ -1332,6 +1346,7 @@ class PSMPredictBot(PSMSpreadBot):
 
     def place_order_for_top_currencies(self):
         # Ensure to update portfolio value before running
+        self.update_orders()
         usd_hold = self.portfolio.get_usd_held()
         usd_available = self.portfolio.get_usd_available()
         desired_number_of_currencies = 5 # How many currecies (excluding USD) to hold
@@ -1422,6 +1437,17 @@ class PSMPredictBot(PSMSpreadBot):
                 break
             self.buy_place_holders()
 
+    def emergency_sell(self, id, current_price):
+        order = self.orders.loc[id]
+        corr_order = self.orders.loc[order['corresponding_order']]
+        buy_price = corr_order['price']
+        sym = order['product_id'].split('-')[0]
+        current_spread = calculate_spread(buy_price, current_price)
+        if current_spread < 0.9932:
+            print('Placed emergency sell due to loss')
+            self.cancel_single_order(id)
+        _ = self.place_order(current_price*0.993, 'sell', order['size'], sym, post_only=False, stop_price=current_price*0.9931)
+
     def place_limit_sells(self):
         # Ensure to update portfolio value before running
         for id in self.orders.index:
@@ -1434,7 +1460,6 @@ class PSMPredictBot(PSMSpreadBot):
             # Skip orders that are not relevant
             if (order['side']=='sell') or (filled < wallet.product.base_order_min):
                 continue
-            # TODO figure out how to handle existing sell orders!
             # Determine whether or not all of the filled size is accounted for, if so continue
             already_handled_size = 0
             existing_ids = []
@@ -1633,7 +1658,7 @@ def run_bot(bot_type='psm'):
     # Setup initial variables
     print('Initializing bot')
     if bot_type == 'psm':
-        bot = PSMSpreadBot(api_input, secret_input, passphrase_input)
+        bot = PSMPredictBot(api_input, secret_input, passphrase_input)
     else:
         bot = SpreadBot(api_input, secret_input, passphrase_input)
     bot.portfolio.update_value()
