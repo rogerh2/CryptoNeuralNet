@@ -314,12 +314,9 @@ class Product:
 
         if time_out and stop_price:
             # TODO fix stop order
-            order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str,
-                                                            size=size_str, post_only=post_only, time_in_force='GTT',
-                                                            cancel_after='hour', stop=stop_type)
+            order_info = self.auth_client.place_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, time_in_force='GTT', cancel_after='hour', stop=stop_type, order_type='limit', stop_price=stop_price)
         elif stop_price:
-            order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str,
-                                                            size=size_str, post_only=post_only, stop=stop_type)
+            order_info = self.auth_client.place_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, stop=stop_type, order_type='limit', stop_price=stop_price)
         elif time_out:
             order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, time_in_force='GTT', cancel_after='hour')
         else:
@@ -1355,11 +1352,11 @@ class PSMPredictBot(PSMSpreadBot):
         no_viable_trade = False
 
         # Cancel bad buy orders before continuing
+        self.cancel_old_orders()
         if top_syms is None:
             no_viable_trade = True
             top_syms = self.symbols  # If no viable trades are found then allow any symbol to remain
         if usd_hold > QUOTE_ORDER_MIN:
-            self.cancel_old_orders()
             sleep(PRIVATE_SLEEP)
 
         # Check available cash after canceling the non_optimal buy orders and place the next order
