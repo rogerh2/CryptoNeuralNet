@@ -1273,6 +1273,15 @@ class PSMPredictBot(PSMSpreadBot):
             new_row.append(place_time)
             self.orders.loc[id] = new_row
 
+    def cancel_single_order(self, id, remove_index=False):
+        try:
+            self.portfolio.auth.cancel_order(id)
+            sleep(PRIVATE_SLEEP)
+            if remove_index:
+                self.orders.drop(id)
+        except:
+            print('Cannot cancel order, order not found')
+
     def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None):
         if side == 'sell':
             # For sell orders remove if the are no longer in the books
@@ -1373,6 +1382,7 @@ class PSMPredictBot(PSMSpreadBot):
                     if i == 9:
                         print(sym + ' order id ' + order_id + ' did not save')
                     self.place_holder_orders[sym]['buy'] = None
+                    com_wallet.update_value()
                     available = com_wallet.get_amnt_available('buy')
 
     def place_order_for_top_currencies(self):
@@ -1510,10 +1520,10 @@ class PSMPredictBot(PSMSpreadBot):
                     existing_prices.append(order_dat['price'])
             if len(existing_ids) > 0:
                 if len(existing_ids) > 1: # If there is more than one sell order cancel them and consolidate
-                    for order_id in existing_ids: self.cancel_single_order(order_id)
+                    for order_id in existing_ids: self.cancel_single_order(order_id, remove_index=True)
                 elif (np.abs(already_handled_size-filled) >= 2*wallet.product.crypto_res) or (np.abs(existing_prices[0]-current_price) >= 0.003*current_price):
                     # If the price has moved out of bounds or the existing orders do not account for the entire value
-                    for order_id in existing_ids: self.cancel_single_order(order_id)
+                    for order_id in existing_ids: self.cancel_single_order(order_id, remove_index=True)
                 else: # If an order already exists and meets the criteria then continue
                     continue
 
@@ -1529,6 +1539,7 @@ class PSMPredictBot(PSMSpreadBot):
                 else:
                     limit_price = current_price * (1 - STOP_SPREAD)
                     stop_price = current_price * (1 - STOP_SPREAD)
+            wallet.update_value()
             available = wallet.get_amnt_available('sell')
             if available > filled: # Only sell for this order
                 available = filled
