@@ -51,7 +51,7 @@ SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
 MIN_SPREAD = 2.011 # This is the minnimum spread before a trade can be made
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
-MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell pair
+MIN_PROFIT = 0.002 # This is the minnimum value (net profit) to get per buy-sell pair
 STOP_SPREAD = 0.002 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
@@ -1274,13 +1274,15 @@ class PSMPredictBot(PSMSpreadBot):
             self.orders.loc[id] = new_row
 
     def cancel_single_order(self, id, remove_index=False):
-        try:
-            self.portfolio.auth.cancel_order(id)
-            sleep(PRIVATE_SLEEP)
-        except:
-            print('Cannot cancel order, order not found')
-        if remove_index:
+        response = self.portfolio.auth.cancel_order(id)
+        sleep(PRIVATE_SLEEP)
+        if type(response) == dict:
+            response = dict['message']
+            print('Cannot cancel order due to ' + response)
+            return False
+        elif remove_index:
             self.orders = self.orders.drop(id)
+            return True
 
     def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None):
         if side == 'sell':
@@ -1484,13 +1486,15 @@ class PSMPredictBot(PSMSpreadBot):
         sym = order['product_id'].split('-')[0]
         # Check if the prices has fallen too far
         current_spread = calculate_spread(buy_price, current_price)
-        if current_spread < 0.932:
+        if current_spread < 0.952:
             # Find if any live sells that exist for this order and cancel them
             for sell_id in self.orders.index:
                 if self.orders.loc[sell_id]['corresponding_order'] == id:
-                    self.cancel_single_order(sell_id, remove_index=True)
-            print('Placed emergency stop loss for ' + sym + ' due to losses beyond 7%')
-            _ = self.place_order(buy_price*0.93, 'sell', order['size'], sym, post_only=False, stop_price=buy_price*0.931)
+                    did_cancel = self.cancel_single_order(sell_id, remove_index=True)
+                    if did_cancel:
+                        self.orders.at[id, 'corresponding_order'] = self.orders.loc[id]['filled_size']
+            print('Placed emergency stop loss for ' + sym + ' due to losses beyond 5%')
+            _ = self.place_order(buy_price*0.95, 'sell', order['size'], sym, post_only=False, stop_price=buy_price*0.951)
             # Don't add the order to the tracker. It can only be cancelled by a human
 
 

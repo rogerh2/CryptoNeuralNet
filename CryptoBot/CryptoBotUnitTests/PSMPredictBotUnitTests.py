@@ -147,6 +147,8 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
 
         self.assertNotIn(sell_order_id, bot.orders.index, 'sell order was not cancelled')
         bot.update_orders()
+        self.assertNotIn(sell_order_id, bot.orders.index, 'buy order was not cancelled')
+        bot.update_orders()
         self.assertTrue(len(list(bot.portfolio.auth.get_orders())) == 1)
 
     def test_does_place_non_stop_limit_orders(self):
