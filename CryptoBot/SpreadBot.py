@@ -55,7 +55,7 @@ MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell
 STOP_SPREAD = 0.002 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 57 # This is the value that will trigger the bot to stop trading
+MIN_PORTFOLIO_VALUE = 330 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -1277,10 +1277,10 @@ class PSMPredictBot(PSMSpreadBot):
         try:
             self.portfolio.auth.cancel_order(id)
             sleep(PRIVATE_SLEEP)
-            if remove_index:
-                self.orders.drop(id)
         except:
             print('Cannot cancel order, order not found')
+        if remove_index:
+            self.orders = self.orders.drop(id)
 
     def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None):
         if side == 'sell':
@@ -1480,24 +1480,37 @@ class PSMPredictBot(PSMSpreadBot):
 
     def emergency_sell(self, id, current_price):
         order = self.orders.loc[id]
-        corr_order = self.orders.loc[order['corresponding_order']]
-        buy_price = corr_order['price']
+        buy_price = order['price']
         sym = order['product_id'].split('-')[0]
+        # Check if the prices has fallen too far
         current_spread = calculate_spread(buy_price, current_price)
-        if current_spread < 0.9932:
-            print('Placed emergency sell due to loss')
-            self.cancel_single_order(id)
-        _ = self.place_order(current_price*0.993, 'sell', order['size'], sym, post_only=False, stop_price=current_price*0.9931)
+        if current_spread < 0.932:
+            # Find if any live sells that exist for this order and cancel them
+            for sell_id in self.orders.index:
+                if self.orders.loc[sell_id]['corresponding_order'] == id:
+                    self.cancel_single_order(sell_id, remove_index=True)
+            print('Placed emergency stop loss for ' + sym + ' due to losses beyond 7%')
+            _ = self.place_order(buy_price*0.93, 'sell', order['size'], sym, post_only=False, stop_price=buy_price*0.931)
+            # Don't add the order to the tracker. It can only be cancelled by a human
+
 
     def place_limit_sells(self):
         # Ensure to update portfolio value before running
-        for id in self.orders.index:
+
+        order_index = list(self.orders.index)
+        for id in order_index:
+
+            if id not in self.orders.index:
+                continue
             order = self.orders.loc[id]
             sym = order['product_id'].split('-')[0]
             wallet = self.portfolio.wallets[sym]
             filled = order['filled_size']
             if (order['side']=='sell'):
                 continue
+            current_price = wallet.product.get_top_order('bids')
+            # Check if the currency has fallen a signifigant amount
+            self.emergency_sell(id, current_price)
             corresponding_size = float(order['corresponding_order'])
             if corresponding_size:
                 filled -= corresponding_size # Account for already completed sells
@@ -1509,7 +1522,6 @@ class PSMPredictBot(PSMSpreadBot):
             already_handled_size = 0
             existing_ids = []
             existing_prices = []
-            current_price = wallet.product.get_top_order('bids')
 
             # Loop through current orders to find the ones that were to handle this buy
             for order_id in self.orders.index:
