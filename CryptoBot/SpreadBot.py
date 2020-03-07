@@ -591,7 +591,7 @@ class Bot:
     def update_min_spread(self, mkr_fee, tkr_fee=0):
         global MIN_SPREAD
         global MAX_LIMIT_SPREAD
-        MIN_SPREAD = 1 + 2 * mkr_fee + MIN_PROFIT + STOP_SPREAD
+        MIN_SPREAD = 1 + 2 * mkr_fee + MIN_PROFIT
         MAX_LIMIT_SPREAD = 1 + 2 * tkr_fee + MIN_PROFIT + STOP_SPREAD
         self.settings.write_setting_to_file('minnimum_spread', MIN_SPREAD)
 
@@ -1417,8 +1417,8 @@ class PSMPredictBot(PSMSpreadBot):
         num_orders = len(top_syms)
         num_currencies_to_loop = np.min(np.array([len(top_syms) + 1, desired_number_of_currencies + 1]))
         # Update fee rate
-        fee_rate, tkr_fee = self.portfolio.get_fee_rate()
-        self.update_min_spread(tkr_fee)
+        mkr_fee, tkr_fee = self.portfolio.get_fee_rate()
+        self.update_min_spread(mkr_fee, tkr_fee=tkr_fee)
 
         for ind in range(1, num_currencies_to_loop):
             i = num_orders - ind
@@ -1477,7 +1477,7 @@ class PSMPredictBot(PSMSpreadBot):
                     continue
 
                 # Adjust the size to account for the fee rate
-                size = size / (1 + fee_rate)
+                size = size / (1 + tkr_fee)
 
                 # Place order
                 self.place_order_for_nth_currency(buy_price, sell_price, wallet, size, std, mu, top_sym)
