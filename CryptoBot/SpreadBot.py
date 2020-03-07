@@ -588,7 +588,7 @@ class Bot:
                 top_order = self.portfolio.wallets[sym].product.get_top_order(side)
                 self.current_price[sym][side] = top_order
 
-    def update_min_spread(self, mkr_fee, tkr_fee=0):
+    def update_min_spread(self, mkr_fee, tkr_fee=0.0):
         global MIN_SPREAD
         global MAX_LIMIT_SPREAD
         MIN_SPREAD = 1 + 2 * mkr_fee + MIN_PROFIT
