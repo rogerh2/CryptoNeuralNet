@@ -98,22 +98,28 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
         sym = 'BTC'
         size = 1
         buy_price = 200000
+        spread = 2
+        t = time()
         bot = PSMPredictBot(self.api_key, self.secret_key, self.passphrase, order_csv_path=CSV_PATH,
                             is_sandbox_api=True, syms=('BTC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP'))
-        bot.place_holder_orders[sym]['buy'] = {'price':buy_price, 'size':size, 'time':time()}
+        wallet = bot.portfolio.wallets[sym]
+        bot.place_order_for_nth_currency(buy_price, buy_price*spread, wallet, size, 1, 1, sym)
         bot.buy_place_holders()
         bot.update_orders()
 
         csv_df = pd.read_csv(CSV_PATH, index_col=0)
         self.assertTrue(len(csv_df.index) == 1, 'Buy order did not save')
+        np.testing.assert_almost_equal(csv_df.iloc[0]['size']*csv_df.iloc[0]['price'], size*buy_price, 2*bot.portfolio.wallets[sym].product.crypto_res, 'buy order placed with either incorrect size or price')
+        self.assertEqual(csv_df.iloc[0]['spread'], spread, 'buy order placed with incorrect spread')
+        self.assertIsNotNone(csv_df.iloc[0]['time'], 'buy order placed without time')
 
     def test_does_up_sell_price_when_out_of_bounds(self):
         # TODO finish this test
         # Setup initial variables
         sym = 'BTC'
         size = 1
-        buy_price = 20000
-        recorded_buy_price = 1000
+        buy_price = 20000 # This price ensures the buy order goes through
+        recorded_buy_price = 500 # This is the price that will be used for the test
         sell_price = 1000
         sell_stop_price = 1100
         bot = PSMPredictBot(self.api_key, self.secret_key, self.passphrase, order_csv_path=CSV_PATH,
@@ -121,12 +127,31 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
 
         # Place buy order
         buy_order_id = bot.place_order(buy_price, 'buy', size, sym, post_only=False)
-        bot.add_order(buy_order_id, sym, 'buy', time(), 0)
+        bot.add_order(buy_order_id, sym, 'buy', time(), 0, spread=2)
         bot.update_orders()
+        bot.orders.at[buy_order_id, 'price'] = recorded_buy_price
 
         # Place initial sell order
-        sell_order_id = bot.place_order(sell_price, 'sell', size, sym, post_only=False, stop_price=sell_stop_price)
-        bot.add_order(sell_order_id, sym, 'sell', time(), buy_order_id, refresh=False)
+        sell_order_id = bot.place_sell_order(sym, sell_price, 100, bot.portfolio.wallets[sym], 100, buy_order_id, order_type='stop limit', stop=sell_stop_price)
+        order = bot.portfolio.auth.get_order(sell_order_id)
+        self.assertEqual(order['stop'], 'loss', 'Bot did not place stop loss order')
+        bot.update_orders()
+        bot.orders.at[buy_order_id, 'price'] = recorded_buy_price
+
+        # Update the orders
+        csv_df = pd.read_csv(CSV_PATH, index_col=0)
+        self.assertIn(sell_order_id, csv_df.index, 'Bot stop loss order did not save')
+
+        # Test to see if the bot ups the price accordingly
+        bot.place_limit_sells()
+        bot.update_orders()
+        csv_df = pd.read_csv(CSV_PATH, index_col=0)
+        self.assertIn(buy_order_id, csv_df.index, 'Bot stop loss order did not save')
+        sell_order_price = csv_df.iloc[1]['price']
+        self.assertGreater(sell_order_price, sell_price)
+        self.assertNotIn(sell_order_id, csv_df.index)
+
+
 
     def test_does_emergency_sell(self):
         sym = 'BTC'
@@ -147,24 +172,24 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
 
         self.assertNotIn(sell_order_id, bot.orders.index, 'sell order was not cancelled')
         bot.update_orders()
-        self.assertNotIn(sell_order_id, bot.orders.index, 'buy order was not cancelled')
+        self.assertNotIn(buy_order_id, bot.orders.index, 'buy order was not cancelled')
         bot.update_orders()
         self.assertTrue(len(list(bot.portfolio.auth.get_orders())) == 1)
 
     def test_does_place_non_stop_limit_orders(self):
         sym = 'BTC'
         size = 1
-        buy_price = 20000
         desired_spread = 1.0085
         bot = PSMPredictBot(self.api_key, self.secret_key, self.passphrase, order_csv_path=CSV_PATH,
                             is_sandbox_api=True)
+        buy_price = 1.01*bot.portfolio.wallets[sym].product.get_top_order('bids')
 
         # Place buy order
         buy_order_id = bot.place_order(buy_price, 'buy', size, sym, post_only=False)
         bot.add_order(buy_order_id, sym, 'buy', time(), 0, spread=desired_spread)
         bot.update_orders()
         csv_df = pd.read_csv(CSV_PATH, index_col=0)
-        test_spread = csv_df[buy_order_id]['spread']
+        test_spread = csv_df.loc[buy_order_id]['spread']
         self.assertEqual(test_spread, desired_spread, 'Spread size did not save properly')
 
         # Place sell orders
@@ -172,17 +197,15 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
         bot.update_orders()
         csv_df = pd.read_csv(CSV_PATH, index_col=0)
         sell_id = csv_df.index[1]
-        np.testing.assert_almost_equal(buy_price*desired_spread, csv_df[sell_id]['price'], 2*bot.portfolio.wallets[sym].product.crypto_res)
+        np.testing.assert_almost_equal(buy_price*desired_spread, csv_df.loc[sell_id]['price'], 2*bot.portfolio.wallets[sym].product.crypto_res)
 
 
     def tearDown(self):
         # Remove any orders placed on the book
         api_base = 'https://api-public.sandbox.pro.coinbase.com'
         auth_client = AuthenticatedClient(self.api_key, self.secret_key, self.passphrase, api_url=api_base)
-        orders = auth_client.get_orders()
-        all_ids = [x['id'] for x in orders]
         auth_client.cancel_all('BTC-USD')
-        df = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time'])
+        df = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time', 'spread'])
         df.to_csv(CSV_PATH)
 
 
