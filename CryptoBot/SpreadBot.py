@@ -1281,7 +1281,7 @@ class PSMPredictBot(PSMSpreadBot):
         response = self.portfolio.auth.cancel_order(id)
         sleep(PRIVATE_SLEEP)
         if type(response) == dict:
-            response = dict['message']
+            response = response['message']
             print('Cannot cancel order due to ' + response)
             return False
         elif remove_index:
