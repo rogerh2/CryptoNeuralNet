@@ -1572,7 +1572,7 @@ class PSMPredictBot(PSMSpreadBot):
             if len(existing_ids) > 0:
                 if len(existing_ids) > 1: # If there is more than one sell order cancel them and consolidate
                     for order_id in existing_ids: self.cancel_single_order(order_id, remove_index=True)
-                elif calculate_spread(buy_price, existing_prices[0]) <= MAX_LIMIT_SPREAD: # Don't cancel fixed limit orders
+                elif existing_prices[0] > current_price: # Don't cancel fixed limit orders
                     continue
                 elif (np.abs(already_handled_size-filled) >= 2*wallet.product.crypto_res) or (np.abs(existing_prices[0]-current_price) >= 0.001*current_price):
                     # If the price has moved out of bounds or the existing orders do not account for the entire value
