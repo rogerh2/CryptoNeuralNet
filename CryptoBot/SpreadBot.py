@@ -56,7 +56,7 @@ MIN_PROFIT = 0.002 # This is the minnimum value (net profit) to get per buy-sell
 STOP_SPREAD = 0.002 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 330 # This is the value that will trigger the bot to stop trading
+MIN_PORTFOLIO_VALUE = 300 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -1158,7 +1158,18 @@ class PSMSpreadBot(SpreadBot):
         if mu is None:
             return None, None, None, None, None
         mu *= mu_mult
-        sell_ind = np.min(np.array([np.argmax(predicted_evolution), NEAR_PREDICTION_LEN])) # Only buy currencies if you predict that the mean will be soon
+        sell_ind = np.argmax(predicted_evolution) # Only buy currencies if you predict that the mean will be soon
+        if np.argmin(predicted_evolution) > np.argmax(predicted_evolution):
+            # don't buy if the price might fall lower, as a sell is not garunteed
+            return None, None, None, None, None
+        fall_len=90
+        data_fit = np.polyfit(np.arange(0, fall_len), self.raw_data[sym][-fall_len::], 1)
+        mean_mvt = data_fit[0]
+        residual = self.raw_data[sym][-fall_len::] - np.polyval(data_fit, np.arange(0, fall_len))
+        std_err = np.std(residual)/(2*fall_len)
+        if mean_mvt < -std_err:
+            # avoid currencies that have been falling for the past hour (outside of random err)
+            return None, None, None, None, None
         if side == 'buy':
             if sell_ind > 0:
                 mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
@@ -1336,7 +1347,10 @@ class PSMPredictBot(PSMSpreadBot):
             order_time = float(self.orders.loc[id]['time'])
             if self.orders.loc[id]['side'] == 'sell':
                 continue
+            elif self.orders.loc[id]['filled_size']==self.orders.loc[id]['size']:
+                continue
             elif (time() - order_time) > TRADE_LEN * 60:
+                self.orders.at[id,'size'] = self.orders.loc[id]['filled_size']
                 self.cancel_single_order(id)
 
     def place_order_for_nth_currency(self, buy_price, sell_price, wallet, size, std, mu, top_sym):
@@ -1492,14 +1506,14 @@ class PSMPredictBot(PSMSpreadBot):
         sym = order['product_id'].split('-')[0]
         # Check if the prices has fallen too far
         current_spread = calculate_spread(buy_price, current_price)
-        if current_spread < 0.952:
+        if current_spread < 0.922:
             # Find if any live sells that exist for this order and cancel them
             for sell_id in self.orders.index:
                 if self.orders.loc[sell_id]['corresponding_order'] == id:
                     did_cancel = self.cancel_single_order(sell_id, remove_index=True)
             print('Placed emergency stop loss for ' + sym + ' due to losses beyond 5%')
             self.orders.at[id, 'corresponding_order'] = self.orders.loc[id]['filled_size']
-            _ = self.place_order(buy_price*0.95, 'sell', order['size'], sym, post_only=False, stop_price=buy_price*0.951)
+            _ = self.place_order(buy_price*0.92, 'sell', order['size'], sym, post_only=False, stop_price=buy_price*0.921)
             # Don't add the order to the tracker. It can only be cancelled by a human
 
     def place_sell_order(self, sym, limit_price, available, wallet, spread, buy_id, order_type='limit', stop=None):
