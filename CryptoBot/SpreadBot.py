@@ -52,6 +52,7 @@ SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
 MIN_SPREAD = 0.082 # This is the minnimum spread before a trade can be made
 MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders are utilized
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
+TRAIN_LEN = 480
 MIN_PROFIT = 0.002 # This is the minnimum value (net profit) to get per buy-sell pair
 STOP_SPREAD = 0.002 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
@@ -1027,7 +1028,7 @@ class PSMSpreadBot(SpreadBot):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
-        t_offset_str = offset_current_est_time(120, fmt=self.fmt)
+        t_offset_str = offset_current_est_time(TRAIN_LEN, fmt=self.fmt)
         cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
         for sym in syms:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -1054,7 +1055,7 @@ class PSMSpreadBot(SpreadBot):
         # This method sets the propogator initial values to the most recent price
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
-        t_offset_str = offset_current_est_time(120, fmt=self.fmt)
+        t_offset_str = offset_current_est_time(TRAIN_LEN, fmt=self.fmt)
         cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
         for sym in self.symbols:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -1572,7 +1573,7 @@ class PSMPredictBot(PSMSpreadBot):
             if len(existing_ids) > 0:
                 if len(existing_ids) > 1: # If there is more than one sell order cancel them and consolidate
                     for order_id in existing_ids: self.cancel_single_order(order_id, remove_index=True)
-                elif existing_prices[0] > current_price: # Don't cancel fixed limit orders
+                elif order['spread'] <= MAX_LIMIT_SPREAD: # Don't cancel fixed limit orders
                     continue
                 elif (np.abs(already_handled_size-filled) >= 2*wallet.product.crypto_res) or (np.abs(existing_prices[0]-current_price) >= 0.001*current_price):
                     # If the price has moved out of bounds or the existing orders do not account for the entire value
@@ -1829,7 +1830,7 @@ def run_bot(bot_type='psm'):
 
 
 if __name__ == "__main__":
-    run_type = 'run'
+    run_type = 'other'
     if run_type == 'run':
         run_bot()
     elif run_type == 'other':
