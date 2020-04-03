@@ -257,7 +257,7 @@ class SystemPropogator:
             if i < (self.N - 1):
                 omega_plus = omegas[i+1]
             else:
-                omega_plus = 0
+                omega_plus = omegas[0]
             self.polynomials[t0].append(Polynomial(x0, y0, zetas[i], omegas[i], omega_plus))
 
     def t_max(self):
@@ -273,13 +273,22 @@ class SystemPropogator:
             prev_polynomial = np.zeros(5)
             if next_poly is None:
                 prev_polynomial = prev_poly.polynomial()
+                next_polynomial = polynomial_list[0].polynomial()
+                x_minus = prev_polynomial[2]
+                x_plus = next_polynomial[2]
             elif prev_poly is None:
                 next_polynomial = next_poly.polynomial()
+                prev_polynomial = polynomial_list[-1].polynomial()
+                x_minus = prev_polynomial[1]
+                x_plus = next_polynomial[1]
             else:
                 prev_polynomial = prev_poly.polynomial()
                 next_polynomial = next_poly.polynomial()
-            x_minus = prev_polynomial[2] # x_minus is indexed by 2 because prev_polynomial would have already contain the next order
-            x_plus = next_polynomial[1]
+                x_minus = prev_polynomial[2]
+                x_plus = next_polynomial[1]
+
+            # x_minus = prev_polynomial[2] # x_minus is indexed by 2 because prev_polynomial would have already contain the next order
+
 
             # Generate the next order
             poly.generate_next_order(x_plus, x_minus)
@@ -375,11 +384,23 @@ class SystemPropogator:
 
         return x, t_fit
 
+    def get_x_and_y_at_t_for_n(self, t, n):
+        # Find the polynomial that you should evaluate
+        polynomial_keys = np.array(list(self.polynomials.keys()))
+        valid_keys = polynomial_keys[polynomial_keys <= t]
+        t_key = np.max(valid_keys)
+        polynomial = self.polynomials[t_key][n]
+
+        x, y = polynomial.get_x_and_y_at_t(t-t_key)
+
+        return x, y
+
     def reset(self, x0s=None, y0s=None):
         # Erase the past data for repropagation
         self.polynomials = {self.t0: []}
         self.N = len(self.omegas)
         omegas = self.omegas
+        zetas = self.zetas
         if not x0s is None:
             self.x0s = x0s
         if not y0s is None:
@@ -392,7 +413,7 @@ class SystemPropogator:
                 omega_plus = omegas[i + 1]
             else:
                 omega_plus = 0
-            self.polynomials[self.t0].append(Polynomial(x0, y0, self.zetas[i], omegas[i], omega_plus))
+            self.polynomials[self.t0].append(Polynomial(x0, y0, zetas[i], omegas[i], omega_plus))
 
     def simulate(self, data_sets, t, step_size, poly_order, eval_lens=None, del_len=10):
         # This method evaluates the polynomials at each point in eval_lens then puts them together in a continuous way
@@ -566,7 +587,7 @@ class MultiFrequencySystem:
         eval_t = len(self.data[0])
         for j in range(0, len(self.data)):
             data = self.data[j]
-            xy_coeff = np.polyfit(np.arange(0, len(data[-11::])), data[-11::], 1)
+            xy_coeff = np.polyfit(np.arange(0, len(data[-30::])), data[-30::], 1)
             if x0s is None:
                 x0 = np.polyval(xy_coeff, 11)
             else:
@@ -637,7 +658,6 @@ class MultiFrequencySystem:
     def evaluate_nth_polynomial(self, time_arr, step_size, polynomial_order, n=None, verbose=True):
         x_fit = None
         for system_fit in self.propogators:
-            # TODO use multiprocessing to evaluate all polynomials at once
             if x_fit is None:
                 x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
                                                                   verbose=verbose)
@@ -662,8 +682,25 @@ class MultiFrequencySystem:
 
         return x_fit, t_fit
 
-    def err(self, step_size, order, n, coeff, shift, verbose=False):
-        forward_time = np.arange(0, len(self.data[0]))
+    def evaluate_nth_t_reversed_derivatives(self, time_arr, step_size, polynomial_order, n=None, verbose=True):
+        x_fit = None
+        for system_fit in self.t_reversed_propogators:
+            # TODO use multiprocessing to evaluate all polynomials at once
+            if x_fit is None:
+                x_fit, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                  verbose=verbose)
+            else:
+                x_fit_omega, t_fit = system_fit.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=n,
+                                                                        verbose=verbose)
+                x_fit += x_fit_omega
+
+        return x_fit, t_fit
+
+    def err(self, step_size, order, n, coeff, shift, verbose=False, data_len=None):
+        if data_len:
+            forward_time = np.arange(0, data_len)
+        else:
+            forward_time = np.arange(0, len(self.data[0]))
         xr_fit, tr_fit = self.evaluate_nth_t_reversed_polynomial(forward_time, step_size, order, n=n, verbose=verbose)
         x = np.flip(xr_fit, 0)
         real_data = self.data[n-1][-int(np.max(tr_fit)+1)::]
@@ -671,7 +708,7 @@ class MultiFrequencySystem:
 
         return err, x, real_data
 
-    def get_total_err_from_x0_and_y0(self, step_size, order, coeff_list, shift_list, x0s_guess, y0s_guess, verbose=False):
+    def get_total_err_from_x0_and_y0(self, step_size, order, coeff_list, shift_list, x0s_guess, y0s_guess, data_len=None, verbose=False):
         self.reset(x0s_guess, y0s_guess)
         err_tot = 0
         x=None
@@ -679,14 +716,53 @@ class MultiFrequencySystem:
         for n in range(1, len(self.data)+1):
             coeff = coeff_list[n-1]
             shift = shift_list[n-1]
-            progress_printer(self.propogators[0].N, n-1, tsk='Evaluating Polynomials for Error Estimation')
-            err_partial, x, dat = self.err(step_size, order, n, coeff, shift, verbose=not (n-1))
+            if verbose:
+                err_partial, x, dat = self.err(step_size, order, n, coeff, shift, verbose=not (n-1), data_len=data_len)
+                progress_printer(self.propogators[0].N, n-1, tsk='Evaluating Polynomials for Error Estimation')
+            else:
+                err_partial, x, dat = self.err(step_size, order, n, coeff, shift, data_len=data_len)
             err_tot += err_partial
 
         return err_tot / (len(self.data)+1), x, dat
 
-    def optimize_x_and_y(self, step_size, order, coefficients, shifts, x0s_guess, y0s_guess, max_num_steps=10, min_alpha=0, verbose=False, plot=False):
-        last_err, x, dat= self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose)
+    def get_next_guess_for_x0_and_y0(self, step_size, order, n, coeff, shift):
+        _, guess, ans = self.err(step_size, order, n, coeff, shift)
+        eval_len = int(len(guess)/2) - 1
+        eval_ans = ans[0:eval_len]
+        err_fun = lambda x: np.std(coeff * eval_ans - coeff * x) / np.mean(coeff * eval_ans + shift)
+        err_list = np.array([])
+        # Shift the propogated polynomial to find where it best fits the true data, then use that for your x0 and y0
+        for i in range(0, eval_len):
+            err_list = np.append(err_list, err_fun(guess[i:i+eval_len]))
+        opt_t = np.argmin(guess)
+
+        # Evaluate all the propogators to find the total x0 and y0
+        x0_guess = 0
+        y0_guess = 0
+        for i in range(0, len(self.t_reversed_propogators)):
+            propogator = self.t_reversed_propogators[i]
+            x0_guess_current, y0_guess_current = propogator.get_x_and_y_at_t_for_n(opt_t, n)
+            x0_guess += x0_guess_current
+            y0_guess += y0_guess_current
+
+        return x0_guess, y0_guess
+
+    def get_next_guess_for_x0s_and_y0s(self, step_size, order, coefficients, shifts):
+
+        xs = np.array([])
+        ys = np.array([])
+
+        for i in range(0, self.t_reversed_propogators[0].N):
+            x_guess, y_guess = self.get_next_guess_for_x0_and_y0(step_size, order, i, coefficients[i], shifts[i])
+            xs = np.append(xs, x_guess)
+            ys = np.append(ys, y_guess)
+
+        return xs, ys
+
+
+
+    def optimize_x_and_y(self, step_size, order, coefficients, shifts, x0s_guess, y0s_guess, max_num_steps=10, min_alpha=0, verbose=False, plot=False, data_len=None):
+        last_err, x, dat= self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose, data_len=data_len)
         if plot:
             fig = plt.figure()
             ax = fig.add_subplot(111)
@@ -700,7 +776,8 @@ class MultiFrequencySystem:
         for i in range(0, max_num_steps):
             x0s_guess = x0s + (np.random.rand(len(x0s_guess)) - 0.5)
             y0s_guess = y0s + (np.random.rand(len(x0s_guess)) - 0.5) / len(dat)
-            err, x, dat = self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose)
+            # x0s_guess, y0s_guess = self.get_next_guess_for_x0s_and_y0s(step_size, order, coefficients, shifts)
+            err, x, dat = self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose, data_len=data_len)
             if plot:
                 line.set_ydata(x)
                 plt.title('Iteration: ' + str(i + 1) + ', Error: ' + num2str(err, 4))
@@ -708,7 +785,7 @@ class MultiFrequencySystem:
                 plt.pause(0.01)
             if not np.isnan(err):
                 alpha = err / last_err
-                u = np.random.random()
+                u = np.random.random()#2*alpha#
                 if alpha < min_alpha:
                     break
                 elif alpha < u:
@@ -728,6 +805,10 @@ def create_multifrequency_propogator_from_data(raw_data_list, sym_list):
     shift_list = [np.mean(x) for x in concat_data_list]
     system_fit = MultiFrequencySystem(data_list, sym_list)
     system_fit.create_propogator(freq_num=10)
+    # x_list, y_list, _ = system_fit.find_xs_and_ys(5)
+    # x0s = [np.sum(x) for x in x_list]
+    # y0s = [np.sum(x) for x in y_list]
+    # system_fit.optimize_x_and_y(2, 2, coeff_list, shift_list, x0s, y0s, max_num_steps=10)
 
     return system_fit, coeff_list, shift_list
 
@@ -761,9 +842,10 @@ def create_propogator_from_data(raw_data_list, initial_t=0):
 
 if __name__ == "__main__":
     use_saved_data = True
-    sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC']
+    sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH',
+                'REP', 'BTC', 'KNC']
     if not use_saved_data:
-        cc = CryptoCompare(date_from='2020-01-28 10:00:00 EST', date_to='2020-01-29 10:57:00 EST', exchange='Coinbase')
+        cc = CryptoCompare(date_from='2020-03-22 10:00:00 EST', date_to='2020-03-24 10:57:00 EST', exchange='Coinbase')
         raw_data_list = []
         for sym in sym_list:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -775,14 +857,14 @@ if __name__ == "__main__":
         pickle.dump(raw_data_list, open("psm_test.pickle", "wb"))
     else:
         raw_data_list = pickle.load(
-            open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ODESolvers/psm_test.pickle", "rb"))
+            open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "rb"))
         data_len = np.min(np.array([len(x) for x in raw_data_list]))
-        concat_data_list = [x[0:data_len] for x in raw_data_list]
+        concat_data_list = [x[660:data_len] for x in raw_data_list]
 
     train_len = 120  # Length of data to be used for training
-    test_len = 120
+    test_len = 30
     t = np.arange(0, test_len)
-    psm_step_size = 0.1
+    psm_step_size = 0.5
     psm_order = 5
     train_list = [x[0:train_len] for x in raw_data_list]
 

@@ -95,7 +95,7 @@ def fourier_transform(data, t, return_type='magnitude'):
 
 def top_N_real_fourier_coefficients(data, t, N):
     a0, a, b, mag, f = fourier_transform(data, t, return_type='all')
-    max_inds = [nth_max_peaks(mag[2::], n) for n  in np.arange(2, N+1)]
+    max_inds = [nth_max_peaks(mag[1::], n) for n  in np.arange(1, N+2)]
     T = np.max(t) - np.min(t)
     omegas = 2 * np.pi * np.array(max_inds) / T
     a_max = a[max_inds]
@@ -146,7 +146,7 @@ def nominal_magnitude(x0, dx0, omega0):
 # This class represents the polynomial for a single mass (mass n)
 class Polynomial:
 
-    def __init__(self, x0, y0, zeta, omega, omega_plus, F=None):
+    def __init__(self, x0, y0, zeta, omega, omega_plus, omega_minus=0, F=None):
         self.poly = [np.array([x0, y0]), np.array([y0])]
         if F is None:
             self.force = None
@@ -157,6 +157,7 @@ class Polynomial:
         self.omega_sq = omega ** 2
         self.omega_plus = omega_plus
         self.omega_plus_sq = omega_plus ** 2
+        self.omega_minus_sq = omega_minus**2
 
     def generate_next_order(self, x_plus, x_minus):
         # y_n' = F_n - 2 * zeta_n * omega_n * y_n - omega_n^2 * ( x_n - x_(n-1)) - omega_(n+1)^2 * (x_n - x_(n+1))
@@ -181,11 +182,11 @@ class Polynomial:
         if (F is not None) and (np.abs(self.zeta) > 0): #If F and zeta are non zero
             y_next = ( F[n] - 2 * self.zeta * self.omega * y[-1] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
         elif (F is None) and (np.abs(self.zeta) > 0): #If F is zero and zeta is non zero
-            y_next = (2 * self.zeta * self.omega * y[-1] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
+            y_next = (2 * self.zeta * self.omega * y[-1] + ( omega_plus_sq * x_plus + omega_sq * x_minus) - ( omega_sq + omega_plus_sq) * x) / (n + 1)
         elif (F is not None): #If F nonzero and zeta is zero
             y_next = (F[n] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
         else: #If F and zeta are both zero
-            y_next = (( omega_plus_sq * x_plus + omega_sq * x_minus) - ( omega_sq + omega_plus_sq) * x) / (n + 1)
+            y_next = (omega_plus_sq * (x_plus - x) - omega_sq * (x - x_minus)) / (n + 1)
 
         x_next_next = y_next / (n + 2) # for this particular equation, computing the next x is trivial
 
@@ -248,11 +249,12 @@ class SystemPropogator:
         for i in range(0, self.N):
             x0 = x0s[i]
             y0 = y0s[i]
+            omega_minus = omegas[i-1]
             if i < (self.N - 1):
                 omega_plus = omegas[i+1]
             else:
                 omega_plus = omegas[0]
-            self.polynomials[t0].append(Polynomial(x0, y0, zetas[i], omegas[i], omega_plus))
+            self.polynomials[t0].append(Polynomial(x0, y0, zetas[i], omegas[i], omega_plus, omega_minus=omega_minus))
 
     def t_max(self):
         return np.max(np.array(list(self.polynomials.keys())))
@@ -394,6 +396,7 @@ class SystemPropogator:
         self.polynomials = {self.t0: []}
         self.N = len(self.omegas)
         omegas = self.omegas
+        zetas = self.zetas
         if not x0s is None:
             self.x0s = x0s
         if not y0s is None:
@@ -543,7 +546,7 @@ class SystemIterator:
         zeta = zeta_numerator / zeta_denominator
         # print('omega' + num2str(omega, 3))
         # TODO add zeta back once you get the no damping case working
-        return omega, 0 #zeta
+        return omega, zeta
 
     def update_propogator(self, X_true_poly, order, data_list):
         # Used fixed point iteration to create a new propogator
@@ -555,12 +558,23 @@ class SystemIterator:
 
         for n in range(0, self.propogator.N):
             # poly = np.append(initial_polys[n], X_true_poly[n][2:order+1])
-            current_coeff = X_true_poly[n]
-            omega = self.propogator.omegas[n-1] + (np.random.rand() - 0.5)/50
-            zeta = 0#self.propogator.zetas[n-1] + (np.random.rand() - 0.5)/500
+            # current_coeff = X_true_poly[n]
+            # omega = self.propogator.omegas[n-1] + (np.random.rand() - 0.5)/50
+            # zeta = 0#self.propogator.zetas[n-1] + (np.random.rand() - 0.5)/500
+            if n == self.propogator.N-1:
+                omega, zeta = self.get_next_nth_omega_zeta(n, X=X_true_poly[n], X_next=X_true_poly[0], X_prev=X_true_poly[n-1])
+            else:
+                omega, zeta = self.get_next_nth_omega_zeta(n, X=X_true_poly[n], X_next=X_true_poly[n+1],
+                                                           X_prev=X_true_poly[n - 1])
 
-            x0 = initial_polys[n][1]
-            y0 = initial_polys[n][0]
+            if np.isnan(omega):
+                omega = self.propogator.omegas[n - 1]
+
+            x0 = X_true_poly[n][0]
+            y0 = X_true_poly[n][1]
+
+            # x0 = initial_polys[n][1]
+            # y0 = initial_polys[n][0]
 
             x0s.append(x0)
             y0s.append(y0)
@@ -601,7 +615,8 @@ class SystemIterator:
         propogators = [self.propogator]
         errs = [last_err]
 
-
+        step_size = 0.01
+        order = 10
         for i in range(0, self.max_iter):
             segment_start_ind += propogation_len
             if (segment_start_ind + propogation_len) >= len(t):
@@ -610,7 +625,7 @@ class SystemIterator:
             poly = [np.flip(np.polyfit(np.arange(0, propogation_len), a[segment_start_ind:segment_start_ind+propogation_len], 10), axis=0) for a in x_list]
             input_data = [a[segment_start_ind:segment_start_ind+propogation_len] for a in x_list]
             new_propogator = self.update_propogator(poly, order, input_data)
-            err, x_guess, t_guess = self.compute_system_err(x_list, np.arange(0, propogation_len), step_size, propogation_len, start_i=segment_start_ind, propogator=new_propogator)
+            err, x_guess, t_guess = self.compute_system_err(x_list, np.arange(0, propogation_len), step_size, propogation_len, start_i=segment_start_ind, propogator=new_propogator, psm_order=order)
             line.set_ydata(x_guess)
             line.set_xdata(t_guess + segment_start_ind)
             plt.title('Iteration: ' + str(i + 1) + ', Error: ' + num2str(err, 4))
@@ -667,13 +682,19 @@ class MultiFrequencySystem:
         b_coeffs = []
         for i in range(0, len(poly_list)):
             pfit = poly_list[i]
-            a0_i, a_i, b_i, omega_i = top_N_real_fourier_coefficients(pfit, poly_fit_t, freq_num)
+            periodic_poly_fit_t = poly_fit_t
+            periodic_pfit = pfit
+            for j in range(0, 20):
+                periodic_poly_fit_t = np.append(periodic_poly_fit_t, poly_fit_t + np.max(periodic_poly_fit_t))
+                periodic_pfit = np.append(periodic_pfit, pfit)
+            a0_i, a_i, b_i, omega_i = top_N_real_fourier_coefficients(periodic_pfit, periodic_poly_fit_t, freq_num)
             # sol = evaluate_fourier_coefficients(a0_i, a_i, b_i, omega_i, poly_fit_t)
             # start_pt = evaluate_fourier_coefficients(a0_i, a_i, b_i, omega_i, t[-1])
             # data_set = data[i]
             # plt.plot(poly_fit_t, sol)
             # plt.plot(t[-1], start_pt, 'rx')
             # plt.plot(t, data_set)
+            # plt.plot(poly_fit_t, poly_list[i])
             # plt.show()
             omegas.append(omega_i)
             a0s.append(a0_i)
@@ -694,17 +715,26 @@ class MultiFrequencySystem:
         return score
 
     def find_xs_and_ys_for_single_currency(self, x0, y0, omega_list, a0, a_list, b_list, T):
-        possible_xs = evaluate_fourier_coefficients(a0, a_list, b_list, omega_list, np.arange(0, T, T / 1000))
-        # The possible_ys come from the derivative of the Fourier series
         t_arr = np.arange(0, T, T / 1000)
+        possible_xs = evaluate_fourier_coefficients(a0, a_list, b_list, omega_list, t_arr)
+        # The possible_ys come from the derivative of the Fourier series
         possible_ys = evaluate_fourier_coefficients(0, omega_list * b_list, - omega_list * a_list, omega_list, t_arr)
         x_distance = possible_xs / x0 - 1
         y_distance = possible_ys / y0 - 1
+        # plt.plot(possible_xs)
+        # plt.plot(np.array([0, len(possible_xs)]), np.array([x0, x0]), 'r--')
+        # plt.figure()
+        # plt.plot(possible_ys)
+        # plt.plot(np.array([0, len(possible_ys)]), np.array([y0, y0]), 'r--')
+        # plt.show()
         tot_distance_sq = x_distance**2 + y_distance**2
         best_ind = np.argmin(tot_distance_sq)
         eval_t = t_arr[best_ind]
         x = a0 / 2 + a_list * np.cos(omega_list * eval_t) + b_list * np.sin(omega_list * eval_t)
         y = - omega_list * a_list * np.sin(omega_list * eval_t) + omega_list * b_list * np.cos( omega_list * eval_t)
+        # eval_t = len(self.data[0])
+        # x = a0 / 2 + a_list * np.cos(omega_list * eval_t) + b_list * np.sin(omega_list * eval_t)
+        # y = - omega_list * a_list * np.sin(omega_list * eval_t) + omega_list * b_list * np.cos(omega_list * eval_t)
 
         return x, y
 
@@ -717,13 +747,13 @@ class MultiFrequencySystem:
         eval_t = len(self.data[0])
         for j in range(0, len(self.data)):
             data = self.data[j]
-            xy_coeff = np.polyfit(np.arange(0, len(data[-30::])), data[-30::], 1)
+            xy_coeff = np.polyfit(np.arange(0, len(data[-30::])), data[-30::], 2)
             if x0s is None:
-                x0 = np.polyval(xy_coeff, 11)
+                x0 = np.polyval(xy_coeff, 30)
             else:
                 x0 = x0s[j]
             if y0s is None:
-                y0 = xy_coeff[0]
+                y0 = np.polyval(xy_coeff[0:2], 30)
             else:
                 y0 = y0s[j]
             # Setup the Hamiltonian and IC's
@@ -736,7 +766,7 @@ class MultiFrequencySystem:
     def reset(self, x0s, y0s):
         freq_num = len(self.propogators)
         x_list, y_list, omega_list = self.find_xs_and_ys(freq_num, x0s=x0s, y0s=y0s)
-        for k in range(0, freq_num-1):
+        for k in range(0, freq_num):
             x0s = []
             y0s = []
             for j in range(0, len(self.data)):
@@ -834,9 +864,56 @@ class MultiFrequencySystem:
         xr_fit, tr_fit = self.evaluate_nth_t_reversed_polynomial(forward_time, step_size, order, n=n, verbose=verbose)
         x = np.flip(xr_fit, 0)
         real_data = self.data[n-1][-int(np.max(tr_fit)+1)::]
-        err = np.std(coeff * real_data - coeff * x) / np.mean(coeff * real_data + shift)
+        err = np.sqrt(np.mean((coeff * ((real_data - x)))**2)) / (np.mean(coeff * real_data + shift))
 
         return err, x, real_data
+
+    def set_new_zetas(self, input_zeta_list=None, scale=25):
+        zeta_list = []
+        new_zeta_list = []
+        for k in range(0, len(self.propogators)):
+            propogator = self.propogators[k]
+            t_reversed_propagator = self.t_reversed_propogators[k]
+
+            if input_zeta_list is None:
+                zetas = propogator.zetas
+                zeta_rand = zetas * ((np.random.rand(len(zetas)) - 0.5)) / scale
+                # random1 = (np.random.rand() - 0.5)/scale
+                # random2 = (np.random.rand() - 0.5)/scale
+                # zeta_rand = np.zeros(len(zetas))
+                # zeta_rand[0] = random1
+                # zeta_rand[-1] = random2
+                new_zetas = zetas + zeta_rand
+                zeta_list.append(zetas)
+                new_zeta_list.append(new_zetas)
+            else:
+                new_zetas = input_zeta_list[k]
+
+            propogator.zetas = new_zetas
+            t_reversed_propagator.zetas = -new_zetas
+
+        return zeta_list, new_zeta_list
+
+    def set_new_omegas(self, input_omega_list=None, scale=0.5):
+        omega_list = []
+        new_omega_list = []
+        for k in range(0, len(self.propogators)):
+            propogator = self.propogators[k]
+            t_reversed_propagator = self.t_reversed_propogators[k]
+
+            if input_omega_list is None:
+                omeagas = propogator.omegas
+                omega_rand = omegas * ((np.random.rand(len(omegas)) - 0.5))/scale
+                new_omegas = omeagas + omega_rand
+                omega_list.append(omeagas)
+                new_omega_list.append(new_omegas)
+            else:
+                new_omegas = input_omega_list[k]
+
+            propogator.omegas = new_omegas
+            t_reversed_propagator.omegas = new_omegas
+
+        return omega_list, new_omega_list
 
     def get_total_err_from_x0_and_y0(self, step_size, order, coeff_list, shift_list, x0s_guess, y0s_guess, data_len=None, verbose=False):
         self.reset(x0s_guess, y0s_guess)
@@ -847,10 +924,14 @@ class MultiFrequencySystem:
             coeff = coeff_list[n-1]
             shift = shift_list[n-1]
             progress_printer(self.propogators[0].N, n-1, tsk='Evaluating Polynomials for Error Estimation')
-            err_partial, x, dat = self.err(step_size, order, n, coeff, shift, verbose=not (n-1), data_len=data_len)
+            if verbose:
+                err_partial, x, dat = self.err(step_size, order, n, coeff, shift, verbose=not (n-1), data_len=data_len)
+            else:
+                err_partial, x, dat = self.err(step_size, order, n, coeff, shift, verbose=False,
+                                               data_len=data_len)
             err_tot += err_partial
 
-        return err_tot / (len(self.data)+1), x, dat
+        return np.mean(err_tot), x, dat
 
     def get_next_guess_for_x0_and_y0(self, step_size, order, n, coeff, shift):
         _, guess, ans = self.err(step_size, order, n, coeff, shift)
@@ -886,9 +967,7 @@ class MultiFrequencySystem:
 
         return xs, ys
 
-
-
-    def optimize_x_and_y(self, step_size, order, coefficients, shifts, x0s_guess, y0s_guess, max_num_steps=10, min_alpha=0, verbose=False, plot=False, data_len=None):
+    def optimize_x_and_y(self, step_size, order, coefficients, shifts, x0s_guess, y0s_guess, max_num_steps=10, min_err_del=0.001, verbose=False, plot=False, data_len=None, patience=5):
         last_err, x, dat= self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose, data_len=data_len)
         if plot:
             fig = plt.figure()
@@ -900,26 +979,77 @@ class MultiFrequencySystem:
             plt.pause(0.01)
         x0s = x0s_guess
         y0s = y0s_guess
+        errs = np.array([])
+        xs = []
+        ys = []
+        zetas = []
+        omegas = []
+        all_errors = np.array([])
+        xy_scale = 10
+        zeta_scale = 10
+        omega_scale = 100
+        patience_counter = 0
+
         for i in range(0, max_num_steps):
-            x0s_guess = x0s + (np.random.rand(len(x0s_guess)) - 0.5)
-            y0s_guess = y0s + (np.random.rand(len(x0s_guess)) - 0.5) / len(dat)
+            if (not i%5) and (i > 0):
+                all_errors = np.append(all_errors, last_err)
+                min_err_ind = np.argmin(errs)
+                # if (np.min(errs) / last_err) > 0.99:
+                #     scale_modifier = 1.5
+                #     xy_scale = scale_modifier * xy_scale
+                #     omega_scale = scale_modifier * np.random.rand()
+                #     zeta_scale = scale_modifier * np.random.rand() * zeta_scale
+                err_del = last_err - np.min(errs)
+                last_err = np.min(errs)
+                x0s = xs[min_err_ind]
+                y0s = ys[min_err_ind]
+                # self.set_new_zetas(zetas[min_err_ind])
+                # self.set_new_omegas(omegas[min_err_ind])
+                errs = np.array([last_err])
+                xs = [x0s]
+                ys = [y0s]
+                # zetas = [new_zetas]
+                # omegas = [new_omegas]
+                if err_del < min_err_del:
+                    patience_counter += 1
+                    if patience_counter > patience:
+                        break
+                else:
+                    patience_counter = 0
+                continue
+            x0s_guess = x0s + (np.random.rand(len(x0s_guess)) - 0.5) / xy_scale
+            y0s_guess = y0s + (np.random.rand(len(x0s_guess)) - 0.5) / (xy_scale * len(dat))
+            # old_zetas, new_zetas = self.set_new_zetas(scale=zeta_scale)
+            # old_omegas, new_omegas = self.set_new_omegas(scale=omega_scale)
             # x0s_guess, y0s_guess = self.get_next_guess_for_x0s_and_y0s(step_size, order, coefficients, shifts)
             err, x, dat = self.get_total_err_from_x0_and_y0(step_size, order, coefficients, shifts, x0s_guess, y0s_guess, verbose=verbose, data_len=data_len)
+            errs = np.append(errs, err)
+            xs.append(x0s_guess)
+            ys.append(y0s_guess)
+            # zetas.append(new_zetas)
+            # omegas.append(new_omegas)
             if plot:
                 line.set_ydata(x)
                 plt.title('Iteration: ' + str(i + 1) + ', Error: ' + num2str(err, 4))
                 plt.draw()
                 plt.pause(0.01)
             if not np.isnan(err):
-                alpha = err / last_err
+                alpha = err**2 / last_err**2
                 u = np.random.random()#2*alpha#
-                if alpha < min_alpha:
-                    break
-                elif alpha < u:
+                if alpha < u:
                     x0s = x0s_guess
                     y0s = y0s_guess
                     last_err = err
+                # else:
+                #     self.set_new_zetas(old_zetas)
+                #     self.set_new_omegas(old_omegas)
 
+        if plot:
+            plt.figure()
+            plt.plot(all_errors)
+            plt.title('Training Errors')
+            plt.ylabel('Error')
+            plt.xlabel('Iteration')
         self.reset(x0s, y0s)
 
 if __name__ == "__main__":
@@ -931,7 +1061,7 @@ if __name__ == "__main__":
         use_saved_data = True
         sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC', 'KNC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-03-11 10:00:00 EST', date_to='2020-03-15 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-03-30 10:00:00 EST', date_to='2020-04-01 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -943,7 +1073,7 @@ if __name__ == "__main__":
             pickle.dump(concat_data_list, open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "wb"))
         else:
             concat_data_list = pickle.load(open( "/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "rb" ))
-            concat_data_list = [x[3250::] for x in concat_data_list]
+            concat_data_list = [x[0::] for x in concat_data_list]
 
         data_list = [(x - np.mean(x)) / (np.max(x) - np.min(x)) for x in concat_data_list]
         coeff_list = [(np.max(x) - np.min(x)) for x in concat_data_list]
@@ -954,8 +1084,8 @@ if __name__ == "__main__":
         t = np.arange(0, len(data_list[0])) # Time in minutes
         poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
         poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
-        train_len = 480 # Length of data to be used for training
-        test_len = 120
+        train_len = 1440 # Length of data to be used for training
+        test_len = 30
         poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
         # create the polynomial approximation
@@ -972,22 +1102,22 @@ if __name__ == "__main__":
         initial_ys = [np.mean(np.diff(x[0:10])) for x in data_list]
         omegas = [find_sin_freq(pfit[0:poly_train_ind], poly_t[0:poly_train_ind]) for pfit in poly_list]
         zetas = [0 for x in data_list]
-        psm_step_size = 0.8
-        psm_order = 8
+        psm_step_size = 3
+        psm_order = 4
         t = np.arange(0, train_len)
         x_list = [x[0:train_len] for x in data_list]
 
         # Optimize the model and save parameters
         # sys_iter = SystemIterator(initial_xs, initial_ys, omegas, zetas, None, 0.005, max_iterations=10, identifiers=sym_list)
         # sys_iter.random_walk_optimization(np.linspace(0, np.max(t), len(t)), x_list, psm_step_size, psm_order, propogation_len=test_len)
-        # system_fit = sys_iter.propogator
+        # system_propogator = sys_iter.propogator
         # system_fit.save(model_save_folder + 'psm_model_' + str(time()) + ''.join(sym_list) + '.pickle')
         # system_fit.load('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/psm_models/psm_model_1576334162.853399LTCLINKZRXXLMALGOETHEOSETCXRPXTZBCHDASHREPBTC.pickle')
         x_train_list = [(x[0:train_len] - np.mean(x[0:train_len])) / (np.max(x[0:train_len]) - np.min(x[0:train_len])) for x in concat_data_list]
         coeff_list = [(np.max(x[0:train_len]) - np.min(x[0:train_len])) for x in concat_data_list]
         shift_list = [np.mean(x[0:train_len]) for x in concat_data_list]
         system_fit = MultiFrequencySystem(x_train_list, sym_list)
-        system_fit.create_propogator(freq_num=10)
+        system_fit.create_propogator(freq_num=5)
 
 
         # --  Test Propogator --
@@ -998,7 +1128,7 @@ if __name__ == "__main__":
         test_y0s = [x[0] for x in initial_polys]
         test_t = np.arange(0, test_len)
         all_ids = system_fit.propogators[0].keys
-        # system_fit.optimize_x_and_y(psm_step_size, psm_order, coeff_list, shift_list, test_x0s, test_y0s, verbose=True, plot=True, max_num_steps=10, data_len=test_len)
+        # system_fit.optimize_x_and_y(psm_step_size, psm_order, coeff_list, shift_list, test_x0s, test_y0s, verbose=False, plot=True, max_num_steps=150, data_len=test_len)
         # system_fit.plot_simulation(x_list, t, psm_step_size, psm_order, coefficients=coeff_list, shifts=shift_list, eval_lens=[10, 15, 20, 30])
         forward_errs = np.array([])
         reversed_errs = np.array([])
@@ -1020,12 +1150,15 @@ if __name__ == "__main__":
 
             x_raw = concat_data_list[i][0:train_len+2*test_len]
             # x_fit_coeff = np.polyfit(np.arange(0, len(xr_fit)), np.flip(xr_fit, 0), 1)
-            # x_raw_coeff = np.polyfit(np.arange(-train_len, 0), x_raw[0:train_len], 1)
+            x_raw_coeff = np.polyfit(np.arange(-train_len, 0), x_raw[0:train_len], 1)
             # raw_del = np.polyval(np.array([x_raw_coeff[0], 0]), np.arange(-test_len-1, test_len+1))
             # shift = x_raw_coeff[1] - coeff * x_fit_coeff[1]
             shift = np.mean(x_raw[train_len-test_len:train_len]) - coeff * np.mean(x_fit[0:test_len])
+            # shift = x_raw[train_len] - coeff * x_fit[test_len]
             err, _, _ = system_fit.err(psm_step_size, psm_order, N+1, coeff, shift, data_len=test_len)#np.std(x_raw[0:test_len] - coeff * x_fit[0:test_len] - shift) / np.mean(x_raw[0:test_len])#
-            err_f = np.std(x_raw[train_len:train_len+test_len] - coeff * x_fit[test_len:2*test_len] + shift) / np.mean(x_raw[train_len:train_len+test_len])
+            # err_f = np.std(x_raw[train_len:train_len+test_len] - coeff * x_fit[test_len:2*test_len] + shift) / np.mean(x_raw[train_len:train_len+test_len])
+            err_f = np.sqrt(np.mean(((x_raw[train_len:train_len+test_len] - coeff * x_fit[test_len:2*test_len] + shift)) ** 2)) / np.mean(
+                x_raw[train_len:train_len+test_len])
             forward_errs = np.append(forward_errs, err_f)
             reversed_errs = np.append(reversed_errs, err)
             mean_prices = np.append(mean_prices, np.mean(x_raw))
@@ -1036,7 +1169,10 @@ if __name__ == "__main__":
             # plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * ( x_plot_fit + minmax ) + shift, 'r--')
             # plt.plot(np.linspace(0, np.max(test_t), len(x_plot_fit)), coeff * ( x_plot_fit - minmax ) + shift, 'r--')
             plt.legend(('true', 'fit'))
-            plt.title( sym_list[i] + ' Predicted Price Vs Actual\nerror: ' + str(err))
+            if err >  0.07:
+                plt.title( sym_list[i] + ' Predicted Price Vs Actual\ninvalid: ' + str(err))
+            else:
+                plt.title( sym_list[i] + ' Predicted Price Vs Actual\nerror: ' + str(err))
             plt.xlabel('Time (min)')
             plt.ylabel('Price ($)')
         plt.figure()

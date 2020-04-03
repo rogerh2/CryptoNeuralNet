@@ -4,6 +4,7 @@ import numpy as np
 from CryptoBot.SpreadBot import PSMPredictBot
 from cbpro import AuthenticatedClient
 from time import time
+from time import sleep
 
 API_KEY = input('Enter the API Key:')
 SECRET_KEY = input('Enter the Secret Key:')
@@ -114,7 +115,6 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
         self.assertIsNotNone(csv_df.iloc[0]['time'], 'buy order placed without time')
 
     def test_does_up_sell_price_when_out_of_bounds(self):
-        # TODO finish this test
         # Setup initial variables
         sym = 'BTC'
         size = 1
@@ -198,6 +198,46 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
         csv_df = pd.read_csv(CSV_PATH, index_col=0)
         sell_id = csv_df.index[1]
         np.testing.assert_almost_equal(buy_price*desired_spread, csv_df.loc[sell_id]['price'], 2*bot.portfolio.wallets[sym].product.crypto_res)
+
+    def test_does_update_old_sell_orders(self):
+        # Setup initial variables
+        sym = 'BTC'
+        size = 1
+        buy_price = 20000  # This price ensures the buy order goes through
+        recorded_buy_price = 500  # This is the price that will be used for the test
+        sell_price = 30000
+        sell_stop_price = 1100
+        bot = PSMPredictBot(self.api_key, self.secret_key, self.passphrase, order_csv_path=CSV_PATH,
+                            is_sandbox_api=True)
+
+        # Place buy order
+        buy_order_id = bot.place_order(buy_price, 'buy', size, sym, post_only=False)
+        bot.add_order(buy_order_id, sym, 'buy', time(), 0, spread=33000)
+        bot.update_orders()
+        bot.orders.at[buy_order_id, 'price'] = recorded_buy_price
+
+        # Place initial sell order
+        sell_order_id = bot.place_sell_order(sym, sell_price, 100, bot.portfolio.wallets[sym], 100, buy_order_id,
+                                             order_type='stop limit', stop=sell_stop_price)
+        bot.update_orders()
+        bot.orders.at[sell_order_id, 'time'] = 0
+        current_price = bot.portfolio.wallets[sym].product.get_top_order('bids')
+        sleep(1)
+        bot.predictions[sym] = np.arange(current_price, current_price+1000)
+        bot.orders.at[buy_order_id, 'price'] = recorded_buy_price
+        bot.cancel_old_orders()
+        bot.update_orders()
+
+        # Test to see if the bot lowers the price accordingly
+        bot.orders.at[buy_order_id, 'price'] = recorded_buy_price
+        bot.place_limit_sells()
+        bot.update_orders()
+        csv_df = pd.read_csv(CSV_PATH, index_col=0)
+        self.assertIn(buy_order_id, csv_df.index, 'Bot stop loss order did not save')
+        sell_order_price = csv_df.iloc[1]['price']
+        self.assertLess(sell_order_price, sell_price)
+        self.assertNotIn(sell_order_id, csv_df.index)
+
 
 
     def tearDown(self):

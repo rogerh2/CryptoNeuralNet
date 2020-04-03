@@ -49,15 +49,16 @@ def portfolio_file_path_generator():
 
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
-MIN_SPREAD = 0.082 # This is the minnimum spread before a trade can be made
+MIN_SPREAD = 1.082 # This is the minnimum spread before a trade can be made
 MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders are utilized
-TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
+TRADE_LEN = 40 # This is the amount of time I desire for trades to be filled in
 TRAIN_LEN = 480
-MIN_PROFIT = 0.002 # This is the minnimum value (net profit) to get per buy-sell pair
-STOP_SPREAD = 0.002 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
+STOP_PROFIT = 0.1 # This is the additional profit needed for the bot to begin using stop limit orders
+MIN_PROFIT = 0.004 # This is the minnimum value (net profit) to get per buy-sell pair
+STOP_SPREAD = 0.001 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
-PSM_EVAL_STEP_SIZE = 0.8 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 300 # This is the value that will trigger the bot to stop trading
+PSM_EVAL_STEP_SIZE = 1.8 # This is the step size for PSM
+MIN_PORTFOLIO_VALUE = 100 # This is the value that will trigger the bot to stop trading
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -175,7 +176,7 @@ class Product:
 
         num_trades_per_t = []
         num_trades = 0
-        if len(fill_ts_ls) > 0:
+        if len(fill_ts_ls) > 1: # greater than 1 because a single trade is not enough to make an average
             ts0 = fill_ts_ls[0]
         else:
             return None
@@ -190,7 +191,7 @@ class Product:
             else:
                 num_trades += 1
 
-        if t > (0.1 * t_interval_in_seconds):
+        if (t > (0.1 * t_interval_in_seconds)) and (num_trades > 0):
             num_trades_per_t.append((t_interval_in_seconds / t) * num_trades)
 
         avg_num_trades = np.mean(np.array(num_trades_per_t))
@@ -568,7 +569,7 @@ class Bot:
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
     spread = 1.01
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD'):
+    def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD'):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         self.settings.update_settings()
         current_offset = self.settings.read_setting_from_file('portfolio value offset')
@@ -593,7 +594,7 @@ class Bot:
         global MIN_SPREAD
         global MAX_LIMIT_SPREAD
         MIN_SPREAD = 1 + 2 * mkr_fee + MIN_PROFIT
-        MAX_LIMIT_SPREAD = 1 + 2 * tkr_fee + MIN_PROFIT + STOP_SPREAD
+        MAX_LIMIT_SPREAD = 1 + 2 * tkr_fee + MIN_PROFIT + STOP_SPREAD + STOP_PROFIT
         self.settings.write_setting_to_file('minnimum_spread', MIN_SPREAD)
 
     def place_order(self, price, side, size, sym, post_only=True, time_out=False, stop_price=None):
@@ -1024,7 +1025,7 @@ class PSMSpreadBot(SpreadBot):
     # predicted_prices: this contains the max, min, standard deviation of prices, and the mean offset for the true and predicted prices
     # del_len: the number of samples to average over for the price
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', slope_avg_len=5):
+    def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', slope_avg_len=5):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
@@ -1040,6 +1041,7 @@ class PSMSpreadBot(SpreadBot):
         self.del_len = slope_avg_len
         self.propogator, coeff_list, shift_list = create_multifrequency_propogator_from_data(raw_data_list, self.symbols)
         self.predictions = {}
+        self.reversed_predictions = {}
         self.coefficients = {}
         self.shifts = {}
         self.buy_cancel_times = {}
@@ -1116,34 +1118,36 @@ class PSMSpreadBot(SpreadBot):
         step_size = PSM_EVAL_STEP_SIZE
         polynomial_order = 10
 
-        for i in range(0, len(syms)):
-            sym = syms[i]
-            self.errors[sym], _, _ = self.propogator.err(step_size, polynomial_order, i + 1, coeff_list[i], shift_list[i], verbose=verbose_on)
-
     def predict(self, verbose_on=False, get_new_propogator=True):
         # Setup Initial Variables
         time_arr = np.arange(0, TRADE_LEN)
         step_size = PSM_EVAL_STEP_SIZE
-        polynomial_order = 10
+        polynomial_order = 5
 
         # Collect data and create propogator
         raw_data = self.collect_next_data()
         self.raw_data = raw_data
         raw_data_list = [raw_data[sym] for sym in self.symbols]
-        if get_new_propogator:
-            self.get_new_propogator(raw_data_list, verbose_on=verbose_on)
+        self.get_new_propogator(raw_data_list, verbose_on=verbose_on)
         self.reset_propogator_start_point(raw_data)
         syms = self.symbols
         predictions = {}
-        transformed_raw_data = self.inverse_transform({syms[i]: raw_data_list[i] for i in range(0, len(raw_data_list))})
+        reversed_predictions = {}
+        # transformed_raw_data = self.inverse_transform({syms[i]: raw_data_list[i] for i in range(0, len(raw_data_list))})
 
         # Predict
         for i in range(0, len(syms)):
             sym = syms[i]
+            coeff = self.coefficients[sym]
+            shift = self.shifts[sym]
             x, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose_on)
-            predictions[sym] = x - x[0] + transformed_raw_data[sym][-1]
+            self.errors[sym], x_reversed, real_data = self.propogator.err(step_size, polynomial_order, i + 1, coeff,
+                                                         shift, verbose=verbose_on, data_len=TRADE_LEN)
+            predictions[sym] = x - np.mean(x_reversed) + np.mean(real_data)
+            reversed_predictions[sym] = x_reversed - np.mean(x_reversed) + np.mean(real_data)
 
         self.predictions = self.transform(predictions)
+        self.reversed_predictions = self.transform(reversed_predictions)
 
     def determine_price_based_on_std(self, sym, usd_available, side, std_mult=1.0, mu_mult=1.0):
 
@@ -1160,27 +1164,23 @@ class PSMSpreadBot(SpreadBot):
             return None, None, None, None, None
         mu *= mu_mult
         sell_ind = np.argmax(predicted_evolution) # Only buy currencies if you predict that the mean will be soon
-        if np.argmin(predicted_evolution) > np.argmax(predicted_evolution):
-            # don't buy if the price might fall lower, as a sell is not garunteed
-            return None, None, None, None, None
         fall_len=90
         data_fit = np.polyfit(np.arange(0, fall_len), self.raw_data[sym][-fall_len::], 1)
         mean_mvt = data_fit[0]
         residual = self.raw_data[sym][-fall_len::] - np.polyval(data_fit, np.arange(0, fall_len))
         std_err = np.std(residual)/(2*fall_len)
-        if mean_mvt < -std_err:
-            # avoid currencies that have been falling for the past hour (outside of random err)
+        if np.argmin(predicted_evolution) > sell_ind:
             return None, None, None, None, None
         if side == 'buy':
             if sell_ind > 0:
                 mu *= TRADE_LEN * (np.argmin(predicted_evolution[0:sell_ind]) / len(predicted_evolution[0:sell_ind]))
-                buy_price = buy_std_coeff * np.min(predicted_evolution[0:sell_ind] - predicted_evolution[0]) + current_price
+                buy_price = buy_std_coeff * np.min(predicted_evolution[0:sell_ind] - current_price)+current_price
             else:
                 buy_price = current_price
                 mu = 0
 
         else:
-            buy_price = sell_std_coeff * np.max(predicted_evolution - predicted_evolution[0]) + current_price
+            buy_price = sell_std_coeff * np.max(predicted_evolution-current_price)+current_price
             mu *= TRADE_LEN * (sell_ind / len(predicted_evolution))
 
         if coeff * buy_price < coeff * current_price:
@@ -1221,7 +1221,7 @@ class PSMSpreadBot(SpreadBot):
 
 class PSMPredictBot(PSMSpreadBot):
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv'):
+    def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv'):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         # Read dataframe from file if it exists and use that to initialize the product orders as well
         if order_csv_path is None:
@@ -1341,13 +1341,27 @@ class PSMPredictBot(PSMSpreadBot):
                 placeholder_order = self.place_holder_orders[sym][side]
                 if not placeholder_order is None:
                     placement_time = placeholder_order['time']
-                    if (time() - placement_time) > TRADE_LEN*60: self.place_holder_orders[sym][side]=None
+                    if (time() - placement_time) > TRADE_LEN * 60: self.place_holder_orders[sym][side]=None
 
         # Next remove old current orders
         for id in self.orders.index:
+            # Only remove sell orders if they are no longer expected to be met
             order_time = float(self.orders.loc[id]['time'])
-            if self.orders.loc[id]['side'] == 'sell':
-                continue
+            if (self.orders.loc[id]['side'] == 'sell') and ((time() - order_time) > TRADE_LEN * 60):
+                corresponding_id = self.orders.loc[id]['corresponding_order']
+                sym = self.orders.loc[id]['product_id'][0:-4]
+                new_sell_price, _, _, _, _ = self.determine_trade_price(sym, 1, side='sell')
+                if new_sell_price is None:
+                    continue
+                buy_price = self.orders.loc[corresponding_id]['price']
+                current_spread = self.orders.loc[corresponding_id]['spread']
+                new_spread = calculate_spread(buy_price, new_sell_price)
+                if new_spread < current_spread:
+                    print('Changing sell price for ' + sym)
+                    new_spread = np.max(np.array([new_spread, MIN_SPREAD]))
+                    self.cancel_single_order(id, remove_index=True)
+                    self.orders.at[corresponding_id, 'spread'] = new_spread
+
             elif self.orders.loc[id]['filled_size']==self.orders.loc[id]['size']:
                 continue
             elif (time() - order_time) > TRADE_LEN * 60:
@@ -1363,10 +1377,21 @@ class PSMPredictBot(PSMSpreadBot):
                                                       wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
             size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'projected spread: ' + num2str(spread, 6) + '\n')
 
+    def check_if_buys_are_barred(self, current_price, sym):
+        # This method checks if the buy price is at least 1 standard deviation below the mean price
+        raw_data = self.raw_data[sym]
+        mean_price = np.mean(raw_data)
+        std_price = np.std(raw_data)
+        if current_price >= (mean_price - std_price):
+            return True
+        else:
+            return False
+
     def buy_place_holders(self):
         com_wallet = self.portfolio.get_common_wallet()
         com_wallet.update_value()
         available = com_wallet.get_amnt_available('buy')
+        mkr_fee, tkr_fee = self.portfolio.get_fee_rate()
         if available > QUOTE_ORDER_MIN:
             for sym in self.place_holder_orders.keys():
                 order = self.place_holder_orders[sym]['buy']
@@ -1380,17 +1405,20 @@ class PSMPredictBot(PSMSpreadBot):
                 current_price = wallet.product.get_top_order('asks')
 
                 # Determine whether the price is low enough, if so set the limit and stop prices
-                if current_price < nominal_price * (1-STOP_SPREAD):
+                if current_price < nominal_price * (1 - STOP_SPREAD):
                     limit_price = current_price * (1 + STOP_SPREAD)
-                    stop_price = current_price * (1 + STOP_SPREAD/2)
+                    stop_price = current_price * (1 + STOP_SPREAD)
                 else:
                     continue
+                dont_buy = self.check_if_buys_are_barred(nominal_price, sym)
+                if dont_buy:
+                    continue
 
-                # Scalae the size based on the new price
+                # Scale the size based on the new price
                 size = ( nominal_price * nominal_size ) / limit_price
                 # Only buy the determined size if it's less than available, else buy all available
-                if size * limit_price > available:
-                    size = available / limit_price
+                if size * (limit_price*(1 + tkr_fee)) > available:
+                    size = available / (limit_price*(1 + tkr_fee))
 
                 #Place the order and print the status
                 order_id = self.place_order(limit_price, 'buy', size, sym, post_only=False, stop_price=stop_price)
@@ -1443,6 +1471,8 @@ class PSMPredictBot(PSMSpreadBot):
             if current_placeholder is not None:
                 # Don't have more than one placeholder order out at a time
                 continue
+            if self.errors[top_sym] > 0.05:
+                continue
             # Only continue if there are viable trades
             if (usd_available > QUOTE_ORDER_MIN) and (not no_viable_trade):
 
@@ -1461,6 +1491,9 @@ class PSMPredictBot(PSMSpreadBot):
                 # Determine order properties
                 buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
                 sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
+                dont_buy = self.check_if_buys_are_barred(buy_price, top_sym)
+                if dont_buy:
+                    continue
 
                 # Always insure the order is small enough to go through in a reasonable amount of time
                 mean_size, _, _ = wallet.product.get_mean_and_std_of_fill_sizes('asks', weighted=False)
@@ -1548,8 +1581,13 @@ class PSMPredictBot(PSMSpreadBot):
                 continue
 
             current_price = wallet.product.get_top_order('bids')
-            # Check if the currency has fallen a signifigant amount
-            self.emergency_sell(id, current_price)
+            current_spread = calculate_spread(buy_price, current_price)
+            if (current_spread < 0.995) and (filled==0):
+                # If the current price is below the buy price and the order has not been filled then it should be a stop
+                # limit order, If it has fallen half a percent from the expected price cancel it
+                self.cancel_single_order(id)
+            # # Check if the currency has fallen a signifigant amount
+            # self.emergency_sell(id, current_price)
             order = self.orders.loc[id] # Reiniate the order in case an emergency sell occured
             corresponding_size = float(order['corresponding_order'])
             if corresponding_size:
@@ -1588,10 +1626,10 @@ class PSMPredictBot(PSMSpreadBot):
                     available = filled
                 limit_price = order['spread'] * buy_price
                 self.place_sell_order(sym, limit_price, available, wallet, order['spread'], id, order_type='limit')
+                continue
 
 
             # Determine the sell price
-            current_spread = calculate_spread(buy_price, current_price)
             if current_spread < MAX_LIMIT_SPREAD:
                 continue
             else:
@@ -1777,7 +1815,7 @@ def run_bot(bot_type='psm'):
     last_portfolio_refresh = datetime.now().timestamp()
     plot_period = 60
     check_period = 60
-    predict_period = 2*60
+    predict_period = 9*60
     propogator_update_period = TRADE_LEN*60
     portfolio_refresh_period = 24*3600
     err_counter = 0
@@ -1830,7 +1868,7 @@ def run_bot(bot_type='psm'):
 
 
 if __name__ == "__main__":
-    run_type = 'other'
+    run_type = 'run'
     if run_type == 'run':
         run_bot()
     elif run_type == 'other':
@@ -1844,16 +1882,22 @@ if __name__ == "__main__":
         for sym in psmbot.symbols:
             plt.figure()
             prediction = psmbot.predictions[sym]
+            reversed_prediction = psmbot.reversed_predictions[sym]
             raw_data = psmbot.raw_data[sym]
             err = psmbot.errors[sym]
             plt.plot(np.arange(0, len(raw_data)), raw_data)
             plt.plot(np.arange(len(raw_data), len(prediction) + len(raw_data)), prediction)
+            plt.plot(np.arange(len(raw_data)-len(reversed_prediction), len(raw_data)), reversed_prediction)
             plt.title(sym)
             plt.xlabel('Time (min)')
             plt.ylabel('Price ($)')
             price_psm, _, _, psm_std, psm_mu = psmbot.determine_trade_price(sym, 10, 'buy')
             price, _, _, std, mu = bot.determine_trade_price(sym, 10, 'buy')
             print(sym)
+            if price_psm is None:
+                price_psm = 0
+                psm_mu = 0
+                psm_std = 0
             print('PSM price: ' + num2str(price_psm, 4) + ' , Naive price: '  + num2str(price, 4))
             print('PSM mu: ' + num2str(100*psm_mu, 4) + '% , Naive mu: ' + num2str(100*mu, 4) + '%')
             print('PSM std: ' + num2str(100*psm_std, 4) + '% , Naive std: ' + num2str(100*std, 4) + '%')
