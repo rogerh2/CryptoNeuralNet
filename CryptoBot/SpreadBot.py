@@ -1334,6 +1334,20 @@ class PSMPredictBot(PSMSpreadBot):
 
         self.orders.to_csv(self.order_path)
 
+    def check_if_buys_are_barred(self, current_price, sym, std_coeff=0.5):
+        # This method checks if the buy price is at least 1 standard deviation below the mean price
+        raw_data = self.raw_data[sym]
+        t = np.arange(0, len(raw_data))
+        lin_fit = np.polyfit( t, raw_data, 1)
+        mean_prices = np.polyval(lin_fit, np.array([len(raw_data)]))
+        mean_price = mean_prices[-1]
+        residuals = raw_data - mean_prices
+        expected_price_err = np.mean(residuals) + std_coeff * np.std(residuals)
+        if current_price >= (mean_price - expected_price_err):
+            return True
+        else:
+            return False
+
     def cancel_old_orders(self):
         # First remove old placeholder orders
         for sym in self.symbols:
@@ -1377,16 +1391,6 @@ class PSMPredictBot(PSMSpreadBot):
                                                       wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
             size, 3) + '\n' + 'std: ' + num2str(std, 6) + '\n' + 'mu: ' + num2str(mu, 8) + '\n' + 'projected spread: ' + num2str(spread, 6) + '\n')
 
-    def check_if_buys_are_barred(self, current_price, sym):
-        # This method checks if the buy price is at least 1 standard deviation below the mean price
-        raw_data = self.raw_data[sym]
-        mean_price = np.mean(raw_data)
-        std_price = np.std(raw_data)
-        if current_price >= (mean_price - std_price):
-            return True
-        else:
-            return False
-
     def buy_place_holders(self):
         com_wallet = self.portfolio.get_common_wallet()
         com_wallet.update_value()
@@ -1409,7 +1413,9 @@ class PSMPredictBot(PSMSpreadBot):
                     limit_price = current_price * (1 + STOP_SPREAD)
                     stop_price = current_price * (1 + STOP_SPREAD)
                 else:
-                    continue
+                    limit_price = nominal_price
+                    stop_price = None
+
                 dont_buy = self.check_if_buys_are_barred(nominal_price, sym)
                 if dont_buy:
                     continue
@@ -1430,6 +1436,8 @@ class PSMPredictBot(PSMSpreadBot):
                         self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'])
                         if order_id in self.orders.index:
                             break
+                        else:
+                            sleep(5)
                     if i == 9:
                         print(sym + ' order id ' + order_id + ' did not save')
                     self.place_holder_orders[sym]['buy'] = None
@@ -1875,7 +1883,7 @@ if __name__ == "__main__":
         api_input = input('What is the api key? ')
         secret_input = input('What is the secret key? ')
         passphrase_input = input('What is the passphrase? ')
-        psmbot = PSMSpreadBot(api_input, secret_input, passphrase_input)
+        psmbot = PSMPredictBot(api_input, secret_input, passphrase_input)
         bot = SpreadBot(api_input, secret_input, passphrase_input)
         psmbot.predict(verbose_on=True)
 
