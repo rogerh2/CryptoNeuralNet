@@ -204,7 +204,7 @@ class Product:
         # This adjusts the mean and std of the price changes based on a number of trades to represent a particular
         # amount of time
         avg_num_trades = self.get_num_price_momentum_switches_per_time()
-        if avg_num_trades is None:
+        if (avg_num_trades is None) or (np.isinf(avg_num_trades)):
             return None, None, None
         weighted_mu = avg_num_trades * mu
         weighted_std = np.sqrt(avg_num_trades) * std
@@ -1375,10 +1375,7 @@ class PSMPredictBot(PSMSpreadBot):
                 buy_price = self.orders.loc[corresponding_id]['price']
                 current_spread = self.orders.loc[corresponding_id]['spread']
                 new_spread = calculate_spread(buy_price, new_sell_price)
-                # Don't just accept no/low profit without serious consideration
-                # if (new_spread < MIN_SPREAD) and ((time() - order_time) < TRAIN_LEN*60) and (new_spread < current_spread):
-                #     continue
-                if (new_spread >= MIN_SPREAD) and (can_sell_at_price) and (new_spread != current_spread):#((can_sell_at_price and can_buy_at_spread) or (new_spread > MIN_SPREAD)) and ((new_spread < current_spread) or (new_spread < MIN_SPREAD)):
+                if (can_sell_at_price and can_buy_at_spread) or ((new_spread < current_spread) and (new_spread > MIN_SPREAD)):
                     print('Changing sell price for ' + sym)
                     self.cancel_single_order(id, remove_index=True)
                     self.orders.at[corresponding_id, 'spread'] = new_spread
