@@ -54,7 +54,7 @@ MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders ar
 TRADE_LEN = 40 # This is the amount of time I desire for trades to be filled in
 TRAIN_LEN = 480
 STOP_PROFIT = 0.1 # This is the additional profit needed for the bot to begin using stop limit orders
-MIN_PROFIT = 0.004 # This is the minnimum value (net profit) to get per buy-sell pair
+MIN_PROFIT = 0.002 # This is the minnimum value (net profit) to get per buy-sell pair
 STOP_SPREAD = 0.001 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 1.8 # This is the step size for PSM
@@ -1367,12 +1367,19 @@ class PSMPredictBot(PSMSpreadBot):
                 new_sell_price, _, _, _, _ = self.determine_trade_price(sym, 1, side='sell')
                 if new_sell_price is None:
                     continue
+                # Check if the new proposed price will allow you to sell and rebuy at a lower price (statisical guess_
+                can_sell_at_price = self.check_if_buys_are_barred(new_sell_price, sym, std_coeff=-1)
+                can_buy_at_spread = self.check_if_buys_are_barred(new_sell_price*(2-MIN_SPREAD), sym)
+
+                # Check if new price will still make a profit
                 buy_price = self.orders.loc[corresponding_id]['price']
                 current_spread = self.orders.loc[corresponding_id]['spread']
                 new_spread = calculate_spread(buy_price, new_sell_price)
-                if new_spread < current_spread:
+                # Don't just accept no/low profit without serious consideration
+                # if (new_spread < MIN_SPREAD) and ((time() - order_time) < TRAIN_LEN*60) and (new_spread < current_spread):
+                #     continue
+                if (new_spread >= MIN_SPREAD) and (can_sell_at_price) and (new_spread != current_spread):#((can_sell_at_price and can_buy_at_spread) or (new_spread > MIN_SPREAD)) and ((new_spread < current_spread) or (new_spread < MIN_SPREAD)):
                     print('Changing sell price for ' + sym)
-                    new_spread = np.max(np.array([new_spread, MIN_SPREAD]))
                     self.cancel_single_order(id, remove_index=True)
                     self.orders.at[corresponding_id, 'spread'] = new_spread
 
@@ -1633,6 +1640,10 @@ class PSMPredictBot(PSMSpreadBot):
                 if available > filled:  # Only sell for this order
                     available = filled
                 limit_price = order['spread'] * buy_price
+                if (available < wallet.product.base_order_min) or (available * limit_price < QUOTE_ORDER_MIN):
+                    print('Cannot sell ' + sym + ' because available is less than minnimum allowable order size. Manual sell required. Removing order ' + id + ' from tracking')
+                    self.orders = self.orders.drop(id)
+                    continue
                 self.place_sell_order(sym, limit_price, available, wallet, order['spread'], id, order_type='limit')
                 continue
 
@@ -1655,7 +1666,9 @@ class PSMPredictBot(PSMSpreadBot):
             spread = calculate_spread(buy_price, limit_price)
             # Filter unnecessary currencies
             if (available < wallet.product.base_order_min) or (available * limit_price < QUOTE_ORDER_MIN):
-                print('Cannot sell ' + sym + ' because available is less than minnimum allowable order size. Manual sell required')
+                print(
+                    'Cannot sell ' + sym + ' because available is less than minnimum allowable order size. Manual sell required. Removing order ' + id + ' from tracking')
+                self.orders = self.orders.drop(id)
                 continue
 
             self.spread = spread
