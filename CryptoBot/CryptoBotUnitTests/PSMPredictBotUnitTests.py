@@ -11,6 +11,17 @@ SECRET_KEY = input('Enter the Secret Key:')
 PASSPHRASE = input('Enter the Passphrase:')
 CSV_PATH = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/CryptoBotUnitTests/UnitTestData/test_orders.csv'
 
+def check_spread_width(raw_data, std_coeff=0.75):
+    # This method checks if the buy price is at least 1 standard deviation below the mean price
+    t = np.arange(0, len(raw_data))
+    lin_fit = np.polyfit( t, raw_data, 1)
+    mean_prices = np.polyval(lin_fit, t)
+    mean_price = mean_prices[-1]
+    residuals = raw_data - mean_prices
+    expected_price_err = np.mean(residuals) + std_coeff * np.std(residuals)
+
+    return expected_price_err, mean_price
+
 class PSMPredictBotOrderStorage(unittest.TestCase):
     ids_to_cancel = []
     api_key=API_KEY
@@ -237,6 +248,29 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
         sell_order_price = csv_df.iloc[1]['price']
         self.assertLess(sell_order_price, sell_price)
         self.assertNotIn(sell_order_id, csv_df.index)
+
+    def test_if_spreads_are_determined_correctly(self):
+        data_len = 30
+        t = np.arange(0,30)
+        bot = PSMPredictBot(self.api_key, self.secret_key, self.passphrase, order_csv_path=CSV_PATH,
+                            is_sandbox_api=True)
+        data = np.random.rand(data_len) + np.polyval(np.array([1, 0]), t)
+        bot.raw_data['BTC'] = data
+        lo_expected_price_err, mean_price = check_spread_width(data, std_coeff=1)
+        hi_expected_price_err, _ = check_spread_width(data, std_coeff=-1)
+        # The guessed price is within expected variation
+        lo_true = bot.is_buy_order_fill_likely(mean_price - lo_expected_price_err / 2, 'BTC', std_coeff=1)
+        # The guessed price is outside expected variation
+        lo_false = bot.is_buy_order_fill_likely(mean_price - 2 * lo_expected_price_err, 'BTC', std_coeff=1)
+        # The guessed price is outside expected variation
+        hi_false = bot.is_sell_order_fill_unlikely(mean_price - hi_expected_price_err / 2, 'BTC', std_coeff=1)
+        # The guessed price is within expected variation
+        hi_true = bot.is_sell_order_fill_unlikely(mean_price - 2 * hi_expected_price_err, 'BTC', std_coeff=1)
+
+        self.assertFalse(lo_false, 'Expected buy price not recognized')
+        self.assertFalse(hi_false, 'Abnormal sell price not recognized')
+        self.assertTrue(hi_true, 'Expected sell price not recognized')
+        self.assertTrue(lo_true, 'Abnormal buy price not recognized')
 
 
 

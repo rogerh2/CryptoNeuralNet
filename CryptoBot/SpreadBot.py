@@ -1334,19 +1334,27 @@ class PSMPredictBot(PSMSpreadBot):
 
         self.orders.to_csv(self.order_path)
 
-    def check_if_buys_are_barred(self, current_price, sym, std_coeff=0.5):
+    def check_if_price_is_abve_std_coeff_from_mean(self, current_price, sym, std_coeff=0.75):
         # This method checks if the buy price is at least 1 standard deviation below the mean price
         raw_data = self.raw_data[sym]
         t = np.arange(0, len(raw_data))
-        lin_fit = np.polyfit( t, raw_data, 1)
-        mean_prices = np.polyval(lin_fit, np.array([len(raw_data)]))
+        lin_fit = np.polyfit(t, raw_data, 1)
+        mean_prices = np.polyval(lin_fit, t)
         mean_price = mean_prices[-1]
         residuals = raw_data - mean_prices
         expected_price_err = np.mean(residuals) + std_coeff * np.std(residuals)
         if current_price >= (mean_price - expected_price_err):
+            # This means the proce is too high and the order should not be placed
             return True
         else:
+            # This means the proce is in the right range
             return False
+
+    def is_buy_order_fill_likely(self, current_price, sym, std_coeff=0.75):
+        return self.check_if_price_is_abve_std_coeff_from_mean(current_price, sym, std_coeff=std_coeff)
+
+    def is_sell_order_fill_unlikely(self, current_price, sym, std_coeff=0.75):
+        return self.check_if_price_is_abve_std_coeff_from_mean(current_price, sym, std_coeff=-std_coeff)
 
     def cancel_old_orders(self):
         # First remove old placeholder orders
@@ -1367,16 +1375,35 @@ class PSMPredictBot(PSMSpreadBot):
                 new_sell_price, _, _, _, _ = self.determine_trade_price(sym, 1, side='sell')
                 if new_sell_price is None:
                     continue
-                # Check if the new proposed price will allow you to sell and rebuy at a lower price (statisical guess_
-                can_sell_at_price = self.check_if_buys_are_barred(new_sell_price, sym, std_coeff=-1)
-                can_buy_at_spread = self.check_if_buys_are_barred(new_sell_price*(2-MIN_SPREAD), sym)
+
+                # Is the new price far enough above the mean to be deemed unlikely to reach
+                is_selling_unlikely = self.is_sell_order_fill_unlikely(new_sell_price, sym, std_coeff=1)
+
+                # Is the new price far enough above the mean that even selling at a loss would be considered acceptable
+                can_sell_at_a_loss = self.is_sell_order_fill_unlikely(new_sell_price, sym, std_coeff=1.5)
+
+                # Will the buy price be within the standard variation assumed
+                is_buying_at_profit_likely = self.is_buy_order_fill_likely(new_sell_price * (2 - MIN_SPREAD), sym)
 
                 # Check if new price will still make a profit
                 buy_price = self.orders.loc[corresponding_id]['price']
                 current_spread = self.orders.loc[corresponding_id]['spread']
                 new_spread = calculate_spread(buy_price, new_sell_price)
-                if (can_sell_at_price and can_buy_at_spread) or ((new_spread < current_spread) and (new_spread > MIN_SPREAD)):
-                    print('Changing sell price for ' + sym)
+
+                can_lower_price_below_MIN_SPREAD = is_selling_unlikely and is_buying_at_profit_likely and (new_spread < current_spread)
+                can_raise_price = (not is_selling_unlikely) and is_buying_at_profit_likely and (new_spread > current_spread)
+                can_lower_price =  (new_spread > MIN_SPREAD) and (new_spread < current_spread)
+                can_sell_at_a_loss = can_sell_at_a_loss and is_buying_at_profit_likely and (new_spread < current_spread)
+
+                if  can_raise_price or can_lower_price or can_lower_price_below_MIN_SPREAD or can_sell_at_a_loss:
+                    if can_lower_price:
+                        print('Lowering sell price for ' + sym)
+                    elif can_lower_price_below_MIN_SPREAD:
+                        print('Lowering sell price for ' + sym + ' BELOW defined profit margins')
+                    elif can_sell_at_a_loss:
+                        print('Lowering sell price for ' + sym + ' to sell at a LOSS')
+                    else:
+                        print('Raising sell price for ' + sym)
                     self.cancel_single_order(id, remove_index=True)
                     self.orders.at[corresponding_id, 'spread'] = new_spread
 
@@ -1420,8 +1447,9 @@ class PSMPredictBot(PSMSpreadBot):
                     limit_price = nominal_price
                     stop_price = None
 
-                dont_buy = self.check_if_buys_are_barred(nominal_price, sym)
-                if dont_buy:
+                dont_sell = not self.is_sell_order_fill_unlikely(nominal_price * order['spread'], sym)
+                dont_buy = self.is_buy_order_fill_likely(nominal_price, sym)
+                if (dont_buy) or (dont_sell):
                     continue
 
                 # Scale the size based on the new price
@@ -1503,7 +1531,7 @@ class PSMPredictBot(PSMSpreadBot):
                 # Determine order properties
                 buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
                 sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
-                dont_buy = self.check_if_buys_are_barred(buy_price, top_sym)
+                dont_buy = self.is_buy_order_fill_likely(buy_price, top_sym)
                 if dont_buy:
                     continue
 
@@ -1588,6 +1616,7 @@ class PSMPredictBot(PSMSpreadBot):
             sym = order['product_id'].split('-')[0]
             wallet = self.portfolio.wallets[sym]
             filled = order['filled_size']
+            size = order['size']
             buy_price = order['price']
             if (order['side']=='sell'):
                 continue
@@ -1637,9 +1666,12 @@ class PSMPredictBot(PSMSpreadBot):
                 if available > filled:  # Only sell for this order
                     available = filled
                 limit_price = order['spread'] * buy_price
-                if (available < wallet.product.base_order_min) or (available * limit_price < QUOTE_ORDER_MIN):
-                    print('Cannot sell ' + sym + ' because available is less than minnimum allowable order size. Manual sell required. Removing order ' + id + ' from tracking')
-                    self.orders = self.orders.drop(id)
+                # if the amount available is too small to sell
+                if ((available < wallet.product.base_order_min) or (available * limit_price < QUOTE_ORDER_MIN)):
+                    # print message and remove order if there is not enough remaining in the buy order to sell
+                    if ((available+size-filled) < wallet.product.base_order_min):
+                        print('Cannot sell ' + sym + ' because available is less than minnimum allowable order size. Manual sell required. Removing order ' + id + ' from tracking')
+                        self.orders = self.orders.drop(id)
                     continue
                 self.place_sell_order(sym, limit_price, available, wallet, order['spread'], id, order_type='limit')
                 continue
@@ -1663,9 +1695,11 @@ class PSMPredictBot(PSMSpreadBot):
             spread = calculate_spread(buy_price, limit_price)
             # Filter unnecessary currencies
             if (available < wallet.product.base_order_min) or (available * limit_price < QUOTE_ORDER_MIN):
-                print(
-                    'Cannot sell ' + sym + ' because available is less than minnimum allowable order size. Manual sell required. Removing order ' + id + ' from tracking')
-                self.orders = self.orders.drop(id)
+                # print message and remove order if there is not enough remaining in the buy order to sell
+                if ((available + size - filled) < wallet.product.base_order_min):
+                    print(
+                        'Cannot sell ' + sym + ' because available is less than minnimum allowable order size. Manual sell required. Removing order ' + id + ' from tracking')
+                    self.orders = self.orders.drop(id)
                 continue
 
             self.spread = spread
