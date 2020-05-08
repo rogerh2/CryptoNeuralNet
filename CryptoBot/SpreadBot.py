@@ -672,6 +672,125 @@ class Bot:
 
         return book_side, opposing_book_side, coeff
 
+class TrackerBot(Bot):
+
+    def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv'):
+        super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
+        # Read dataframe from file if it exists and use that to initialize the product orders as well
+        if order_csv_path is None:
+            self.orders = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time', 'spread'])
+            self.order_path = './orders_tracking.csv'
+        else:
+            self.order_path = order_csv_path
+            self.orders = pd.read_csv(order_csv_path, index_col=0)
+            ids = list(self.orders.index)
+            for id in ids:
+                order_info = self.portfolio.auth.get_order(id)
+                sleep(PRIVATE_SLEEP)
+                if 'product_id' in order_info:
+                    sym = order_info['product_id'].split('-')[0]
+                    side = order_info['side']
+                    product = self.portfolio.wallets[sym].product
+                    product.orders[side][id] = order_info
+                else:
+                    self.orders.drop(id)
+
+        # Create a dictionary for placeholder orders
+        place_holder_orders = {}  # This variable stores orders yet to be placed {'BTC':{'side':'buy', 'price':9000, 'time':1582417135.072912}}
+        for sym in syms:
+            place_holder_orders[sym] = {'buy':None, 'sell':None}
+        self.place_holder_orders = place_holder_orders
+
+    # Methods to manage dataframe storing orders
+    def add_order(self, id, sym, side, place_time, corresponding_buy_id, refresh=True, spread=None):
+        product = self.portfolio.wallets[sym].product
+
+        if refresh:
+            product.update_orders()
+        order = None
+
+        # If the id is in the stored orders grab the data
+        if id in product.orders[side].keys():
+            order = product.orders[side][id]
+        # If the id is for a buy order check past data as well
+        elif side == 'buy':
+            try:
+                order = product.auth_client.get_order(id)
+                sleep(PRIVATE_SLEEP)
+                # Check if the buy order has already been taken care of
+                if 'filled_size' not in order.keys():
+                    print(sym + ' removed from tracking due to ' + order['message'] + '\n')
+                    order = None
+                else:
+                    size = float(order['filled_size'])
+                    if np.abs(float(corresponding_buy_id) - size) <= 2*self.portfolio.wallets[sym].product.crypto_res:
+                        order = None
+            except Exception as e:
+                _ = print_err_msg('find new data', e, 1)
+                order = None
+        # Add the order info to the dataframe
+        if (order is not None) and ('message' not in order.keys()):
+            new_row_str_headers = ['product_id', 'side']
+            new_row_float_headers = ['price', 'size', 'filled_size']
+            new_row = []
+            for header in new_row_str_headers:
+                new_row.append(order[header])
+            for header in new_row_float_headers:
+                new_row.append(float(order[header]))
+            new_row.append(corresponding_buy_id)
+            new_row.append(place_time)
+            new_row.append(spread)
+            self.orders.loc[id] = new_row
+
+    def cancel_single_order(self, id, remove_index=False):
+        response = self.portfolio.auth.cancel_order(id)
+        sleep(PRIVATE_SLEEP)
+        if type(response) == dict:
+            response = response['message']
+            print('Cannot cancel order due to ' + response)
+            return False
+        elif remove_index:
+            self.orders = self.orders.drop(id)
+            return True
+
+    def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None, spread=None):
+        if side == 'sell':
+            # For sell orders remove if the are no longer in the books
+            stored_ids = self.orders.index
+            if id in stored_ids:
+                self.orders = self.orders.drop(id)
+        else:
+            # For buy orders remove if the are no longer in the books and the sell order for them has already gone through
+            stored_ids = self.orders.index
+            if (id in stored_ids):
+                self.orders = self.orders.drop(id)
+        self.add_order(id, sym, side, place_time, corresponding_buy_id, spread=spread)
+        # Check if a sell order was cancelled, if so add its size to the buy irder corresponding order
+        stored_ids = self.orders.index
+        if (id not in stored_ids) and (corresponding_buy_id in stored_ids):
+            if self.orders.loc[corresponding_buy_id]['corresponding_order']:
+                self.orders.at[corresponding_buy_id, 'corresponding_order'] = float(self.orders.loc[corresponding_buy_id]['corresponding_order']) + size
+            else:
+                self.orders.at[corresponding_buy_id, 'corresponding_order'] = size
+
+    def update_orders(self):
+        updated_syms = []
+        for id in self.orders.index:
+            order = self.orders.loc[id]
+            sym = order['product_id'].split('-')[0]
+            side = order['side']
+            corresponding_order_id = order['corresponding_order']
+            place_time = order['time']
+            size = order['size']
+            spread = order['spread']
+            self.update_id_in_order_df(id, sym, side, place_time, size, corresponding_buy_id=corresponding_order_id, spread=spread)
+
+        self.orders.to_csv(self.order_path)
+
+    def place_order(self, price, side, size, sym, post_only=True, time_out=False, stop_price=None):
+        order_id = super().place_order(price, side, size, sym, post_only=post_only, time_out=time_out, stop_price=stop_price)
+        self.add_order(order_id, sym, 'buy', time(), 0)
+
 class SpreadBot(Bot):
 
     def determine_current_avg_price(self, sym):
@@ -1390,10 +1509,10 @@ class PSMPredictBot(PSMSpreadBot):
                 current_spread = self.orders.loc[corresponding_id]['spread']
                 new_spread = calculate_spread(buy_price, new_sell_price)
 
-                can_lower_price_below_MIN_SPREAD = is_selling_unlikely and is_buying_at_profit_likely and (new_spread < current_spread)
+                can_lower_price_below_MIN_SPREAD = False#is_selling_unlikely and is_buying_at_profit_likely and (new_spread < current_spread)
                 can_raise_price = (not is_selling_unlikely) and is_buying_at_profit_likely and (new_spread > current_spread)
                 can_lower_price =  (new_spread > MIN_SPREAD) and (new_spread < current_spread)
-                can_sell_at_a_loss = can_sell_at_a_loss and is_buying_at_profit_likely and (new_spread < current_spread)
+                can_sell_at_a_loss = False#can_sell_at_a_loss and is_buying_at_profit_likely and (new_spread < current_spread)
 
                 if  can_raise_price or can_lower_price or can_lower_price_below_MIN_SPREAD or can_sell_at_a_loss:
                     if can_lower_price:
@@ -1603,7 +1722,6 @@ class PSMPredictBot(PSMSpreadBot):
             self.add_order(order_id, sym, 'sell', time(), buy_id, refresh=False)
 
         return order_id
-
 
     def place_limit_sells(self):
         # Ensure to update portfolio value before running
@@ -1830,8 +1948,6 @@ class PortfolioTracker:
         if not os.path.exists(SAVED_DATA_FILE_PATH):
             os.mkdir(SAVED_DATA_FILE_PATH)
 
-
-
 def run_bot(bot_type='psm'):
     global OPEN_ORDERS
     # -- Secret/changing variable declerations
@@ -1867,7 +1983,7 @@ def run_bot(bot_type='psm'):
     last_portfolio_refresh = datetime.now().timestamp()
     plot_period = 60
     check_period = 60
-    predict_period = 9*60
+    predict_period = 15*60
     propogator_update_period = TRADE_LEN*60
     portfolio_refresh_period = 24*3600
     err_counter = 0

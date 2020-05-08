@@ -861,10 +861,10 @@ if __name__ == "__main__":
         data_len = np.min(np.array([len(x) for x in raw_data_list]))
         concat_data_list = [x[660:data_len] for x in raw_data_list]
 
-    train_len = 480  # Length of data to be used for training
-    test_len = 40
+    train_len = 120  # Length of data to be used for training
+    test_len = 30
     t = np.arange(0, test_len)
-    psm_step_size = 1
+    psm_step_size = 0.5
     psm_order = 5
     train_list = [x[0:train_len] for x in raw_data_list]
 
@@ -885,11 +885,11 @@ if __name__ == "__main__":
         progress_printer(system_fit.propogators[0].N, i, tsk='Evaluationg Polynomials')
         x_fit, t_fit = system_fit.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=i + 1, verbose=i==False)
         x_fit = x_fit[~np.isnan(x_fit)]
-        x_raw = concat_data_list[i][train_len:train_len+test_len]
+        x_raw = concat_data_list[i][train_len:train_len+2*test_len]
         x0 = np.mean(concat_data_list[i][train_len-10:train_len])
-        t_plot_raw = np.linspace(0, np.max(t), len(x_raw))
+        t_plot_raw = np.linspace(0, 2*test_len, len(x_raw))
         t_plot_fit = np.linspace(0, np.max(t), len(x_fit))
-        true_fit = np.polyfit(t, x_raw, 1)
+        true_fit = np.polyfit(t, x_raw[0:test_len], 1)
         true_fit_line = np.polyval(true_fit, t_plot_raw)
         trend = trend_line(coeff * ( x_fit - x_fit[0] ))
 
@@ -898,7 +898,7 @@ if __name__ == "__main__":
         plt.plot(t_plot_raw, x_raw) # True data
         plt.plot(t_fit, coeff * ( x_fit - x_fit[0] ) + x_raw[0]) # Calculated fit line
         plt.plot(t_plot_raw, true_fit_line) # True fit line
-        plt.plot(np.array([0, np.max(t)]),  np.mean(np.diff(train_list[i][-100::]))*np.ones(2)*np.array([0, np.max(t)]) + x_raw[0]) # Naive fit line
+        plt.plot(np.array([0, np.max(t)]),  np.mean(np.diff(train_list[i][-test_len::]))*np.ones(2)*np.array([0, np.max(t)]) + x_raw[0]) # Naive fit line
         plt.legend(('true', 'projected fit', 'actual fit', 'naive fit'))
         plt.title( sym_list[i] + ' Predicted Price Vs Actual')
         plt.xlabel('Time (min)')

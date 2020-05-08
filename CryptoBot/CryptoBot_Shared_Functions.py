@@ -5,7 +5,10 @@ import traceback
 import dropbox
 import sys
 import keras
+import pickle
 import pandas as pd
+from CryptoBot.constants import EXCHANGE_CONSTANTS
+from CryptoPredict.CryptoPredict import CryptoCompare
 from tzlocal import get_localzone
 from datetime import datetime
 from datetime import timedelta
@@ -18,6 +21,8 @@ from keras import models
 from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LeakyReLU
+from keras.layers import LSTM
+from keras.layers import Dropout
 
 
 
@@ -213,6 +218,23 @@ def save_file_to_dropbox(data_path, file_path, access_token):
                 print(err)
                 sys.exit()
 
+def collect_price_data(sym_list= ('ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH',
+                'REP', 'BTC', 'KNC')):
+    model_save_folder = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/psm_models//'
+    use_saved_data = False
+    if not use_saved_data:
+        cc = CryptoCompare(date_from='2020-04-21 10:00:00 EST', date_to='2020-04-27 10:57:00 EST', exchange='Coinbase')
+        raw_data_list = []
+        for sym in sym_list:
+            data = cc.minute_price_historical(sym)[sym + '_close'].values
+            raw_data_list.append(data)
+            print(sym)
+
+        data_len = np.min(np.array([len(x) for x in raw_data_list]))
+        concat_data_list = [x[0:data_len] for x in raw_data_list]
+        pickle.dump(concat_data_list,
+                    open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "wb"))
+
 class BaseNN:
     # This class is meant to serve as a parent class to neural net based machine learning classes
 
@@ -249,7 +271,7 @@ class BaseNN:
             if x_indices is None:
                 plt.plot(prediction, prediction_styles[0])
                 plt.plot(test_output, prediction_styles[1])
-                plt.legend(prediction_names[0], prediction_names[1])
+                plt.legend(prediction_names)
             else:
                 df = pd.DataFrame(data={prediction_names[0]: test_output, prediction_names[1]: prediction}, index=x_indices)
                 df.Predicted.plot(style=prediction_styles[0])
@@ -271,15 +293,46 @@ class BaseNN:
 
         return {prediction_names[0]:prediction, prediction_names[1]:test_output}
 
+class LSTM_NN(BaseNN):
+    optimization_scheme = "adam"
+    loss_func = "mean_absolute_percentage_error"
+
+    def __init__(self, model_type=Sequential(), model_path=None, seed=7, is_leakyrelu=True, activ_func='relu'):
+        super(LSTM_NN, self).__init__(model_type, model_path, seed)
+
+        self.activation_func = activ_func
+        self.is_leakyrelu = is_leakyrelu
+
+    def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):  #TODO make output_size someing editable outside the class
+        is_leaky = self.is_leakyrelu
+        activ_func = self.activation_func
+        loss = self.loss_func
+        optimizer = self.optimization_scheme
+        self.model = Sequential()
+
+        self.model.add(LSTM(1, input_shape=(inputs.shape[1], inputs.shape[2])))
+        self.model.add(Dropout(dropout))
+
+        if is_leaky:
+            for i in range(0, layer_count):
+                self.model.add(Dense(units=neurons, activation="linear", kernel_initializer='normal'))
+                self.model.add(LeakyReLU(alpha=0.01))
+        else:
+            for i in range(0, layer_count):
+                self.model.add(Dense(units=neurons, activation=activ_func, kernel_initializer='normal'))
+
+        self.model.add(Dense(units=output_size, activation="linear"))
+        self.model.compile(loss=loss, optimizer=optimizer)
+
 class ClassifierNN(BaseNN):
 
-    def __init__(self, model_type=Sequential(), N=3, input_size=17, model_path=None, seed=7):
+    def __init__(self, model_type=Sequential(), N=3, input_size=17, model_path=None, seed=7, loss_func='categorical_crossentropy'):
         super(ClassifierNN, self).__init__(model_type, model_path, seed)
         if model_path is None:
             self.model.add(Dense(30, input_dim=input_size, activation='relu'))
             self.model.add(LeakyReLU())
             self.model.add(Dense(N, activation='softmax'))
-            self.model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+            self.model.compile(loss=loss_func, optimizer='adam', metrics=['accuracy'])
 
     def __call__(self):
         return self.model

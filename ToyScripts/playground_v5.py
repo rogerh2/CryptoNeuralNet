@@ -269,12 +269,12 @@ class SystemPropogator:
             prev_polynomial = np.zeros(5)
             if next_poly is None:
                 prev_polynomial = prev_poly.polynomial()
-                next_polynomial = polynomial_list[0].polynomial()
+                # next_polynomial = polynomial_list[0].polynomial()
                 x_minus = prev_polynomial[2]
                 x_plus = next_polynomial[2]
             elif prev_poly is None:
                 next_polynomial = next_poly.polynomial()
-                prev_polynomial = polynomial_list[-1].polynomial()
+                # prev_polynomial = polynomial_list[-1].polynomial()
                 x_minus = prev_polynomial[1]
                 x_plus = next_polynomial[1]
             else:
@@ -1061,7 +1061,7 @@ if __name__ == "__main__":
         use_saved_data = True
         sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC', 'KNC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-03-30 10:00:00 EST', date_to='2020-04-01 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-04-27 10:00:00 EST', date_to='2020-04-29 10:57:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -1084,8 +1084,8 @@ if __name__ == "__main__":
         t = np.arange(0, len(data_list[0])) # Time in minutes
         poly_len = 5000 # Length of the polynomial approximation (certain size needed for frequency resolution
         poly_t = np.linspace(0, len(data_list[0]), poly_len) # Time stamps for polynomials
-        train_len = 1440 # Length of data to be used for training
-        test_len = 30
+        train_len = 480 # Length of data to be used for training
+        test_len = 120
         poly_train_ind = (int(train_len*poly_len/len(t)))# Training length equivalent for the polynomial
 
         # create the polynomial approximation
