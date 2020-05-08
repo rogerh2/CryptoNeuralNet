@@ -152,7 +152,7 @@ def trend_line(data, order=1):
 # This class represents the polynomial for a single mass (mass n)
 class Polynomial:
 
-    def __init__(self, x0, y0, zeta, omega, omega_plus, F=None):
+    def __init__(self, x0, y0, zeta, omega, omega_plus, omega_minus=0, F=None):
         self.poly = [np.array([x0, y0]), np.array([y0])]
         if F is None:
             self.force = None
@@ -163,6 +163,7 @@ class Polynomial:
         self.omega_sq = omega ** 2
         self.omega_plus = omega_plus
         self.omega_plus_sq = omega_plus ** 2
+        self.omega_minus_sq = omega_minus**2
 
     def generate_next_order(self, x_plus, x_minus):
         # y_n' = F_n - 2 * zeta_n * omega_n * y_n - omega_n^2 * ( x_n - x_(n-1)) - omega_(n+1)^2 * (x_n - x_(n+1))
@@ -187,11 +188,11 @@ class Polynomial:
         if (F is not None) and (np.abs(self.zeta) > 0): #If F and zeta are non zero
             y_next = ( F[n] - 2 * self.zeta * self.omega * y[-1] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
         elif (F is None) and (np.abs(self.zeta) > 0): #If F is zero and zeta is non zero
-            y_next = (2 * self.zeta * self.omega * y[-1] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
+            y_next = (2 * self.zeta * self.omega * y[-1] + ( omega_plus_sq * x_plus + omega_sq * x_minus) - ( omega_sq + omega_plus_sq) * x) / (n + 1)
         elif (F is not None): #If F nonzero and zeta is zero
             y_next = (F[n] + ( omega_sq - omega_plus_sq) * x + ( omega_plus_sq * x_plus - omega_sq * x_minus)) / (n + 1)
         else: #If F and zeta are both zero
-            y_next = (( omega_plus_sq * x_plus + omega_sq * x_minus) - ( omega_sq + omega_plus_sq) * x) / (n + 1)
+            y_next = (omega_plus_sq * (x_plus - x) - omega_sq * (x - x_minus)) / (n + 1)
 
         x_next_next = y_next / (n + 2) # for this particular equation, computing the next x is trivial
 
@@ -254,11 +255,12 @@ class SystemPropogator:
         for i in range(0, self.N):
             x0 = x0s[i]
             y0 = y0s[i]
+            omega_minus = omegas[i-1]
             if i < (self.N - 1):
                 omega_plus = omegas[i+1]
             else:
                 omega_plus = omegas[0]
-            self.polynomials[t0].append(Polynomial(x0, y0, zetas[i], omegas[i], omega_plus))
+            self.polynomials[t0].append(Polynomial(x0, y0, zetas[i], omegas[i], omega_plus, omega_minus=omega_minus))
 
     def t_max(self):
         return np.max(np.array(list(self.polynomials.keys())))
@@ -273,12 +275,12 @@ class SystemPropogator:
             prev_polynomial = np.zeros(5)
             if next_poly is None:
                 prev_polynomial = prev_poly.polynomial()
-                next_polynomial = polynomial_list[0].polynomial()
+                # next_polynomial = polynomial_list[0].polynomial()
                 x_minus = prev_polynomial[2]
                 x_plus = next_polynomial[2]
             elif prev_poly is None:
                 next_polynomial = next_poly.polynomial()
-                prev_polynomial = polynomial_list[-1].polynomial()
+                # prev_polynomial = polynomial_list[-1].polynomial()
                 x_minus = prev_polynomial[1]
                 x_plus = next_polynomial[1]
             else:
@@ -859,10 +861,10 @@ if __name__ == "__main__":
         raw_data_list = pickle.load(
             open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "rb"))
         data_len = np.min(np.array([len(x) for x in raw_data_list]))
-        concat_data_list = [x[660:data_len] for x in raw_data_list]
+        concat_data_list = [x[800:data_len] for x in raw_data_list]
 
-    train_len = 120  # Length of data to be used for training
-    test_len = 30
+    train_len = 480  # Length of data to be used for training
+    test_len = 120
     t = np.arange(0, test_len)
     psm_step_size = 0.5
     psm_order = 5

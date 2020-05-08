@@ -4,11 +4,13 @@ from PIL import Image, ImageTk
 import numpy as np
 from CryptoBot.SpreadBot import Product, Wallet, LiveRunSettings, CombinedPortfolio, Bot, PortfolioTracker, PSMPredictBot
 from CryptoBot.CryptoBot_Shared_Functions import num2str
+from matplotlib import pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # Here we add a class to represent the links for an individual currency
 class CurrencyGui(Frame):
 
-    def __init__(self, master, controller, wallet, bot, propogator):
+    def __init__(self, master, controller, wallet, bot, sym):
         # parameters that you want to send through the Frame class.
         Frame.__init__(self, master)
         self.master = master
@@ -16,8 +18,9 @@ class CurrencyGui(Frame):
         self.wallet = wallet
         self.bot = bot
         self.tracker = 0
+        self.sym = sym
 
-        self.showImg("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/test.png")
+        self.plot()#self.showImg("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/test.png")
         self.price_entry = self.display_text_entry('Price', 1, 0)
         self.spread_entry = self.display_text_entry('Spread', 2, 0)
         self.buy_button = Button(master, text='Buy', command=self.buy)
@@ -44,6 +47,25 @@ class CurrencyGui(Frame):
         img = Label(self.master, image=render)
         img.image = render
         img.grid(row=0, columnspan=4)
+
+    def plot(self):
+        figure = plt.Figure(figsize=(6, 5), dpi=100)
+        axis = figure.add_subplot(111)
+
+        prediction = self.bot.predictions[self.sym]
+        raw_data = self.bot.raw_data[self.sym]
+        reversed_prediction = self.bot.reversed_predictions[self.sym]
+
+        axis.plot(np.arange(0, len(raw_data)), raw_data)
+        axis.plot(np.arange(len(raw_data), len(prediction) + len(raw_data)), prediction)
+        axis.plot(np.arange(len(raw_data) - len(reversed_prediction), len(raw_data)), reversed_prediction)
+        # plt.title(self.sym + ' Prediction')
+        # plt.xlabel('Time (min)')
+        # plt.ylabel('Price ($)')
+
+        chart_type = FigureCanvasTkAgg(figure, master=self.master)
+        chart_type.show()
+        chart_type.get_tk_widget().grid(row=0, columnspan=4)
 
     def get_price_and_spread(self):
         price = self.price_entry.get()
@@ -74,8 +96,6 @@ class CurrencyGui(Frame):
     def refresh_portfolio(self):
         Label(self.master, text='Sym in Portfolio: ' + num2str(self.tracker)).grid(row=1, column=3)
         Label(self.master, text='Average Buy Price: ' + num2str(self.tracker)).grid(row=2, column=3)
-        self.tracker += np.random.rand()
-
 
 
 
@@ -157,7 +177,12 @@ if __name__ == "__main__":
     root.geometry("800x600")
 
     # creation of an instance
-    app = CurrencyGui(root, None, None, None, None)#Window(root)
+    api_input = input('What is the api key? ')
+    secret_input = input('What is the secret key? ')
+    passphrase_input = input('What is the passphrase? ')
+    psmbot = PSMPredictBot(api_input, secret_input, passphrase_input)
+    psmbot.predict(verbose_on=True)
+    app = CurrencyGui(root, None, None, psmbot, 'BTC')#Window(root)
 
     # mainloop
     root.mainloop()
