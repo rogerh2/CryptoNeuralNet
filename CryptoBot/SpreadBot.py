@@ -51,7 +51,7 @@ SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
 MIN_SPREAD = 1.082 # This is the minnimum spread before a trade can be made
 MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders are utilized
-TRADE_LEN = 40 # This is the amount of time I desire for trades to be filled in
+TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
 TRAIN_LEN = 480
 STOP_PROFIT = 0.1 # This is the additional profit needed for the bot to begin using stop limit orders
 MIN_PROFIT = 0.002 # This is the minnimum value (net profit) to get per buy-sell pair
@@ -572,6 +572,7 @@ class Bot:
     def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD'):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         self.settings.update_settings()
+        self.min_spread = MIN_SPREAD
         current_offset = self.settings.read_setting_from_file('portfolio value offset')
         self.portfolio = CombinedPortfolio(api_key, secret_key, passphrase, syms, is_sandbox=is_sandbox_api, offset_value=current_offset, base_currency=base_currency)
         self.symbols = syms
@@ -596,6 +597,7 @@ class Bot:
         MIN_SPREAD = 1 + 2 * mkr_fee + MIN_PROFIT
         MAX_LIMIT_SPREAD = 1 + 2 * tkr_fee + MIN_PROFIT + STOP_SPREAD + STOP_PROFIT
         self.settings.write_setting_to_file('minnimum_spread', MIN_SPREAD)
+        self.min_spread = MIN_SPREAD
 
     def place_order(self, price, side, size, sym, post_only=True, time_out=False, stop_price=None):
         order_id = self.portfolio.wallets[sym].product.place_order(price, side, size, post_only=post_only, time_out=time_out, stop_price=stop_price)
@@ -1737,6 +1739,9 @@ class PSMPredictBot(PSMSpreadBot):
             size = order['size']
             buy_price = order['price']
             if (order['side']=='sell'):
+                continue
+            # If an order is placed without a spread ignore it
+            if np.isnan(order['spread']):
                 continue
 
             current_price = wallet.product.get_top_order('bids')
