@@ -1842,6 +1842,7 @@ class PortfolioTracker:
         absolute_data = {'Portfolio Value:':self.initial_value}
         self.portfolio_value = pd.DataFrame(data=absolute_data, index=[current_datetime])
         self.dbx_key = dbx_key
+        self.data_path = SAVED_DATA_FILE_PATH
 
     def reset(self):
         percentage_data = {'Market': 100, 'Algorithm': 100}
