@@ -1,16 +1,43 @@
 # Simple enough, just import everything from tkinter.
+import numpy as np
+import pandastable
 from tkinter import *
 from PIL import Image, ImageTk
-import numpy as np
 from CryptoBot.SpreadBot import Product, Wallet, LiveRunSettings, CombinedPortfolio, Bot, PortfolioTracker, PSMPredictBot
 from CryptoBot.CryptoBot_Shared_Functions import num2str
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from threading import Thread
 from time import sleep
-import pandastable
+from time import time
+from queue import Queue
 
+# global constants
+QUOTE_ORDER_MIN = 10
 SYMS=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC')
+
+# Signals for the Queue
+QUEUE_PAUSE_ORDER_TRACKER_UPDATES = 0
+QUEUE_START_ORDER_TRACKER_UPDATES = 1
+QUEUE_BUY = 2
+QUEUE_SELL = 3
+QUEUE_KILL_SIG = 4
+QUEUE_PREDICTION_SLEEP = 5
+QUEUE_PREDICTION_RESUME = 6
+
+# Indicies for order dictionaries
+SYM = 'sym'
+LIMIT_PRICE = 'limit'
+STOP_PRICE = 'stop'
+TYPE = 'type'
+SIZE = 'size'
+SPREAD = 'spread'
+CORRESPONDING_ID = 'corr'
+
+# Names for Frame Widgets
+WIDGET_HOME = 'home'
+WIDGET_ORDERS = 'orders'
+WIDGET_SLEEP = 'sleep'
 
 # Supporting Classes
 # These classes are for sub systems in individual GUI windows
@@ -112,14 +139,15 @@ class CryptoLink:
 # Here we add a class to represent the window for an individual currency
 class CurrencyGui(Frame):
 
-    def __init__(self, master, bot, sym):
+    def __init__(self, master, bot: PSMPredictBot, queue: Queue, sym: str):
         # parameters that you want to send through the Frame class.
-        Frame.__init__(self, master)
+        Frame.__init__(self, master, name=sym.lower())
         self.master = master
         self.wallet = bot.portfolio.wallets[sym]
         self.bot = bot
         self.tracker = 0
         self.sym = sym
+        self.queue = queue
 
         # parameters that are used only when set
         self.avg_buy_price = 0
@@ -162,18 +190,28 @@ class CurrencyGui(Frame):
         entry.grid(columnspan=2,row=row, column=(column+1))
         return entry
 
-    def get_avg_buy_price(self):
+    def get_unhandled_buy_orders_ids(self):
         orders = self.bot.orders
-        avg_buy_price = 0
-        amnt_held = 0
+        ids = []
         for id in orders.index:
             order = orders.loc[id]
             if not np.isnan(order['spread']):
                 # If there is a spread listed the buy order is already taken care of
                 continue
             if (self.sym in order['product_id']) and (order['side']=='buy'):
-                avg_buy_price += float(order['price'])*order['filled_size']
-                amnt_held += order['filled_size']
+                ids.append(id)
+
+        return ids
+
+    def get_avg_buy_price(self):
+        orders = self.bot.orders
+        avg_buy_price = 0
+        amnt_held = 0
+        unhandled_ids = self.get_unhandled_buy_orders_ids()
+        for id in unhandled_ids:
+            order = orders.loc[id]
+            avg_buy_price += float(order['price'])*order['filled_size']
+            amnt_held += order['filled_size']
 
         if amnt_held:
             self.avg_buy_price =  avg_buy_price/amnt_held
@@ -250,16 +288,34 @@ class CurrencyGui(Frame):
         plt.pause(0.01)
 
     def buy(self):
+        # This function places instructions for a buy order in the Queue
         price, spread = self.get_price_and_spread()
+        if not spread:
+            spread = np.nan
         if price:
-            print('Price: ' + num2str(price))
-            if spread:
-                print('Spread: ' + num2str(spread))
+            # Stop limit functionality available but not used as of now
+            order = {TYPE:QUEUE_BUY, SYM:self.sym, LIMIT_PRICE:price, SPREAD:spread, STOP_PRICE:None}
+            self.queue.put(order)
+            print('Buy order queued\n')
 
     def sell(self):
-        price, spread = self.get_price_and_spread()
+        price, _ = self.get_price_and_spread()
         if price:
-            print('Price: ' + num2str(price))
+            ids = self.get_unhandled_buy_orders_ids()
+            # pause the order tracking updates to add the new spreads to the order tracking
+            self.queue.put({TYPE:QUEUE_PAUSE_ORDER_TRACKER_UPDATES})
+            sleep(7) # wait 7 seconds to give the order_tracking time to respond
+            for id in ids:
+                order = self.bot.orders.loc[id]
+                buy_price = order['price']
+                nom_spread = price / buy_price
+                size = order['filled_size']
+                self.bot.orders.at[id, 'spread'] = nom_spread
+                order = {TYPE: QUEUE_SELL, SYM: self.sym, LIMIT_PRICE: price, SIZE:size, STOP_PRICE: None}
+                self.queue.put(order)
+                print('Sell Order for buy id: ' + id + ' queued\n')
+            self.queue.put({TYPE: QUEUE_START_ORDER_TRACKER_UPDATES})
+
 
     def refresh(self):
         self.get_avg_buy_price()
@@ -271,13 +327,14 @@ class CurrencyGui(Frame):
 class HomeGui(Frame):
 
     # Define settings upon initialization. Here you can specify
-    def __init__(self, master, bot, syms=SYMS):
+    def __init__(self, master, bot: PSMPredictBot, queue: Queue, syms=SYMS):
         # parameters that you want to send through the Frame class.
-        Frame.__init__(self, master)
+        Frame.__init__(self, master, name=WIDGET_HOME)
 
 
         # reference to the master widget, which is the tk window
         self.master = master
+        self.queue = queue
 
         canvases = [] # This holds the canvases that plot each prediction
         lables = [] # This holds the labels that show the current amount held
@@ -319,12 +376,13 @@ class HomeGui(Frame):
 
 # Here we create a screen to allow editing the tracked orders
 class Orders(Frame):
-    def __init__(self, master, bot):
+    def __init__(self, master, bot: PSMPredictBot, queue: Queue):
         # parameters that you want to send through the Frame class.
-        Frame.__init__(self, master)
+        Frame.__init__(self, master, name=WIDGET_ORDERS)
 
         # reference to the master widget, which is the tk window
         self.master = master
+        self.queue = queue
         self.bot = bot
         self.table = pt = pandastable.Table(self, dataframe=self.bot.orders, showtoolbar=True, showstatusbar=True)
         pt.show()
@@ -332,12 +390,27 @@ class Orders(Frame):
     def refresh(self):
         self.table.redraw()
 
+# Here we create a screen to allow editing the tracked orders
+class Sleep_Screen(Frame):
+    def __init__(self, master):
+        # parameters that you want to send through the Frame class.
+        Frame.__init__(self, master, name=WIDGET_SLEEP)
+
+        # reference to the master widget, which is the tk window
+        self.master = master
+        label = Label(self, text='Sleep')
+        label.grid()
+
+    def refresh(self):
+        pass
+
 # This class controlls all the frames
 class Controller(Tk):
 
-    def __init__(self, bot, handler, *args, **kwargs):
+    def __init__(self, bot: PSMPredictBot, handler, queue: Queue, *args, **kwargs):
         Tk.__init__(self, *args, **kwargs)
         self.bot = bot
+        self.queue = queue
         self._frame = None
         self.geometry("800x600")
         self.switch_frame('Home')
@@ -375,25 +448,42 @@ class Controller(Tk):
         order_command = lambda: self.switch_frame("Orders")
         edit.add_command(label="Orders", command=order_command)
 
+        # adds a command to the menu option, calling it exit, and the
+        # command it runs on event is client_exit
+        order_command = lambda: self.switch_frame("Sleep")
+        edit.add_command(label="Sleep", command=order_command)
+
         # added "file" to our menu
         menu.add_cascade(label="Navigate", menu=edit)
 
     def switch_frame(self, type):
+        new_frame = None
         if type in SYMS:
-            new_frame = CurrencyGui(self, self.bot, type)
-        elif type=='Orders':
-            new_frame = Orders(self, self.bot)
-        else:
-            new_frame = HomeGui(self, self.bot)
+            new_frame = CurrencyGui(self, self.bot, self.queue, type)
+        elif (type=='Orders') and (WIDGET_ORDERS not in str(self._frame)):
+            new_frame = Orders(self, self.bot, self.queue)
+            self.queue.put({TYPE:QUEUE_PAUSE_ORDER_TRACKER_UPDATES})
+        elif (type=='Sleep') and  (WIDGET_SLEEP not in str(self._frame)):
+            new_frame = Sleep_Screen(self)
+            self.queue.put({TYPE:QUEUE_PREDICTION_SLEEP})
+        elif WIDGET_HOME not in str(self._frame):
+            new_frame = HomeGui(self, self.bot, self.queue)
 
-        if self._frame is not None:
-            self._frame.destroy()
+        if new_frame is not None:
+            # If you are leaving the orders page start back auto updateing
+            if (type != 'Orders') and  (WIDGET_ORDERS in str(self._frame)):
+                self.queue.put({TYPE:QUEUE_START_ORDER_TRACKER_UPDATES})
+            if (type != 'Sleep') and  (WIDGET_SLEEP in str(self._frame)):
+                self.queue.put({TYPE:QUEUE_PREDICTION_RESUME})
 
-        self._frame = new_frame
-        self._frame.grid()
+            if self._frame is not None:
+                self._frame.destroy()
+
+            self._frame = new_frame
+            self._frame.grid()
 
     def client_exit(self):
-        # TODO Use a queue to send a stop signal
+        self.queue.put({TYPE:QUEUE_KILL_SIG})
         exit()
 
     def refresh(self):
@@ -403,8 +493,11 @@ class Controller(Tk):
 class Bot_Handler:
 
     keep_running = True
+    desired_number_of_currencies = 5
+    update_orders = True
+    update_predictions = True
 
-    def __init__(self, bot):
+    def __init__(self, bot: PSMPredictBot):
         self.bot = bot
         # Ensure all values are initialized
         print('Initializing Values')
@@ -415,28 +508,138 @@ class Bot_Handler:
         portfolio_thread.join()
         predict_thread.join()
         print('Initialization Complete')
-        self.root = Controller(self.bot, self)
+        self.gui_queue = Queue() # This queue handles passing information to the handler from the gui
+        self.order_queue = Queue() # This queue handles pass order information internally
+        self.root = Controller(self.bot, self, self.gui_queue)
+        self.queued_orders = []
+
+    def get_buy_order_size(self, wallet, buy_price):
+        self.bot.portfolio.update_value()
+        full_portfolio_value = self.bot.get_full_portfolio_value()
+        usd_available = self.bot.portfolio.get_usd_available()
+        # Determine the total order price
+        nominal_order_price = full_portfolio_value / ( self.desired_number_of_currencies )
+
+        if nominal_order_price < QUOTE_ORDER_MIN:
+            # never try to place an order smaller than the minimum
+            nominal_order_price = QUOTE_ORDER_MIN
+
+        if nominal_order_price > (usd_available - QUOTE_ORDER_MIN):
+            # If placing the nominal order leaves an unusable amount of money then only use available
+            order_size = usd_available / buy_price
+        else:
+            order_size = nominal_order_price / buy_price
+
+            # Always insure the order is small enough to go through in a reasonable amount of time
+            mean_size, _, _ = wallet.product.get_mean_and_std_of_fill_sizes('asks', weighted=False)
+            if order_size > (buy_price * mean_size):
+                order_size = buy_price * mean_size
+
+        return order_size
+
+    def add_order_to_bot_tracking(self, order_id, sym, side, corresponding_order=0, spread=np.nan):
+        if order_id is None:
+            print(sym + ' ' + side + ' order rejected\n')
+        else:
+            print('Order placed\n')
+            for i in range(0, 10):
+                self.bot.add_order(order_id, sym, side, time(), corresponding_order, spread=spread)
+                if order_id in self.bot.orders.index:
+                    break
+                else:
+                    sleep(5)
+            if order_id not in self.bot.orders.index:
+                print(sym + ' order ' + order_id + ' did not save')
+
+    def place_buy_order(self, order):
+        sym = order[SYM]
+        limit_price = order[LIMIT_PRICE]
+        stop_price = order[STOP_PRICE]
+        wallet = self.bot.portfolio.wallets[sym]
+        mkr_fee, tkr_fee = self.bot.portfolio.get_fee_rate()
+
+        size = self.get_buy_order_size(wallet, limit_price)
+        size /= (1 + tkr_fee)
+
+        order_id = self.bot.place_order(limit_price, 'buy', size, sym, post_only=False, stop_price=stop_price, time_out=True)
+        self.add_order_to_bot_tracking(order_id, sym, 'buy', spread=order[SPREAD])
+
+    def place_sell_order(self, order):
+        sym = order[SYM]
+        limit_price = order[LIMIT_PRICE]
+        stop_price = order[STOP_PRICE]
+        size = order[SIZE]
+
+        order_id = self.bot.place_order(limit_price, 'sell', size, sym, post_only=False, stop_price=stop_price)
+        self.add_order_to_bot_tracking(order_id, sym, 'sell', corresponding_order=order[CORRESPONDING_ID])
+
+
+    def place_order(self, order):
+        if order[TYPE] == QUEUE_BUY:
+            self.place_buy_order(order)
+        elif order[TYPE] == QUEUE_SELL:
+            pass
+
+    def queue_handler(self):
+        Q = self.gui_queue
+        # The bot handler is the only one that modifies the bot object except for the tracked orders
+        while self.keep_running:
+            q_input = Q.get()
+            input_type = q_input['type']
+            # When the order editor screen is up, pause the automatic order tracking updates
+            if input_type == QUEUE_PAUSE_ORDER_TRACKER_UPDATES:
+                self.update_orders = False
+                print('Order Tracking Paused')
+            elif input_type == QUEUE_START_ORDER_TRACKER_UPDATES:
+                self.update_orders = True
+                print('Order Tracking Resumed')
+            elif input_type == QUEUE_PREDICTION_SLEEP:
+                self.update_predictions = False
+                print('Predictions Paused')
+            elif input_type == QUEUE_PREDICTION_RESUME:
+                self.update_predictions = True
+                print('Predictions Resumed')
+            elif (input_type == QUEUE_BUY) or (input_type == QUEUE_SELL):
+                self.order_queue.put(q_input)
+            elif input_type == QUEUE_KILL_SIG:
+                self.keep_running = False
 
     def predict(self):
+        prediction_refresh_time_s = 7 * 60
+        t0 = time()
         while self.keep_running:
-            self.bot.predict()
-            sleep(5*60)
+            if ((time() - t0) > prediction_refresh_time_s) and (self.update_predictions):
+                self.bot.predict()
+                t0 = time()
+            sleep(5)
 
-    def update_portfolio(self):
+    def bot_thread(self):
+        # This thread handles the interactions with coinbase, only one thread handles this to avoid timeouts
+        refresh_time_s = 60
+        t0 = time()
         while self.keep_running:
-            self.bot.portfolio.update_value()
-            self.bot.update_orders()
-            mkr_fee, tkr_fee = self.bot.portfolio.get_fee_rate()
-            self.bot.update_min_spread(mkr_fee,tkr_fee=tkr_fee)
-            sleep(60)
+            if (time() - t0) > refresh_time_s:
+                self.bot.portfolio.update_value()
+                mkr_fee, tkr_fee = self.bot.portfolio.get_fee_rate()
+                self.bot.update_min_spread(mkr_fee, tkr_fee=tkr_fee)
+                if self.update_orders:
+                    self.bot.update_orders()
+                    # If you can currently able to update the tracked orders, place all queued orders
+                    while not self.order_queue.empty():
+                        order = self.order_queue.get_nowait()
+                        self.place_order(order)
+                    # This part handles automatic sell orders
+                    self.bot.place_limit_sells()
+            sleep(5)
 
     def run(self):
         predict_thread = Thread(target=self.predict)
-        portfolio_thread = Thread(target=self.update_portfolio)
+        portfolio_thread = Thread(target=self.bot_thread)
+        queue_thread = Thread(target=self.queue_handler)
         predict_thread.start()
+        queue_thread.start()
         portfolio_thread.start()
         self.root.mainloop()
-        self.keep_running = False
 
 
 if __name__ == "__main__":

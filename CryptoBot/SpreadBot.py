@@ -704,7 +704,7 @@ class TrackerBot(Bot):
         self.place_holder_orders = place_holder_orders
 
     # Methods to manage dataframe storing orders
-    def add_order(self, id, sym, side, place_time, corresponding_buy_id, refresh=True, spread=None):
+    def add_order(self, id, sym, side, place_time, corresponding_buy_id, refresh=True, spread=np.nan):
         product = self.portfolio.wallets[sym].product
 
         if refresh:
@@ -755,7 +755,7 @@ class TrackerBot(Bot):
             self.orders = self.orders.drop(id)
             return True
 
-    def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None, spread=None):
+    def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None, spread=np.nan):
         if side == 'sell':
             # For sell orders remove if the are no longer in the books
             stored_ids = self.orders.index
