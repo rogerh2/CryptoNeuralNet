@@ -1,20 +1,29 @@
 # Simple enough, just import everything from tkinter.
 import numpy as np
 import pandastable
+import pandas as pd
+import os
 from tkinter import *
 from PIL import Image, ImageTk
-from CryptoBot.SpreadBot import Product, Wallet, LiveRunSettings, CombinedPortfolio, Bot, PortfolioTracker, PSMPredictBot
+from CryptoBot.SpreadBot import Product, Wallet, LiveRunSettings, CombinedPortfolio, Bot, PSMPredictBot
 from CryptoBot.CryptoBot_Shared_Functions import num2str
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from threading import Thread
 from time import sleep
 from time import time
+from datetime import datetime
 from queue import Queue
+from CryptoBot.CryptoBot_Shared_Functions import current_est_time
+from CryptoBot.CryptoBot_Shared_Functions import save_file_to_dropbox
 
 # global constants
 QUOTE_ORDER_MIN = 10
 SYMS=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC')
+
+def portfolio_file_path_generator():
+    file_path_dt_format = '%Y%m%d_%H%M_%Z'
+    return r'./' + current_est_time().strftime(file_path_dt_format) + '_coinbasepro'
 
 # Signals for the Queue
 QUEUE_PAUSE_ORDER_TRACKER_UPDATES = 0
@@ -37,12 +46,147 @@ CORRESPONDING_ID = 'corr'
 # Names for Frame Widgets
 WIDGET_HOME = 'home'
 WIDGET_ORDERS = 'orders'
+WIDGET_PORTFOLIO = 'portfolio_view'
 WIDGET_SLEEP = 'sleep'
 
 # Supporting Classes
 # These classes are for sub systems in individual GUI windows
 
 # This class handles the menu bar
+class PortfolioTracker:
+
+    def __init__(self, portfolio, dbx_key=None):
+        self.portfolio = portfolio
+        percentage_data = {'Market': 100, 'Algorithm': 100}
+        current_datetime = current_est_time()
+        self.returns = pd.DataFrame(data=percentage_data, index=[current_datetime])
+        self.initial_price = portfolio.wallets['BTC'].product.get_top_order('bids')
+        self.initial_value = portfolio.get_full_portfolio_value()
+        self.prediction_ticker = 'BTC'
+        absolute_data = {'Portfolio Value:':self.initial_value}
+        self.portfolio_value = pd.DataFrame(data=absolute_data, index=[current_datetime])
+        self.dbx_key = dbx_key
+        self.data_path = portfolio_file_path_generator()
+        self.return_png_path = self.data_path + r'/returns.png'
+        self.value_png_path = self.data_path + r'/value.png'
+
+        if not os.path.exists(self.data_path):
+            os.mkdir(self.data_path)
+        else:
+            override_saved_data = input('Override data in current saved data folder? (yes/no)')
+            if override_saved_data != 'yes':  # TODO change to allow inclusion of a new file name (also print old one)
+                raise ValueError('Folder for saved plots already taken')
+
+    def reset(self):
+        percentage_data = {'Market': 100, 'Algorithm': 100}
+        current_datetime = current_est_time()
+        self.returns = pd.DataFrame(data=percentage_data, index=[current_datetime])
+        self.initial_price = self.portfolio.wallets['BTC'].product.get_top_order('bids')
+        self.initial_value = self.portfolio.get_full_portfolio_value()
+        self.prediction_ticker = 'BTC'
+        absolute_data = {'Portfolio Value:': self.initial_value}
+        self.portfolio_value = pd.DataFrame(data=absolute_data, index=[current_datetime])
+
+    def format_price_info(self, returns, price):
+        if returns >= 0:
+            value_sym = '+'
+        else:
+            value_sym = '-'
+
+        return_str = value_sym + num2str(returns, 3)
+        formated_string = '$' + num2str(price, 2) + ' (' + return_str + ')'
+
+        return formated_string
+
+    def add_new_row(self, df, new_row):
+        # Append data to dataframes
+        new_df = df.append(new_row)
+
+        # Ensure dataframes are not too long
+        diff_from_max_len = len(new_df.index) - 60000
+        if diff_from_max_len > 0:
+            new_df = new_df.iloc[diff_from_max_len::]
+
+        return new_df
+
+    def update_returns_data(self):
+        # Scrape data
+        price = self.portfolio.wallets['BTC'].product.get_top_order('bids')
+        portfolio_value = self.portfolio.get_full_portfolio_value()
+
+        # Setup calculated values
+        current_datetime = current_est_time()
+        market_returns = 100 * price / self.initial_price - 100
+        portfolio_returns = 100 * portfolio_value / self.initial_value - 100
+
+        # Setup new rows
+        data = {'Market': market_returns + 100, 'Algorithm': portfolio_returns + 100}
+        absolute_data = {'Portfolio Value:': portfolio_value}
+        new_percentage_row = pd.DataFrame(data=data, index=[current_datetime])
+        new_portfolio_row = pd.DataFrame(data=absolute_data, index=[current_datetime])
+
+        # Append data to dataframes
+        self.returns = self.add_new_row(self.returns, new_percentage_row)
+        self.portfolio_value = self.add_new_row(self.portfolio_value, new_portfolio_row)
+
+        return portfolio_returns, market_returns, portfolio_value, price
+
+    def plot_returns(self):
+
+        # Get data
+        portfolio_returns, market_returns, portfolio_value, price = self.update_returns_data()
+        portfolio_str = self.format_price_info(portfolio_returns, portfolio_value)
+        market_str = self.format_price_info(market_returns, price)
+
+        # Plot returns
+        self.returns.plot()
+        plt.title('Portfolio: ' + portfolio_str + '\n' + self.prediction_ticker + ': ' + market_str)
+        plt.xlabel('Date/Time')
+        plt.ylabel('% Initial Value')
+
+        plt.savefig(self.data_path + r'/returns.png')
+        plt.close()
+
+        # Plot portfolio value
+        self.portfolio_value.plot()
+        plt.title('Total Portfolio Value')
+        plt.xlabel('Date/Time')
+        plt.ylabel('Portfolio Value ($)')
+        plt.savefig(self.data_path + r'/value.png')
+        plt.close()
+
+        # Save raw data to csv
+        self.returns.to_csv(self.data_path + r'/returns.csv')
+        self.portfolio_value.to_csv(self.data_path + r'/value.csv')
+
+        return portfolio_value
+
+    def move_data_to_drop_box(self):
+        # Define the dropbox path
+        dbx_path = r'/Roger Hobbies/crypto/Portfolio Returns' + self.data_path[1::] # the 1:: is to remove the period at the beginning
+        returns_csv_path = r'/returns.csv'
+        return_png_path = r'/returns.png'
+        value_csv_path = r'/value.csv'
+        value_png_path = r'/value.png'
+        files_to_move = (returns_csv_path, return_png_path, value_csv_path, value_png_path)
+
+        # Move the current folders contents to dropbox
+        for fpath in files_to_move:
+            print(dbx_path + fpath)
+            save_file_to_dropbox(self.data_path + fpath, dbx_path + fpath, self.dbx_key)
+
+        # Delete the current folder and create a new one
+        files_in_directory = os.listdir(self.data_path)
+        for file in files_in_directory:
+            os.remove(self.data_path + r'/' + file)
+        os.rmdir(self.data_path)
+        self.data_path = portfolio_file_path_generator()
+
+        if not os.path.exists(self.data_path):
+            os.mkdir(self.data_path)
+        self.return_png_path = self.data_path + r'/returns.png'
+        self.value_png_path = self.data_path + r'/value.png'
+
 
 # This is a base frame to handle plots of cryptocurrency prices and their predictions
 class CryptoCanvas:
@@ -323,6 +467,39 @@ class CurrencyGui(Frame):
         Label(self, text = 'Average Buy Price: ' + num2str(self.avg_buy_price, digits=self.wallet.product.usd_decimal_num)).grid(row=2, column=3)
         self.update_plot()
 
+# Here we create a screen to allow editing the tracked orders
+class Portfolio(Frame):
+    def __init__(self, master, bot: PSMPredictBot, returns_path: str, value_path: str):
+        # parameters that you want to send through the Frame class.
+        Frame.__init__(self, master, name=WIDGET_PORTFOLIO)
+
+        # reference to the master widget, which is the tk window
+        self.master = master
+        self.bot = bot
+        self.tracker = tracker
+        portfolio_returns = returns_path
+        portfolio_value = value_path
+        self.showImg(portfolio_returns)
+        self.showImg(portfolio_value)
+
+    def showImg(self, img_path, resize=False):
+        load = Image.open(img_path)
+        # Make the image smaller
+        if resize:
+            load = load.resize((250, 250), Image.ANTIALIAS)
+        render = ImageTk.PhotoImage(load)
+
+        # labels can be text or images
+        img = Label(self, image=render)
+        img.image = render
+        img.grid(row=1, column=0)
+
+    def refresh(self):
+        portfolio_returns = self.tracker.return_png_path
+        portfolio_value = self.tracker.value_png_path
+        self.showImg(portfolio_returns)
+        self.showImg(portfolio_value)
+
 # Here, we are creating a class to handle the home screen, which has links to all the individual currency screens
 class HomeGui(Frame):
 
@@ -407,7 +584,7 @@ class Sleep_Screen(Frame):
 # This class controlls all the frames
 class Controller(Tk):
 
-    def __init__(self, bot: PSMPredictBot, handler, queue: Queue, *args, **kwargs):
+    def __init__(self, bot: PSMPredictBot, handler, queue: Queue, returns_path: str, value_path: str, *args, **kwargs):
         Tk.__init__(self, *args, **kwargs)
         self.bot = bot
         self.queue = queue
@@ -415,6 +592,8 @@ class Controller(Tk):
         self.geometry("800x600")
         self.switch_frame('Home')
         self.handler = handler
+        self.returns = returns_path
+        self.value = value_path
         self.menu()
 
     # Creats the menu
@@ -453,6 +632,11 @@ class Controller(Tk):
         order_command = lambda: self.switch_frame("Sleep")
         edit.add_command(label="Sleep", command=order_command)
 
+        # adds a command to the menu option, calling it exit, and the
+        # command it runs on event is client_exit
+        order_command = lambda: self.switch_frame("Portfolio")
+        edit.add_command(label="Portfolio", command=order_command)
+
         # added "file" to our menu
         menu.add_cascade(label="Navigate", menu=edit)
 
@@ -460,6 +644,8 @@ class Controller(Tk):
         new_frame = None
         if type in SYMS:
             new_frame = CurrencyGui(self, self.bot, self.queue, type)
+        if type == 'Portfolio':
+            new_frame = Portfolio(self, self.bot, self.returns, self.value)
         elif (type=='Orders') and (WIDGET_ORDERS not in str(self._frame)):
             new_frame = Orders(self, self.bot, self.queue)
             self.queue.put({TYPE:QUEUE_PAUSE_ORDER_TRACKER_UPDATES})
@@ -497,20 +683,17 @@ class Bot_Handler:
     update_orders = True
     update_predictions = True
 
-    def __init__(self, bot: PSMPredictBot):
+    def __init__(self, bot: PSMPredictBot, tracker: PortfolioTracker):
         self.bot = bot
         # Ensure all values are initialized
         print('Initializing Values')
-        predict_thread = Thread(target=self.bot.predict)
-        portfolio_thread = Thread(target=self.bot.portfolio.update_value)
-        predict_thread.start()
-        portfolio_thread.start()
-        portfolio_thread.join()
-        predict_thread.join()
+        self.bot.predict()
+        self.bot.portfolio.update_value()
         print('Initialization Complete')
         self.gui_queue = Queue() # This queue handles passing information to the handler from the gui
         self.order_queue = Queue() # This queue handles pass order information internally
-        self.root = Controller(self.bot, self, self.gui_queue)
+        self.tracker = tracker
+        self.root = Controller(self.bot, self, self.gui_queue, self.tracker.return_png_path, self.tracker.value_png_path)
         self.queued_orders = []
 
     def get_buy_order_size(self, wallet, buy_price):
@@ -616,8 +799,13 @@ class Bot_Handler:
     def bot_thread(self):
         # This thread handles the interactions with coinbase, only one thread handles this to avoid timeouts
         refresh_time_s = 60
+        plot_period = 5*60
+        portfolio_refresh_period = 24*3600
+        last_portfolio_refresh = time()
+        last_plot = time()
         t0 = time()
         while self.keep_running:
+            current_time = time()
             if (time() - t0) > refresh_time_s:
                 self.bot.portfolio.update_value()
                 mkr_fee, tkr_fee = self.bot.portfolio.get_fee_rate()
@@ -630,6 +818,16 @@ class Bot_Handler:
                         self.place_order(order)
                     # This part handles automatic sell orders
                     self.bot.place_limit_sells()
+                    t0 = time()
+            if (current_time > (last_plot + plot_period)):
+                portfolio_value = self.tracker.plot_returns()
+                last_plot = datetime.now().timestamp()
+
+            if (current_time > (portfolio_refresh_period + last_portfolio_refresh)):
+                self.tracker.move_data_to_drop_box()
+                print('Portfolio Data moved to DropBox\n')
+                self.tracker.reset()
+                last_portfolio_refresh = current_time
             sleep(5)
 
     def run(self):
@@ -653,14 +851,20 @@ if __name__ == "__main__":
     api_input = input('What is the api key? ')
     secret_input = input('What is the secret key? ')
     passphrase_input = input('What is the passphrase? ')
+    drop_box_key = input('What is the DropBox Key? ')
     psmbot = PSMPredictBot(api_input, secret_input, passphrase_input)
+    tracker = PortfolioTracker(psmbot.portfolio, dbx_key=drop_box_key)
+    portfolio_value = tracker.initial_value
+    print('Initializing Portfolio Tracking')
+    tracker.plot_returns()
+    print('SpreadBot starting value ' + num2str(portfolio_value, 2))
     # psmbot.predict(verbose_on=True)
     # for sym in SYMS:
     #     psmbot.predictions[sym] = np.arange(0, 30) + 10
     #     psmbot.reversed_predictions[sym] = np.arange(-30, 0) + 10
     #     psmbot.raw_data[sym] = np.arange(-480, 0) + 10
 
-    bot_handler = Bot_Handler(psmbot)
+    bot_handler = Bot_Handler(psmbot, tracker)
     bot_handler.run()
 
     #116809
