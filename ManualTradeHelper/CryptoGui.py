@@ -118,6 +118,8 @@ class CryptoLink:
         amnt_held = 0
         for id in orders.index:
             order = orders.loc[id]
+            if order['side'] == 'sell':
+                continue
             if not np.isnan(order['spread']):
                 # If there is a spread listed the buy order is already taken care of
                 continue
@@ -312,7 +314,7 @@ class CurrencyGui(Frame):
                 size = order['filled_size']
                 self.bot.orders.at[id, 'spread'] = nom_spread
                 order = {TYPE: QUEUE_SELL, SYM: self.sym, LIMIT_PRICE: price, SIZE:size, STOP_PRICE: None}
-                self.queue.put(order)
+                # self.queue.put(order)
                 print('Sell Order for buy id: ' + id + ' queued\n')
             self.queue.put({TYPE: QUEUE_START_ORDER_TRACKER_UPDATES})
 
@@ -605,7 +607,7 @@ class Bot_Handler:
                 self.keep_running = False
 
     def predict(self):
-        prediction_refresh_time_s = 7 * 60
+        prediction_refresh_time_s = 3 * 60
         t0 = time()
         while self.keep_running:
             if ((time() - t0) > prediction_refresh_time_s) and (self.update_predictions):
@@ -654,6 +656,8 @@ if __name__ == "__main__":
     secret_input = input('What is the secret key? ')
     passphrase_input = input('What is the passphrase? ')
     psmbot = PSMPredictBot(api_input, secret_input, passphrase_input)
+    mkr_fee, tkr_fee = psmbot.portfolio.get_fee_rate()
+    psmbot.update_min_spread(mkr_fee, tkr_fee=tkr_fee)
     # psmbot.predict(verbose_on=True)
     # for sym in SYMS:
     #     psmbot.predictions[sym] = np.arange(0, 30) + 10

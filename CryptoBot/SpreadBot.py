@@ -51,7 +51,7 @@ SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
 MIN_SPREAD = 1.082 # This is the minnimum spread before a trade can be made
 MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders are utilized
-TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
+TRADE_LEN = 30 # This is the amount of time I desire for trades to be filled in
 TRAIN_LEN = 480
 STOP_PROFIT = 0.1 # This is the additional profit needed for the bot to begin using stop limit orders
 MIN_PROFIT = 0.002 # This is the minnimum value (net profit) to get per buy-sell pair
@@ -1264,9 +1264,10 @@ class PSMSpreadBot(SpreadBot):
             x, _ = self.propogator.evaluate_nth_polynomial(time_arr, step_size, polynomial_order, n=i + 1, verbose=verbose_on)
             self.errors[sym], x_reversed, real_data = self.propogator.err(step_size, polynomial_order, i + 1, coeff,
                                                          shift, verbose=verbose_on, data_len=TRADE_LEN)
-            predictions[sym] = x - np.mean(x_reversed) + np.mean(real_data)
-            reversed_predictions[sym] = x_reversed - np.mean(x_reversed) + np.mean(real_data)
+            predictions[sym] = x - x[0] + real_data[-1]
+            reversed_predictions[sym] = x_reversed - x[0] + real_data[-1]#x_reversed - np.mean(x_reversed) + np.mean(real_data)
 
+        transformed_raw_data = self.inverse_transform(raw_data)
         self.predictions = self.transform(predictions)
         self.reversed_predictions = self.transform(reversed_predictions)
 
