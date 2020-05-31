@@ -797,6 +797,7 @@ class MultiFrequencySystem:
 
         self.reset(x0s, y0s)
 
+
 # -- Create the Propogator --
 
 def create_multifrequency_propogator_from_data(raw_data_list, sym_list):
@@ -866,8 +867,8 @@ if __name__ == "__main__":
     train_len = 480  # Length of data to be used for training
     test_len = 120
     t = np.arange(0, test_len)
-    psm_step_size = 0.5
-    psm_order = 5
+    psm_step_size = 5
+    psm_order = 12
     train_list = [x[0:train_len] for x in raw_data_list]
 
     system_fit, coeff_list, shift_list = create_multifrequency_propogator_from_data(train_list, sym_list)

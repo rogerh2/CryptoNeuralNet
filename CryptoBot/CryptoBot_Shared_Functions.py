@@ -265,15 +265,17 @@ class BaseNN:
         prediction = self.model.predict(test_input)
         if prediction.shape[1] == 0:
             prediction = prediction[::, 0] # For some reason the predictions come out 2D (e.g. [[p1,...,pn]] vs [p1,...,pn]]
+        zeroed_prediction = prediction - prediction[0]
+        zeroed_output = test_output - test_output[0]
 
         if show_plots:
             # Plot the price and the predicted price vs time
             if x_indices is None:
-                plt.plot(prediction, prediction_styles[0])
-                plt.plot(test_output, prediction_styles[1])
+                plt.plot(zeroed_prediction/np.max(zeroed_prediction), prediction_styles[0])
+                plt.plot(zeroed_output/np.max(zeroed_output), prediction_styles[1])
                 plt.legend(prediction_names)
             else:
-                df = pd.DataFrame(data={prediction_names[0]: test_output, prediction_names[1]: prediction}, index=x_indices)
+                df = pd.DataFrame(data={prediction_names[0]: zeroed_output/np.max(zeroed_output), prediction_names[1]: zeroed_prediction/np.max(zeroed_prediction)}, index=x_indices)
                 df.Predicted.plot(style=prediction_styles[0])
                 df.Actual.plot(style=prediction_styles[1])
 
@@ -294,7 +296,7 @@ class BaseNN:
         return {prediction_names[0]:prediction, prediction_names[1]:test_output}
 
 class LSTM_NN(BaseNN):
-    optimization_scheme = "adam"
+    optimization_scheme = "nadam"
     loss_func = "mean_absolute_percentage_error"
 
     def __init__(self, model_type=Sequential(), model_path=None, seed=7, is_leakyrelu=True, activ_func='relu'):
@@ -303,7 +305,7 @@ class LSTM_NN(BaseNN):
         self.activation_func = activ_func
         self.is_leakyrelu = is_leakyrelu
 
-    def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):  #TODO make output_size someing editable outside the class
+    def build_model(self, inputs, neurons, output_size=1, dropout=0.25, layer_count=3):
         is_leaky = self.is_leakyrelu
         activ_func = self.activation_func
         loss = self.loss_func
@@ -315,7 +317,7 @@ class LSTM_NN(BaseNN):
 
         if is_leaky:
             for i in range(0, layer_count):
-                self.model.add(Dense(units=neurons, activation="linear", kernel_initializer='normal'))
+                self.model.add(Dense(units=neurons, activation="linear", kernel_initializer=keras.initializers.glorot_normal()))
                 self.model.add(LeakyReLU(alpha=0.01))
         else:
             for i in range(0, layer_count):
@@ -337,5 +339,32 @@ class ClassifierNN(BaseNN):
     def __call__(self):
         return self.model
 
+def collect_data(date_from, date_to, sym_list, data_dir):
+    cc = CryptoCompare(date_from=date_from, date_to=date_to, exchange='Coinbase')
+    raw_data = {}
+    for sym in sym_list:
+        data = cc.minute_price_historical(sym)
+        raw_data[sym] = (data)
+        print(sym)
 
-# def rate_limited_get(func, limit, )
+    with open(data_dir + '//' + 'Minutely Historical Data from ' + date_from + ' to ' + date_to, 'wb') as f:
+        pickle.dump(raw_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+def format_data_for_propogator(raw_data: dict):
+    data_len = np.min(np.array([len(x) for x in raw_data.values()]))
+    concat_data_list = []
+    for sym in raw_data.keys():
+        price = raw_data[sym][sym + '_close'].values
+        concat_data_list.append(price[0:data_len])
+
+    return concat_data_list
+
+def find_outliers(data, std_num=3):
+    mean_err = np.abs(np.mean(data))
+    std_err = np.std(data)
+    inds_to_delete = []
+    for i in range(0, len(data)):
+        err = data[i]
+        if np.abs(err) > (mean_err + std_num * std_err):
+            inds_to_delete.append(i)
+    return inds_to_delete

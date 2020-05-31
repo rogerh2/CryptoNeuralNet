@@ -20,6 +20,7 @@ import cbpro
 import pandas as pd
 import numpy as np
 import os
+from json.decoder import JSONDecodeError
 from datetime import datetime
 from matplotlib import pyplot as plt
 from operator import itemgetter
@@ -49,12 +50,12 @@ def portfolio_file_path_generator():
 
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
-MIN_SPREAD = 1.082 # This is the minnimum spread before a trade can be made
+MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
 MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders are utilized
-TRADE_LEN = 30 # This is the amount of time I desire for trades to be filled in
+TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
 TRAIN_LEN = 480
 STOP_PROFIT = 0.1 # This is the additional profit needed for the bot to begin using stop limit orders
-MIN_PROFIT = 0.002 # This is the minnimum value (net profit) to get per buy-sell pair
+MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell pair
 STOP_SPREAD = 0.001 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 1.8 # This is the step size for PSM
@@ -113,6 +114,22 @@ class Product:
         else:
             self.order_book = order_book
             order_book['time'] = ts
+
+    def detect_whale_price(self):
+        self.get_current_book()
+        size_arr = np.array([float(order[1]) for order in self.order_book['asks']])
+        price_arr = np.array([float(order[0]) for order in self.order_book['asks']])
+        max_size = np.mean(size_arr) + 2.5 * np.std(size_arr)
+        for i in range(0, len(size_arr)):
+            size = size_arr[i]
+            if i > 0:
+                price = price_arr[i-1]
+            else:
+                price = price_arr[0]
+            if size > max_size:
+                return price
+        return None
+
 
     def get_top_order(self, side, refresh=True):
         if refresh:
@@ -873,8 +890,8 @@ class SpreadBot(Bot):
 
     def determine_trade_price(self, sym, usd_available, side, mean_multiplier=1):
         _, _, coeff = self.get_side_depedent_vars(side)
-        price_p, wallet, size_p, std, mu = self.determine_price_based_on_std(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=0.5)
-        price_s, size_s = self.determine_price_based_on_fill_size(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=0.5)
+        price_p, wallet, size_p, std, mu = self.determine_price_based_on_std(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=1.0)
+        price_s, size_s = self.determine_price_based_on_fill_size(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=1.0)
         return price_p, wallet, size_p, std, mu
         # if coeff * price_p > coeff * price_s: # Always use the more conservative price
         #     return price_p, wallet, size_p, std, mu
@@ -1569,10 +1586,16 @@ class PSMPredictBot(PSMSpreadBot):
                     limit_price = nominal_price
                     stop_price = None
 
-                dont_sell = not self.is_sell_order_fill_unlikely(nominal_price * order['spread'], sym)
-                dont_buy = self.is_buy_order_fill_likely(nominal_price, sym)
-                if (dont_buy) or (dont_sell):
+                # Check to see risk of not filling sell order
+                product = self.portfolio.wallets[sym].product
+                max_sell_price = product.detect_whale_price()
+                # dont_buy = self.is_buy_order_fill_likely(nominal_price, sym)
+                max_spread = calculate_spread(nominal_price, max_sell_price)
+
+                if (max_spread < MIN_SPREAD): # or dont_buy:
                     continue
+                elif (max_spread < order['spread']):
+                    order['spread'] = max_spread
 
                 # Scale the size based on the new price
                 size = ( nominal_price * nominal_size ) / limit_price
@@ -2034,10 +2057,13 @@ def run_bot(bot_type='psm'):
                 err_counter = 0
 
             except Exception as e:
-                if err_counter > 1:
-                    err_counter = print_err_msg('find new data', e, err_counter)
-                err_counter += 1
+                if type(e) == JSONDecodeError:
+                    print_err_msg(' get data', e, 0)
+                    print('\n JSON error. taking a time out')
+                    sleep(5*60)
 
+                else:
+                    err_counter = print_err_msg(' find new data', e, err_counter)
 
     print('Loop END')
 
@@ -2080,3 +2106,39 @@ if __name__ == "__main__":
             print('--------\n')
 
         plt.show()
+
+    elif run_type == 'new':
+        new_sym = 'OMG'
+        api_input = input('What is the api key? ')
+        secret_input = input('What is the secret key? ')
+        passphrase_input = input('What is the passphrase? ')
+        new_prod = Wallet(api_input, secret_input, passphrase_input, sym=new_sym)
+        new_prod.offset_value = 0
+        t0 = None
+        buy_price = None
+        while True:
+            # Get the price data
+            new_prod.product.get_current_book()
+            price_arr = np.array([float(order[0]) for order in new_prod.product.order_book['asks']])
+            if len(price_arr) < 1:
+                continue
+            elif t0 is None:
+                t0 = time()
+                print(new_sym + ' Order Book Open')
+            t = time() - t0
+            # if the order book is open place orders at the top of the book
+            price = np.min(price_arr[0] - new_prod.product.usd_res)
+            new_prod.product.auth_client.cancel_all(new_sym + '-USD')
+            avail_to_sell = new_prod.get_amnt_available('buy')
+            size = avail_to_sell / (price * (1.006))
+            if avail_to_sell > 10:
+                new_prod.product.place_order(price, 'buy', size, post_only=False)
+                buy_price = price
+                print('Placing ' + new_sym + ' buy order')
+            elif t > 60:
+                break
+
+        while True:
+            avail_to_sell = new_prod.get_amnt_available('sell') / 1.006
+            if avail_to_sell > new_prod.product.base_order_min:
+                new_prod.product.place_order(buy_price * 1.4, 'sell', avail_to_sell, post_only=False)

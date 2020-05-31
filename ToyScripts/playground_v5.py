@@ -1058,10 +1058,10 @@ if __name__ == "__main__":
     if run_type == 'crypto':
         # -- Get raw data --
         model_save_folder = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/psm_models//'
-        use_saved_data = True
+        use_saved_data = False
         sym_list = ['ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC', 'KNC']
         if not use_saved_data:
-            cc = CryptoCompare(date_from='2020-04-27 10:00:00 EST', date_to='2020-04-29 10:57:00 EST', exchange='Coinbase')
+            cc = CryptoCompare(date_from='2020-05-15 06:00:00 EST', date_to='2020-05-16 06:00:00 EST', exchange='Coinbase')
             raw_data_list = []
             for sym in sym_list:
                 data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -1070,7 +1070,7 @@ if __name__ == "__main__":
 
             data_len = np.min(np.array([len(x) for x in raw_data_list]))
             concat_data_list = [x[0:data_len] for x in raw_data_list]
-            pickle.dump(concat_data_list, open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "wb"))
+            pickle.dump(concat_data_list, open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/2020-05-15 06:00:00 EST to 2020-05-16 06:00:00 EST.pickle", "wb"))
         else:
             concat_data_list = pickle.load(open( "/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/psm_test.pickle", "rb" ))
             concat_data_list = [x[0::] for x in concat_data_list]

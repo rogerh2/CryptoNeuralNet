@@ -197,6 +197,8 @@ class CurrencyGui(Frame):
         ids = []
         for id in orders.index:
             order = orders.loc[id]
+            if order['side'] == 'sell':
+                continue
             if not np.isnan(order['spread']):
                 # If there is a spread listed the buy order is already taken care of
                 continue

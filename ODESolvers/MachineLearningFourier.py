@@ -2,19 +2,38 @@ import numpy as np
 import pickle
 from time import time
 from matplotlib import pyplot as plt
-from CryptoBot.CryptoBot_Shared_Functions import LSTM_NN
+from CryptoBot.CryptoBot_Shared_Functions import LSTM_NN, format_data_for_propogator, find_outliers
 from CryptoBot.CryptoBot_Shared_Functions import progress_printer
 from ToyScripts.playground_v5 import construct_piecewise_polynomial_for_data
 from ToyScripts.playground_v5 import piece_wise_fit_eval
 from ToyScripts.playground_v5 import top_N_real_fourier_coefficients
+from pandas import DataFrame
 import tensorflow as tf
 from keras import backend as K
+from CryptoPredict.CryptoPredict import CryptoCompare
 from sklearn.preprocessing import StandardScaler
 from ToyScripts.playground_v5 import evaluate_fourier_coefficients
-from scipy.signal import find_peaks
 from ODESolvers.PSM import create_multifrequency_propogator_from_data, MultiFrequencySystem
 
+SYM_LIST = ('ATOM',
+            'OXT',
+            'LTC',
+            'LINK',
+            'ZRX',
+            'XLM',
+            'ALGO',
+            'ETH',
+            'EOS',
+            'ETC',
+            'XRP',
+            'XTZ',
+            'BCH',
+            'DASH',
+            'REP',
+            'BTC',
+            'KNC')
 MODEL_SAVE_DIR = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ODESolvers/models//'
+PRICE_DATA_SAVE_DIR = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data'
 
 def find_trade_strategy_value(buy_bool, sell_bool, all_prices, return_value_over_time=False, fee=0.0035):
     #This finds how much money was gained from a starting value of $100 given a particular strategy
@@ -306,73 +325,185 @@ class FourierNeuralNetworkGenerator:
 
 class PSMLSTM:
 
-    def __init__(self, data,  train_len, prediction_len, freq_num, model_path=None):
+    def __init__(self, data, train_len, prediction_len, sym, step_size=5, order=12, model_path=None):
+        # This class handles the creation of a LSTM neural net for predicting buy and sell prices
         self.model = LSTM_NN(model_path=model_path)
-        self.model.loss_func = custom_sell_loss_func
-        self.data = data
+        # self.model.loss_func = custom_sell_loss_func
+        self.prices = data
         self.train_len = train_len
         self.prediction_len = prediction_len
-        self.freq_num = freq_num
+        self.sym = sym
+        self.step_size = step_size
+        self.order = order
 
     def data_instances(self):
-        return self.data, self.train_len, self.prediction_len, self.freq_num
+        return self.prices, self.train_len, self.prediction_len, self.sym
 
-    def create_training_data(self, feture_type, wave_num, step_size):
-        # This method creates training data to predict either the a_coefficients, b_coefficients, or omegas for the
-        # specified frequency  or a0. It predicts using the a's b's and omega's from the training data
-        raw_data, train_len, prediction_len, num_frequencies = self.data_instances()
+    def get_prediction_features(self, sym, t, coeff_list, shift_list, zero, solver:MultiFrequencySystem):
+        psm_step_size = self.step_size
+        psm_order= self.order
+        ind = solver.identifiers.index(sym)
+        coeff = coeff_list[ind]
+        shift = shift_list[ind]
+        x_fit, t_fit = solver.evaluate_nth_polynomial(t, psm_step_size, psm_order, n=ind + 1, verbose=False)
+        err, _, x_reversed = solver.err(psm_step_size, psm_order, ind + 1, coeff, shift, verbose=False, data_len=30)
+
+        x_fit = x_fit - x_fit[0] + zero
+        x_reversed = x_reversed - x_reversed[-1] + zero
+
+        min_future_price = np.min(x_fit)
+        max_future_price = np.max(x_fit)
+        min_past_price = np.min(x_reversed)
+        max_past_price = np.max(x_reversed)
+
+        return min_future_price, max_future_price, min_past_price, max_past_price, err
+
+    def aggreagate_price_data(self, start_ind, step_size, data:DataFrame):
+        # This method aggregates a slice of data to represent a slice for a different period of time
+        data_to_aggregate = data[start_ind:start_ind+step_size]
+        aggregate = []
+        for header in data.keys():
+            data_column = data_to_aggregate[header]
+            if 'close' in header:
+                aggregate.append(data_column.iloc[-1])
+            elif 'high' in header:
+                aggregate.append(np.max(data_column.values))
+            elif 'low' in header:
+                aggregate.append(np.min(data_column.values))
+            elif 'open' in header:
+                aggregate.append(data_column.iloc[0])
+            elif 'volume' in header:
+                aggregate.append(np.sum(data_column.values))
+        return np.array(aggregate)
+
+    def create_training_data(self, feture_type, step_size, all_currencies_exchange_data, syms, training_data_path=None):
+        # This method creates training data for the neural net, this includes predicting the price every step size
+        #
+        # These are the variables needed to make the prediction
+        sym_prices, train_len, prediction_len, sym = self.data_instances()
         train_predict_offset = train_len + prediction_len
+        all_prices = format_data_for_propogator(all_currencies_exchange_data)
+
+        # This is the initialization of the variables needed to create the training data
         training_columns = None
         prediction_array = np.array([])
+        strategy = OptimalStrategy(sym_prices)
 
-        for i in range(0, len(raw_data) - train_predict_offset, step_size):
+        # These are the answer to the prediction
+        buy_arr, sell_arr = strategy.find_positive_profit_interval()
+        buy_price_differences = strategy.find_next_trade_diff(buy_arr)
+        sell_price_differences = strategy.find_next_trade_diff(sell_arr)
+
+        for i in range(step_size, len(buy_price_differences) - train_predict_offset - 10, step_size):
+            progress_printer(len(buy_price_differences) - train_predict_offset, i, digit_resolution=3, start_ind=step_size, tsk='training data creation for ' + sym)
+            start_ind = i + train_len
             # Create Fourier coefficients
-            training_data = raw_data[i:i+train_len]
+            if training_data_path is None:
+                psm_training_data = [raw_price[i:i + train_len] for raw_price in all_prices]
+                system_fit, coeff_list, shift_list = create_multifrequency_propogator_from_data(psm_training_data, syms)
+                min_future_price, max_future_price, min_past_price, max_past_price, err = self.get_prediction_features(sym, np.arange(0, 30), coeff_list, shift_list, sym_prices[i+train_len], system_fit)
+                current_price_data = self.aggreagate_price_data(start_ind, step_size, all_currencies_exchange_data[sym])
+
+                # Create training row
+                training_row = np.append(current_price_data, np.array(
+                    [min_future_price, max_future_price, min_past_price, max_past_price, err]))
+
+                if training_columns is None:
+                    training_columns = np.array([training_row])
+                else:
+                    training_columns = np.vstack((training_columns, training_row))
+
+            # Create prediction enctry
+            if feture_type == 'buy':
+                prediction_feature = buy_price_differences[i+train_len+step_size+1]
+            elif feture_type == 'sell':
+                prediction_feature = sell_price_differences[i+train_len+step_size+1]
+            else:
+                raise ValueError('Must predict either buys or sells')
+
+            prediction_array = np.append(prediction_array, prediction_feature)
+
+        if training_data_path is None:
+            scalar = StandardScaler()
+            training_data = scalar.fit_transform(training_columns)
+            ts = str(time()).split('.')[0]
+            data_name = ts + '_' + self.sym + '_' + feture_type
+            with open('/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ManualTradeHelper/Data//' + data_name + '.pickle',
+                      'wb') as f:
+                pickle.dump(training_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        else:
+            training_data = pickle.load(open(training_data_path, "rb"))
 
 
-        scalar = StandardScaler()
-        temp_input_arr = scalar.fit_transform(training_columns)
+        for i in range(0, 12):
+            inds_to_delete_1 = find_outliers(training_data[::, -1])
+            inds_to_delete_2 = find_outliers(training_data[::, -4])
+            inds_to_delete = inds_to_delete_1 + inds_to_delete_2
+            training_data = np.delete(training_data, inds_to_delete, axis=0)
+            prediction_array = np.delete(prediction_array, inds_to_delete)
+            scalar = StandardScaler()
+            training_data = scalar.fit_transform(training_data)
 
-        return temp_input_arr.reshape(training_columns.shape[0], training_columns.shape[1], 1), prediction_array
+        return training_data.reshape(training_data.shape[0], training_data.shape[1], 1), (prediction_array - np.mean(prediction_array))/np.std(prediction_array)
 
-    def create_model(self, feture_type, wave_num, step_size=30, patience=2):
-        training_data, prediction_arr = self.create_training_data(feture_type, wave_num, step_size)
-        self.model.build_model(training_data, 20, output_size=len(prediction_arr[0,::]), layer_count=6)
+    def create_model(self, feture_type, all_prices, syms, step_size=30, patience=2, training_data_path=None):
+        # Create the training data and format
+        training_data, prediction_arr = self.create_training_data(feture_type, step_size, all_prices, syms, training_data_path=training_data_path)
 
+        # Build the model and train
         ts = str(time()).split('.')[0]
-        self.model.train_model(training_data, prediction_arr, 70,file_name=MODEL_SAVE_DIR + ts + '_' + feture_type + '_' + str(wave_num) + '.h5',
+        data_name = ts + '_' + self.sym + '_' + feture_type
+        self.model.build_model(training_data, 20, layer_count=2)
+
+        self.model.train_model(training_data, prediction_arr, 100,file_name=MODEL_SAVE_DIR + data_name + '.h5',
                                training_patience=patience, batch_size=96)
 
-    def test_model(self, feture_type, wave_num, step_size=30):
-        training_data, prediction_arr = self.create_training_data(feture_type, wave_num, step_size)
+    def test_model(self, feture_type, all_prices, syms, step_size=30, training_data_path=None):
+        training_data, prediction_arr = self.create_training_data(feture_type, step_size, all_prices, syms, training_data_path=training_data_path)
+
         self.model.test_model(training_data, prediction_arr)
 
 if __name__ == "__main__":
-    RAW_DATA = pickle.load(open("/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ODESolvers/SolversUnitTests/PriceData/price_data_2020-04-21_100000est_to_20200427_105700est.pickle","rb"))
+    saved_prices_path = "/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/Minutely Historical Data from 2020-05-09 11:00:00 EST to 2020-05-16 10:00:00 EST"
+
+    RAW_DATA_DICT = pickle.load(open(saved_prices_path,"rb"))
+    RAW_DATA = format_data_for_propogator(RAW_DATA_DICT)
     model_path = None#'/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ODESolvers/models/1588044392_a_2.h5'
-    price = RAW_DATA[0]
-    strategy = OptimalStrategy(price)
-    buy_arr, sell_arr = strategy.find_positive_profit_interval()
-    value, portfolio_value_over_time = find_trade_strategy_value(buy_arr, sell_arr, price, return_value_over_time=True)
-    norm_price = 100*price/price[0]
-    plt.plot(norm_price)
-    plt.plot(portfolio_value_over_time)
-    plt.plot(buy_arr, norm_price[buy_arr], 'gx')
-    plt.plot(sell_arr, norm_price[sell_arr], 'rx')
-    plt.title('Optimal Strategy Returns')
-    plt.ylabel('Returns (%)')
+    price = RAW_DATA[12]
+    run_type = 'train'
 
-    buy_price_differences = strategy.find_next_trade_diff(buy_arr)
-    sell_price_differences = strategy.find_next_trade_diff(sell_arr)
+    if run_type == 'test_strategy':
+        strategy = OptimalStrategy(price)
+        buy_arr, sell_arr = strategy.find_positive_profit_interval()
+        value, portfolio_value_over_time = find_trade_strategy_value(buy_arr, sell_arr, price, return_value_over_time=True)
+        norm_price = 100*price/price[0]
+        plt.plot(norm_price)
+        plt.plot(portfolio_value_over_time)
+        plt.plot(buy_arr, norm_price[buy_arr], 'gx')
+        plt.plot(sell_arr, norm_price[sell_arr], 'rx')
+        plt.title('Optimal Strategy Returns')
+        plt.ylabel('Returns (%)')
 
-    plt.figure()
-    plt.plot(np.array(buy_price_differences), 'k.')
-    plt.show()
+        buy_price_differences = strategy.find_next_trade_diff(buy_arr)
+        sell_price_differences = strategy.find_next_trade_diff(sell_arr)
 
-    # omega_train, a0_train, a_train, b_train = find_omegas(RAW_DATA[0][0:1200], 5)
-    # poly = FourierPolynomial(omega_train, a0_train, a_train, b_train, 5)
-    # poly.find_polynomials(10, 0, 320)
+        plt.figure()
+        plt.plot(price, np.array(buy_price_differences), 'k.')
+        plt.show()
 
-    # generator = FourierNeuralNetworkGenerator(RAW_DATA[0], 120, 30, 5, model_path=model_path)
-    # generator.create_model('polyval', 4, patience=70, step_size=3)
-    # generator.test_model('polyval', 4, step_size=30)
+    elif run_type == 'train':
+        i = 0
+        # for i in range(0, len(RAW_DATA)):
+        price = RAW_DATA[i]
+        generator = PSMLSTM(price, 480, 30, SYM_LIST[i])
+        generator.create_model('buy', RAW_DATA_DICT, SYM_LIST, patience=70, step_size=8, training_data_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ManualTradeHelper/Data/1589654689_ATOM_buy.pickle')
+    else:
+        i=0
+        RAW_DATA_DICT = pickle.load(open(
+            "/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/saved_data/Minutely Historical Data from 2020-05-16 11:00:00 EST to 2020-05-17 08:00:00 EST",
+            "rb"))
+        RAW_DATA = format_data_for_propogator(RAW_DATA_DICT)
+        model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ODESolvers/models/1589738917_ATOM_buy.h5'
+        price = RAW_DATA[i]
+        generator = PSMLSTM(price, 480, 30, SYM_LIST[i], model_path=model_path)
+        generator.test_model('buy', RAW_DATA_DICT, SYM_LIST, step_size=8, training_data_path='/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/ManualTradeHelper/Data/1589720898_ATOM_buy.pickle')
