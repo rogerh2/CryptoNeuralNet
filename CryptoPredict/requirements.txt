@@ -22,7 +22,7 @@ kiwisolver==1.0.1
 lxml==4.2.1
 Markdown==2.6.11
 matplotlib==2.1.2
-nltk==3.3
+nltk==3.4.5
 numpy==1.14.2
 pandas==0.22.0
 protobuf==3.5.2.post1
