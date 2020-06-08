@@ -36,7 +36,7 @@ from CryptoBot.CryptoBot_Shared_Functions import offset_current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import convert_coinbase_timestr_to_timestamp
 from CryptoBot.CryptoBot_Shared_Functions import calculate_spread
 from CryptoBot.CryptoBot_Shared_Functions import save_file_to_dropbox
-from CryptoBot.constants import EXCHANGE_CONSTANTS
+from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PUBLIC_SLEEP, PRIVATE_SLEEP
 from CryptoPredict.CryptoPredict import CryptoCompare
 from ODESolvers.PSM import create_propogator_from_data
 from ODESolvers.PSM import create_multifrequency_propogator_from_data
@@ -48,12 +48,20 @@ def portfolio_file_path_generator():
     file_path_dt_format = '%Y%m%d_%H%M_%Z'
     return r'./' + current_est_time().strftime(file_path_dt_format) + '_coinbasepro'
 
+SYMBOLS = []
+for pair in EXCHANGE_CONSTANTS:
+    if ('USD' in pair) and (not 'USDC' in pair):
+        current_sym = pair.split('-')[0]
+        # Do not trade stablecoins
+        if current_sym == 'DAI':
+            continue
+        SYMBOLS.append(current_sym)
+
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
 MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
 MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders are utilized
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
-TRAIN_LEN = 480
 STOP_PROFIT = 0.1 # This is the additional profit needed for the bot to begin using stop limit orders
 MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell pair
 STOP_SPREAD = 0.001 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
@@ -68,9 +76,6 @@ else:
     if override_saved_data != 'yes': # TODO change to allow inclusion of a new file name (also print old one)
         raise ValueError('Folder for saved plots already taken')
 
-QUOTE_ORDER_MIN = 10
-PUBLIC_SLEEP = 0.4
-PRIVATE_SLEEP = 0.21
 OPEN_ORDERS = None
 
 class Product:
@@ -586,7 +591,7 @@ class Bot:
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
     spread = 1.01
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD'):
+    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD'):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         self.settings.update_settings()
         self.min_spread = MIN_SPREAD
@@ -693,7 +698,7 @@ class Bot:
 
 class TrackerBot(Bot):
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv'):
+    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv'):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         # Read dataframe from file if it exists and use that to initialize the product orders as well
         if order_csv_path is None:
@@ -1153,9 +1158,6 @@ class SpreadBot(Bot):
             else:
                 print('\nSell Order placed')
 
-# class PSMSpreadBot(SpreadBot):
-#     # This class is the same as the spreadbot, except it uses PSM to find the mean price movements
-
 # TODO complete PSMBot
 class PSMSpreadBot(SpreadBot):
     # class variables
@@ -1163,11 +1165,12 @@ class PSMSpreadBot(SpreadBot):
     # predicted_prices: this contains the max, min, standard deviation of prices, and the mean offset for the true and predicted prices
     # del_len: the number of samples to average over for the price
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', slope_avg_len=5):
+    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD', slope_avg_len=5, train_len=480):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
-        t_offset_str = offset_current_est_time(TRAIN_LEN, fmt=self.fmt)
+        self.train_len = train_len
+        t_offset_str = offset_current_est_time(train_len, fmt=self.fmt)
         cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
         for sym in syms:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -1195,7 +1198,7 @@ class PSMSpreadBot(SpreadBot):
         # This method sets the propogator initial values to the most recent price
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
-        t_offset_str = offset_current_est_time(TRAIN_LEN, fmt=self.fmt)
+        t_offset_str = offset_current_est_time(self.train_len, fmt=self.fmt)
         cc = CryptoCompare(date_from=t_offset_str, exchange='Coinbase')
         for sym in self.symbols:
             data = cc.minute_price_historical(sym)[sym + '_close'].values
@@ -1360,7 +1363,7 @@ class PSMSpreadBot(SpreadBot):
 
 class PSMPredictBot(PSMSpreadBot):
 
-    def __init__(self, api_key, secret_key, passphrase, syms=('KNC', 'ATOM', 'OXT', 'LTC', 'LINK', 'ZRX', 'XLM', 'ALGO', 'ETH', 'EOS', 'ETC', 'XRP', 'XTZ', 'BCH', 'DASH', 'REP', 'BTC'), is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv'):
+    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv'):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         # Read dataframe from file if it exists and use that to initialize the product orders as well
         if order_csv_path is None:
@@ -1852,6 +1855,43 @@ class PSMPredictBot(PSMSpreadBot):
             self.spread = spread
             self.update_spread_prices_limits(limit_price, 'sell', sym)
             self.place_sell_order(sym, limit_price, available, wallet, spread, id, order_type='stop limit', stop=stop_price)
+
+# class PredictBot(PSMPredictBot):
+    # def __init__(super_inputs)
+    #   create websocket for self
+    #
+    # def listen_for_price(self):
+    #   create websocket thread
+    #   start_websocket (websocket adds every update to a dataframe)
+    #   use websocket to keep top bid/ask up to date
+    #
+    # def create_place_holders(self):
+    #   get current prediction
+    #   look for mins and maxs
+    #   if min is not within the last 15min of the prediction
+    #       if max > (min + fee)
+    #           put placeholder
+    #
+    # def trade(self, order_num, limit_price):
+    #   create thread for this order
+    #   check current price for order_num
+    #   send private_sleep_command_in_queue
+    #   while order is not filled
+    #       check current top bid price through websocket
+    #       if order price < top bid price and top price < limit_price (flip < to > for asks)
+    #           check queque for any current private sleeps
+    #           move order to top of book
+    #           update order in orders tracker
+    #           update current price
+    #       elif top price >= limit_price
+    #           put order at limit_price
+    #   ( it might be usefull to utilize taker orders when the taker fee == the maker fee)
+    #
+    # def buy_placeholders(self):
+    #   check current price through websocket
+    #   if price < place_holder (for that currency)
+    #       if price has risen in last second (inflection point)
+    #           buy (using the trade method defined above)
 
 class PortfolioTracker:
 

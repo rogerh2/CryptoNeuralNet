@@ -1,17 +1,6 @@
-# EXCHANGE_CONSTANTS = {'BTC':{'resolution':2, 'base order min':0.001, 'base resolution':8},
-#                       'ETH':{'resolution':2, 'base order min':0.01, 'base resolution':8},
-#                       'XRP':{'resolution':4, 'base order min':1, 'base resolution':0},
-#                       'LTC':{'resolution':2, 'base order min':0.1, 'base resolution':8},
-#                       'BCH':{'resolution':2, 'base order min':0.01, 'base resolution':8},
-#                       'EOS':{'resolution':3, 'base order min':0.1, 'base resolution':1},
-#                       'XLM':{'resolution':6, 'base order min':1, 'base resolution':0},
-#                       'ETC':{'resolution':3, 'base order min':0.1, 'base resolution':8},
-#                       'LINK':{'resolution':5, 'base order min':1, 'base resolution':1},
-#                       'REP':{'resolution':2, 'base order min':0.1, 'base resolution':6},
-#                       'ZRX':{'resolution':6, 'base order min':1, 'base resolution':5},
-#                       'XTZ':{'resolution':3, 'base order min':1, 'base resolution':1},
-#                       'ALGO':{'resolution':4, 'base order min':1, 'base resolution':0}
-#                       }
+QUOTE_ORDER_MIN = 10
+PUBLIC_SLEEP = 0.4
+PRIVATE_SLEEP = 0.21
 
 EXCHANGE_CONSTANTS = {
  'LTC-EUR':{'base order min': 0.1, 'base resolution': 8, 'resolution': 2, 'avoid': False},
