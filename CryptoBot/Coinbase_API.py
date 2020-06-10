@@ -9,26 +9,15 @@ from time import sleep
 from time import time
 from CryptoBot.CryptoBot_Shared_Functions import num2str
 from CryptoBot.CryptoBot_Shared_Functions import str_list_to_timestamp
-from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PUBLIC_SLEEP, PRIVATE_SLEEP
-import re
+from typing import Dict
+from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PUBLIC_SLEEP, PRIVATE_SLEEP, TRADE_LEN
 
-SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
-MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
-MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders are utilized
-TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
-TRAIN_LEN = 480
-STOP_PROFIT = 0.1 # This is the additional profit needed for the bot to begin using stop limit orders
-MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell pair
-STOP_SPREAD = 0.001 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
-NEAR_PREDICTION_LEN = 30
-PSM_EVAL_STEP_SIZE = 1.8 # This is the step size for PSM
-MIN_PORTFOLIO_VALUE = 100 # This is the value that will trigger the bot to stop trading
 OPEN_ORDERS = None
 
 # These classes collect raw data
 
-class myWebsocketClient(cbpro.WebsocketClient):
-    def __init__(self, queque_dict: dict[str, Queue], products=None, message_type="subscribe", mongo_collection=None,
+class Websocket(cbpro.WebsocketClient):
+    def __init__(self, queque_dict: Dict[str, Queue], products=None, message_type="subscribe", mongo_collection=None,
                  should_print=True, auth=False, api_key="", api_secret="", api_passphrase="", channels=('ticker',)):
         super().__init__(products=products, message_type=message_type, mongo_collection=mongo_collection,
                  should_print=should_print, auth=auth, api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase, channels=channels)
@@ -41,8 +30,7 @@ class myWebsocketClient(cbpro.WebsocketClient):
     def on_message(self, msg): # TODO implement error handling
         self.queques[msg['product_id']].put_nowait(msg)
     def on_close(self):
-        print("-- Goodbye! --")
-
+        print("Websocket Closed")
 
 # These classes interface with the exchange
 class Product:
@@ -403,45 +391,6 @@ class Wallet:
             raise ValueError('side value set to ' + side + ', side must be either "sell" or "buy"')
         available = float(self.value[sym]) - float(self.value[sym + ' Hold'])
         return available
-
-class LiveRunSettings:
-
-    settings = {'portfolio value offset':None, 'minnimum_spread':MIN_SPREAD, 'std':2, 'buy std':0.85, 'sell std':1}
-
-    def __init__(self, settings_file_path):
-        self.fname = settings_file_path
-        with open(settings_file_path) as f:
-            self.contents = f.readlines()
-        self.reg_ex = re.compile(r'(?<=:)([0-9]*\.[0-9]+|[0-9]+)')
-
-    def read_setting_from_file(self, setting_name):
-        setting_value = None
-
-        for content in self.contents:
-            if setting_name in content:
-                setting_str = self.reg_ex.search(content.replace(' ', ''))
-                if setting_str is not None:
-                    setting_value = float(setting_str.group(0))
-        if setting_name not in self.settings.keys():
-            self.settings[setting_name] = setting_value
-
-        return setting_value
-
-    def update_settings(self):
-        with open(self.fname) as f:
-            self.contents = f.readlines()
-        for setting_name in self.settings.keys():
-            setting_value = self.read_setting_from_file(setting_name)
-            self.settings[setting_name] = setting_value
-
-    def write_setting_to_file(self, setting_name, setting_val):
-        self.update_settings()
-        self.settings[setting_name] = setting_val
-        write_str = ''
-        for key in sorted(self.settings.keys()):
-            write_str = write_str + key + ': ' + str(self.settings[key]) + '\n'
-        with open(self.fname, 'w') as f:
-            f.write(write_str)
 
 class CombinedPortfolio:
 
