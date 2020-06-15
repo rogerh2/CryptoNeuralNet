@@ -7,13 +7,13 @@ import sys
 import keras
 import pickle
 import pandas as pd
-from CryptoBot.constants import EXCHANGE_CONSTANTS
+from CryptoBot.constants import PRIVATE_SLEEP_QUEQUE, PUBLIC_SLEEP_QUEQUE, PRIVATE_SLEEP, PUBLIC_SLEEP
 from CryptoPredict.CryptoPredict import CryptoCompare
 from tzlocal import get_localzone
 from datetime import datetime
 from datetime import timedelta
 from scipy.signal import find_peaks
-from time import sleep
+from time import sleep, time
 from dropbox.files import WriteMode
 from dropbox.exceptions import ApiError
 from matplotlib import pyplot as plt
@@ -186,6 +186,20 @@ def zero(data):
 
 def nth_max_ind(arr, n=1):
     return arr.argsort()[::-1][n-1]
+
+def private_pause():
+    time_till_run = PRIVATE_SLEEP_QUEQUE.get()
+    t0 = time()
+    sleep_time = np.min(np.array([time_till_run - t0, PRIVATE_SLEEP]))
+    if sleep_time > 0:
+        sleep(time_till_run - t0)
+
+def public_pause():
+    time_till_run = PUBLIC_SLEEP_QUEQUE.get()
+    t0 = time()
+    sleep_time = np.min(np.array([time_till_run-t0, PUBLIC_SLEEP]))
+    if sleep_time > 0:
+        sleep(time_till_run-t0)
 
 
 def nth_max_peaks(arr, n=1):

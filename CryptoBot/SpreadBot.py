@@ -35,8 +35,8 @@ from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
 from CryptoBot.CryptoBot_Shared_Functions import offset_current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import convert_coinbase_timestr_to_timestamp
 from CryptoBot.CryptoBot_Shared_Functions import calculate_spread
-from CryptoBot.CryptoBot_Shared_Functions import save_file_to_dropbox
-from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PRIVATE_SLEEP, MIN_PORTFOLIO_VALUE, TRADE_LEN
+from CryptoBot.CryptoBot_Shared_Functions import save_file_to_dropbox, private_pause
+from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PRIVATE_SLEEP, MIN_PORTFOLIO_VALUE, TRADE_LEN, PRIVATE_SLEEP_QUEQUE
 from CryptoPredict.CryptoPredict import CryptoCompare
 from CryptoBot.Coinbase_API import Wallet, CombinedPortfolio, Websocket
 from ODESolvers.PSM import create_multifrequency_propogator_from_data
@@ -209,8 +209,9 @@ class Bot:
 
     def cancel_single_order(self, id):
         try:
+            private_pause()
             self.portfolio.auth.cancel_order(id)
-            sleep(PRIVATE_SLEEP)
+            PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
         except:
             print('Cannot cancel order, order not found')
     
@@ -239,8 +240,9 @@ class TrackerBot(Bot):
             self.orders = pd.read_csv(order_csv_path, index_col=0)
             ids = list(self.orders.index)
             for id in ids:
+                private_pause()
                 order_info = self.portfolio.auth.get_order(id)
-                sleep(PRIVATE_SLEEP)
+                PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
                 if 'product_id' in order_info:
                     sym = order_info['product_id'].split('-')[0]
                     side = order_info['side']
@@ -269,8 +271,9 @@ class TrackerBot(Bot):
         # If the id is for a buy order check past data as well
         elif side == 'buy':
             try:
+                private_pause()
                 order = product.auth_client.get_order(id)
-                sleep(PRIVATE_SLEEP)
+                PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
                 # Check if the buy order has already been taken care of
                 if 'filled_size' not in order.keys():
                     print(sym + ' removed from tracking due to ' + order['message'] + '\n')
@@ -297,8 +300,9 @@ class TrackerBot(Bot):
             self.orders.loc[id] = new_row
 
     def cancel_single_order(self, id, remove_index=False):
+        private_pause()
         response = self.portfolio.auth.cancel_order(id)
-        sleep(PRIVATE_SLEEP)
+        PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
         if type(response) == dict:
             response = response['message']
             print('Cannot cancel order due to ' + response)
@@ -566,7 +570,8 @@ class SpreadBot(Bot):
             top_syms = self.symbols  # If no viable trades are found then allow any symbol to remain
         if usd_hold > QUOTE_ORDER_MIN:
             self.cancel_old_orders()
-            sleep(PRIVATE_SLEEP)
+            private_pause()
+            PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
 
         self.portfolio.update_value()
         # Check available cash after canceling the non_optimal buy orders and place the next order
@@ -904,8 +909,9 @@ class PSMPredictBot(PSMSpreadBot):
             self.orders = pd.read_csv(order_csv_path, index_col=0)
             ids = list(self.orders.index)
             for id in ids:
+                private_pause()
                 order_info = self.portfolio.auth.get_order(id)
-                sleep(PRIVATE_SLEEP)
+                PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
                 if 'product_id' in order_info:
                     sym = order_info['product_id'].split('-')[0]
                     side = order_info['side']
@@ -934,8 +940,9 @@ class PSMPredictBot(PSMSpreadBot):
         # If the id is for a buy order check past data as well
         elif side == 'buy':
             try:
+                private_pause()
                 order = product.auth_client.get_order(id)
-                sleep(PRIVATE_SLEEP)
+                PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
                 # Check if the buy order has already been taken care of
                 if 'filled_size' not in order.keys():
                     print(sym + ' removed from tracking due to ' + order['message'] + '\n')
@@ -962,8 +969,9 @@ class PSMPredictBot(PSMSpreadBot):
             self.orders.loc[id] = new_row
 
     def cancel_single_order(self, id, remove_index=False):
+        private_pause()
         response = self.portfolio.auth.cancel_order(id)
-        sleep(PRIVATE_SLEEP)
+        PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
         if type(response) == dict:
             response = response['message']
             print('Cannot cancel order due to ' + response)
@@ -1170,7 +1178,8 @@ class PSMPredictBot(PSMSpreadBot):
             no_viable_trade = True
             top_syms = self.symbols  # If no viable trades are found then allow any symbol to remain
         if usd_hold > QUOTE_ORDER_MIN:
-            sleep(PRIVATE_SLEEP)
+            private_pause()
+            PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
 
         # Check available cash after canceling the non_optimal buy orders and place the next order
         self.portfolio.update_value()
@@ -1400,35 +1409,106 @@ class PredictBot(PSMPredictBot):
         self.websocket_thread.start()
 
     def stop_listening(self):
+        self.socket.close()
         self.websocket_thread.join()
-    #
-    # def create_place_holders(self):
-    #   get current prediction
-    #   look for mins and maxs
-    #   if min is not within the last 15min of the prediction
-    #       if max > (min + fee)
-    #           put placeholder
-    #
-    # def trade(self, order_num, limit_price):
-    #   create thread for this order
-    #   check current price for order_num
-    #   send private_sleep_command_in_queue
-    #   while order is not filled
-    #       check current top bid price through websocket
-    #       if order price < top bid price and top price < limit_price (flip < to > for asks)
-    #           check queque for any current private sleeps
-    #           move order to top of book
-    #           update order in orders tracker
-    #           update current price
-    #       elif top price >= limit_price
-    #           put order at limit_price
-    #   ( it might be usefull to utilize taker orders when the taker fee == the maker fee)
-    #
-    # def buy_placeholders(self):
-    #   check current price through websocket
-    #   if price < place_holder (for that currency)
-    #       if price has risen in last second (inflection point)
-    #           buy (using the trade method defined above)
+
+    def buy_single_place_holder(self, com_wallet, tkr_fee, available, sym, time_out=600):
+        # This method turns place holders into live orders once the price is near the predicted
+        order = self.place_holder_orders[sym]['buy']
+        t0 = time()
+        # Skip if there is no order
+        if order is None:
+            return
+
+        # Setup order variables
+        price_bounce_tracker = 0
+        nominal_price = order['price']
+        nominal_size = order['size']
+        wallet = self.portfolio.wallets[sym]
+        current_price = wallet.product.get_top_order('asks')
+
+        # Periodically check to see if the price is near the purchase price
+        q = self.queque_dict[sym]
+        price = q.get()
+        while (price > nominal_price * (1 + tkr_fee)) and ((time() - t0) < time_out):
+            price = q.get()
+
+        # Periodically check to see if the price has risen
+        while (price_bounce_tracker < 2) and ((time() - t0) < time_out):
+            last_price = price
+            price = q.get()
+
+            # Check to see if the price has been rising for multiple trades
+            if (price < last_price):
+                price_bounce_tracker += 1
+            else:
+                price_bounce_tracker -= 1
+
+        # Determine whether the price is low enough, if so set the limit and stop prices
+        if current_price < nominal_price * (1 - STOP_SPREAD):
+            limit_price = current_price * (1 + STOP_SPREAD)
+            stop_price = current_price * (1 + STOP_SPREAD)
+        else:
+            limit_price = nominal_price
+            stop_price = None
+
+        # Check to see risk of not filling sell order
+        product = self.portfolio.wallets[sym].product
+        max_sell_price = product.detect_whale_price()
+        # dont_buy = self.is_buy_order_fill_likely(nominal_price, sym)
+        max_spread = calculate_spread(nominal_price, max_sell_price)
+
+        if (max_spread < MIN_SPREAD):  # or dont_buy:
+            return
+        elif (max_spread < order['spread']):
+            order['spread'] = max_spread
+
+        # Scale the size based on the new price
+        size = (nominal_price * nominal_size) / limit_price
+        # Only buy the determined size if it's less than available, else buy all available
+        if size * (limit_price * (1 + tkr_fee)) > available:
+            size = available / (limit_price * (1 + tkr_fee))
+
+        # Place the order and print the status
+        order_id = self.place_order(limit_price, 'buy', size, sym, post_only=False, stop_price=stop_price)
+        if order_id is None:
+            print(sym + ' buy Order rejected\n')
+        else:
+            print(sym + ' buy Order placed\n')
+            for i in range(0, 10):
+                self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'])
+                if order_id in self.orders.index:
+                    break
+                else:
+                    sleep(5)
+            if i == 9:
+                print(sym + ' order id ' + order_id + ' did not save')
+            self.place_holder_orders[sym]['buy'] = None
+            com_wallet.update_value()
+            available = com_wallet.get_amnt_available('buy')
+        return available
+
+    def buy_place_holders(self):
+        com_wallet = self.portfolio.get_common_wallet()
+        com_wallet.update_value()
+        available = com_wallet.get_amnt_available('buy')
+        mkr_fee, tkr_fee = self.portfolio.get_fee_rate()
+
+        place_holder_ids = []
+        for sym in self.place_holder_orders.keys():
+            place_holder_ids.append(self.portfolio.wallets[sym].product.product_id)
+        if available > QUOTE_ORDER_MIN:
+            self.socket = Websocket(self.queque_dict, products=place_holder_ids)
+            self.listen_for_price()
+            sym_threads = []
+            for sym in self.place_holder_orders.keys():
+                current_sym_thread = Thread(target=self.buy_single_place_holder, args=(com_wallet, tkr_fee, available, sym))
+                current_sym_thread.start()
+                sym_threads.append(current_sym_thread)
+
+            for current_thread in  sym_threads:
+                current_thread.join()
+            self.stop_listening()
 
 class PortfolioTracker:
 
@@ -1599,7 +1679,8 @@ def run_bot(bot_type='psm'):
         current_time = datetime.now().timestamp()
         if (current_time > (last_check + check_period)):
             try:
-                sleep(PRIVATE_SLEEP)
+                private_pause()
+                PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
                 # Update propogator frequencies
                 if (current_time > (last_update + propogator_update_period)) and (bot_type == 'psm'):
                     bot.predict()
