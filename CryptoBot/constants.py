@@ -4,7 +4,7 @@ QUOTE_ORDER_MIN = 10
 PUBLIC_SLEEP = 0.4
 PRIVATE_SLEEP = 0.21
 MIN_PORTFOLIO_VALUE = 100 # This is the value that will trigger the bot to stop trading
-TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
+TRADE_LEN = 30 # This is the amount of time I desire for trades to be filled in
 PRIVATE_SLEEP_QUEQUE = Queue()
 PRIVATE_SLEEP_QUEQUE.put(0)
 PUBLIC_SLEEP_QUEQUE = Queue()

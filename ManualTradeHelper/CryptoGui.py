@@ -3,7 +3,7 @@ import numpy as np
 import pandastable
 from tkinter import *
 from PIL import Image, ImageTk
-from CryptoBot.SpreadBot import Product, Wallet, LiveRunSettings, CombinedPortfolio, Bot, PortfolioTracker, PSMPredictBot
+from CryptoBot.SpreadBot import PSMPredictBot
 from CryptoBot.CryptoBot_Shared_Functions import num2str
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg

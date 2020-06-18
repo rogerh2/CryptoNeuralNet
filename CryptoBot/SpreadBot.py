@@ -67,6 +67,7 @@ MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell
 STOP_SPREAD = 0.001 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 1.8 # This is the step size for PSM
+ORDER_TIMEOUT = 600
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -1401,6 +1402,7 @@ class PredictBot(PSMPredictBot):
 
         # Setup attributes to handle data from the websocket
         products = (sym+'-'+base_currency for sym in syms)
+        self.order_errors = {}
         self.queque_dict = {sym:Queue() for sym in syms}
         self.socket = Websocket(self.queque_dict, products=products)
 
@@ -1412,7 +1414,64 @@ class PredictBot(PSMPredictBot):
         self.socket.close()
         self.websocket_thread.join()
 
-    def buy_single_place_holder(self, com_wallet, tkr_fee, available, sym, time_out=600):
+    def cancel_old_orders(self):
+        # First remove old placeholder orders
+        for sym in self.symbols:
+            for side in ('buy', 'sell'):
+                placeholder_order = self.place_holder_orders[sym][side]
+                if not placeholder_order is None:
+                    placement_time = placeholder_order['time']
+                    if (time() - placement_time) > 2*ORDER_TIMEOUT: self.place_holder_orders[sym][side] = None
+
+        # Next remove old current orders
+        for id in self.orders.index:
+            # Only remove sell orders if they are no longer expected to be met
+            order_time = float(self.orders.loc[id]['time'])
+            if (self.orders.loc[id]['side'] == 'sell') and ((time() - order_time) > ORDER_TIMEOUT):
+                corresponding_id = self.orders.loc[id]['corresponding_order']
+                sym = self.orders.loc[id]['product_id'][0:-4]
+                new_sell_price, _, _, _, _ = self.determine_trade_price(sym, 1, side='sell')
+                if new_sell_price is None:
+                    continue
+
+                # Is the new price far enough above the mean to be deemed unlikely to reach
+                is_selling_unlikely = self.is_sell_order_fill_unlikely(new_sell_price, sym, std_coeff=1)
+
+                # Is the new price far enough above the mean that even selling at a loss would be considered acceptable
+                can_sell_at_a_loss = self.is_sell_order_fill_unlikely(new_sell_price, sym, std_coeff=1.5)
+
+                # Will the buy price be within the standard variation assumed
+                is_buying_at_profit_likely = self.is_buy_order_fill_likely(new_sell_price * (2 - MIN_SPREAD), sym)
+
+                # Check if new price will still make a profit
+                buy_price = self.orders.loc[corresponding_id]['price']
+                current_spread = self.orders.loc[corresponding_id]['spread']
+                new_spread = calculate_spread(buy_price, new_sell_price)
+
+                can_lower_price_below_MIN_SPREAD = False  # is_selling_unlikely and is_buying_at_profit_likely and (new_spread < current_spread)
+                can_raise_price = (not is_selling_unlikely) and is_buying_at_profit_likely and (new_spread > current_spread)
+                can_lower_price = (new_spread > MIN_SPREAD) and (new_spread < current_spread)
+                can_sell_at_a_loss = False  # can_sell_at_a_loss and is_buying_at_profit_likely and (new_spread < current_spread)
+
+                if can_raise_price or can_lower_price or can_lower_price_below_MIN_SPREAD or can_sell_at_a_loss:
+                    if can_lower_price:
+                        print('Lowering sell price for ' + sym)
+                    elif can_lower_price_below_MIN_SPREAD:
+                        print('Lowering sell price for ' + sym + ' BELOW defined profit margins')
+                    elif can_sell_at_a_loss:
+                        print('Lowering sell price for ' + sym + ' to sell at a LOSS')
+                    else:
+                        print('Raising sell price for ' + sym)
+                    self.cancel_single_order(id, remove_index=True)
+                    self.orders.at[corresponding_id, 'spread'] = new_spread
+
+            elif self.orders.loc[id]['filled_size'] == self.orders.loc[id]['size']:
+                continue
+            elif (time() - order_time) > 2*ORDER_TIMEOUT:
+                self.orders.at[id, 'size'] = self.orders.loc[id]['filled_size']
+                self.cancel_single_order(id)
+
+    def buy_single_place_holder(self, com_wallet, tkr_fee, available, sym, time_out):
         # This method turns place holders into live orders once the price is near the predicted
         order = self.place_holder_orders[sym]['buy']
         t0 = time()
@@ -1488,7 +1547,12 @@ class PredictBot(PSMPredictBot):
             available = com_wallet.get_amnt_available('buy')
         return available
 
-    def buy_place_holders(self):
+    def continuous_sell(self, time_out):
+        t0 = time()
+        while (time() - t0) < time_out:
+            self.place_limit_sells()
+
+    def buy_place_holders(self, time_out=ORDER_TIMEOUT):
         com_wallet = self.portfolio.get_common_wallet()
         com_wallet.update_value()
         available = com_wallet.get_amnt_available('buy')
@@ -1497,18 +1561,84 @@ class PredictBot(PSMPredictBot):
         place_holder_ids = []
         for sym in self.place_holder_orders.keys():
             place_holder_ids.append(self.portfolio.wallets[sym].product.product_id)
+        sell_thread = Thread(target=self.continuous_sell, args=(time_out,))
+        sell_thread.start()
         if available > QUOTE_ORDER_MIN:
             self.socket = Websocket(self.queque_dict, products=place_holder_ids)
             self.listen_for_price()
             sym_threads = []
             for sym in self.place_holder_orders.keys():
-                current_sym_thread = Thread(target=self.buy_single_place_holder, args=(com_wallet, tkr_fee, available, sym))
+                current_sym_thread = Thread(target=self.buy_single_place_holder, args=(com_wallet, tkr_fee, available, sym, time_out))
                 current_sym_thread.start()
                 sym_threads.append(current_sym_thread)
 
             for current_thread in  sym_threads:
-                current_thread.join()
+                current_thread.join(timeout=2*time_out)
             self.stop_listening()
+        sell_thread.join(timeout=time_out)
+
+    def run(self, drop_box_key):
+        global OPEN_ORDERS
+
+        self.portfolio.update_value()
+        print('Initializing portfolio tracking')
+        portfolio_tracker = PortfolioTracker(self.portfolio, dbx_key=drop_box_key)
+        portfolio_value = portfolio_tracker.initial_value
+        print('SpreadBot starting value ' + num2str(portfolio_value, 2))
+
+        last_check = 0
+        last_update = 0
+        last_plot = 0
+        last_portfolio_refresh = datetime.now().timestamp()
+        plot_period = 60
+        check_period = 60
+        propogator_update_period = ORDER_TIMEOUT
+        portfolio_refresh_period = 24 * 3600
+        err_counter = 0
+
+        while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
+            current_time = datetime.now().timestamp()
+            if (current_time > (last_check + check_period)):
+                try:
+                    private_pause()
+                    PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+                    # Update propogator frequencies
+                    if (current_time > (last_update + propogator_update_period)):
+                        self.predict()
+                        last_update = datetime.now().timestamp()
+                    # Trade
+                    self.portfolio.update_value()
+                    last_check = datetime.now().timestamp()
+                    self.place_order_for_top_currencies()
+                    self.place_limit_sells()
+
+                    # Update Settings
+                    self.settings.update_settings()
+                    new_offset = self.settings.settings['portfolio value offset']
+                    self.portfolio.update_offset_value(new_offset)
+
+                    if (current_time > (last_plot + plot_period)):
+                        portfolio_value = portfolio_tracker.plot_returns()
+                        last_plot = datetime.now().timestamp()
+
+                    if (current_time > (portfolio_refresh_period + last_portfolio_refresh)):
+                        portfolio_tracker.move_data_to_drop_box()
+                        print('Portfolio Data moved to DropBox\n')
+                        portfolio_tracker.reset()
+                        last_portfolio_refresh = current_time
+
+                    err_counter = 0
+
+                except Exception as e:
+                    if type(e) == JSONDecodeError:
+                        print_err_msg(' get data', e, 0)
+                        print('\n JSON error. taking a time out')
+                        sleep(5 * 60)
+
+                    else:
+                        err_counter = print_err_msg(' find new data', e, err_counter)
+
+        print('Loop END')
 
 class PortfolioTracker:
 
