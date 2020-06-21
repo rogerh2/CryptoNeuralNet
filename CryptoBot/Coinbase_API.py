@@ -27,7 +27,8 @@ class Websocket(cbpro.WebsocketClient):
         self.message_count = 0
         print("Websocket Initiated")
     def on_message(self, msg): # TODO implement error handling
-        self.queques[msg['product_id']].put_nowait(msg)
+        if 'product_id' in msg.keys():
+            self.queques[msg['product_id'][0:-4]].put_nowait(msg)
     def on_close(self):
         print("Websocket Closed")
 

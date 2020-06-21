@@ -3,7 +3,7 @@ from queue import Queue
 QUOTE_ORDER_MIN = 10
 PUBLIC_SLEEP = 0.4
 PRIVATE_SLEEP = 0.21
-MIN_PORTFOLIO_VALUE = 100 # This is the value that will trigger the bot to stop trading
+MIN_PORTFOLIO_VALUE = 50 # This is the value that will trigger the bot to stop trading
 TRADE_LEN = 30 # This is the amount of time I desire for trades to be filled in
 PRIVATE_SLEEP_QUEQUE = Queue()
 PRIVATE_SLEEP_QUEQUE.put(0)
@@ -70,8 +70,8 @@ EXCHANGE_CONSTANTS = {
  'ZEC-BTC':{'base order min': 0.01, 'base resolution': 4, 'resolution': 6, 'avoid': True},
  'XLM-USD':{'base order min': 1.0, 'base resolution': 0, 'resolution': 6, 'avoid': False},
  'XLM':{'base order min': 1.0, 'base resolution': 0, 'resolution': 6, 'avoid': False},
- # 'MKR-USD':{'base order min': 0.001, 'base resolution': 6, 'resolution': 4, 'avoid': False},
- # 'MKR':{'base order min': 0.001, 'base resolution': 6, 'resolution': 4, 'avoid': False},
+ 'MKR-USD':{'base order min': 0.001, 'base resolution': 6, 'resolution': 4, 'avoid': False},
+ 'MKR':{'base order min': 0.001, 'base resolution': 6, 'resolution': 4, 'avoid': False},
  'ETH-USDC':{'base order min': 0.01, 'base resolution': 8, 'resolution': 2, 'avoid': False},
  'ETH-BTC':{'base order min': 0.01, 'base resolution': 8, 'resolution': 5, 'avoid': False},
  'ZRX-USD':{'base order min': 1.0, 'base resolution': 5, 'resolution': 6, 'avoid': False},

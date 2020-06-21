@@ -279,7 +279,7 @@ class PSMPredictBotOrderStorage(unittest.TestCase):
         api_base = 'https://api-public.sandbox.pro.coinbase.com'
         auth_client = AuthenticatedClient(self.api_key, self.secret_key, self.passphrase, api_url=api_base)
         auth_client.cancel_all('BTC-USD')
-        df = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time', 'spread'])
+        df = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time', 'spread', 'error'])
         df.to_csv(CSV_PATH)
 
 

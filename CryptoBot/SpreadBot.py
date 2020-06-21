@@ -68,6 +68,7 @@ STOP_SPREAD = 0.001 # This is the delta for limits in stop-limit orders, this is
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 1.8 # This is the step size for PSM
 ORDER_TIMEOUT = 600
+WHALE_MARGIN = 0.005
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -827,13 +828,12 @@ class PSMSpreadBot(SpreadBot):
         self.predictions = self.transform(predictions)
         self.reversed_predictions = self.transform(reversed_predictions)
 
-    def determine_price_based_on_std(self, sym, usd_available, side, std_mult=1.0, mu_mult=1.0):
+    def determine_price_based_on_std(self, sym, usd_available, side, std_mult=1.0, mu_mult=1.0, max_predict_len=TRADE_LEN):
 
         # initialize variables
         book_side, opposing_book_side, coeff = self.get_side_depedent_vars(side)
-
         wallet = self.portfolio.wallets[sym]
-        predicted_evolution = self.predictions[sym]
+        predicted_evolution = self.predictions[sym][0:max_predict_len]
         mu, std, last_diff = wallet.product.get_psm_mean_and_std_of_price_changes(predicted_evolution, self.raw_data[sym])
         current_price = wallet.product.get_top_order(opposing_book_side)
         buy_std_coeff = std_mult * self.settings.read_setting_from_file('buy std')
@@ -841,6 +841,8 @@ class PSMSpreadBot(SpreadBot):
         if mu is None:
             return None, None, None, None, None
         mu *= mu_mult
+
+        # Calculate price using the predicted price
         sell_ind = np.argmax(predicted_evolution) # Only buy currencies if you predict that the mean will be soon
         fall_len=90
         data_fit = np.polyfit(np.arange(0, fall_len), self.raw_data[sym][-fall_len::], 1)
@@ -903,7 +905,7 @@ class PSMPredictBot(PSMSpreadBot):
         super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
         # Read dataframe from file if it exists and use that to initialize the product orders as well
         if order_csv_path is None:
-            self.orders = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time', 'spread'])
+            self.orders = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time', 'spread', 'error'])
             self.order_path = './orders_tracking.csv'
         else:
             self.order_path = order_csv_path
@@ -928,7 +930,7 @@ class PSMPredictBot(PSMSpreadBot):
         self.place_holder_orders = place_holder_orders
 
     # Methods to manage dataframe storing orders
-    def add_order(self, id, sym, side, place_time, corresponding_buy_id, refresh=True, spread=None):
+    def add_order(self, id, sym, side, place_time, corresponding_buy_id, refresh=True, spread=None, err=None):
         product = self.portfolio.wallets[sym].product
 
         if refresh:
@@ -967,6 +969,7 @@ class PSMPredictBot(PSMSpreadBot):
             new_row.append(corresponding_buy_id)
             new_row.append(place_time)
             new_row.append(spread)
+            new_row.append(err)
             self.orders.loc[id] = new_row
 
     def cancel_single_order(self, id, remove_index=False):
@@ -981,7 +984,7 @@ class PSMPredictBot(PSMSpreadBot):
             self.orders = self.orders.drop(id)
             return True
 
-    def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None, spread=None):
+    def update_id_in_order_df(self, id, sym, side, place_time, size, corresponding_buy_id=None, spread=None, err=None):
         if side == 'sell':
             # For sell orders remove if the are no longer in the books
             stored_ids = self.orders.index
@@ -992,7 +995,7 @@ class PSMPredictBot(PSMSpreadBot):
             stored_ids = self.orders.index
             if (id in stored_ids):
                 self.orders = self.orders.drop(id)
-        self.add_order(id, sym, side, place_time, corresponding_buy_id, spread=spread)
+        self.add_order(id, sym, side, place_time, corresponding_buy_id, spread=spread, err=err)
         # Check if a sell order was cancelled, if so add its size to the buy irder corresponding order
         stored_ids = self.orders.index
         if (id not in stored_ids) and (corresponding_buy_id in stored_ids):
@@ -1011,6 +1014,7 @@ class PSMPredictBot(PSMSpreadBot):
             place_time = order['time']
             size = order['size']
             spread = order['spread']
+            err = order['error']
             self.update_id_in_order_df(id, sym, side, place_time, size, corresponding_buy_id=corresponding_order_id, spread=spread)
 
         self.orders.to_csv(self.order_path)
@@ -1152,7 +1156,7 @@ class PSMPredictBot(PSMSpreadBot):
                 else:
                     print(sym + ' buy Order placed\n')
                     for i in range(0, 10):
-                        self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'])
+                        self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'], err=self.errors[sym])
                         if order_id in self.orders.index:
                             break
                         else:
@@ -1219,7 +1223,7 @@ class PSMPredictBot(PSMSpreadBot):
                 # Determine order properties
                 buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
                 sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
-                dont_buy = self.is_buy_order_fill_likely(buy_price, top_sym)
+                dont_buy = self.is_sell_order_fill_unlikely(sell_price, sym, std_coeff=1)
                 if dont_buy:
                     continue
 
@@ -1288,7 +1292,7 @@ class PSMPredictBot(PSMSpreadBot):
         else:
             print('\nSell Order placed\n')
             # Do not refresh the orders just in case the sell order was filled immediately
-            self.add_order(order_id, sym, 'sell', time(), buy_id, refresh=False)
+            self.add_order(order_id, sym, 'sell', time(), buy_id, refresh=False, err=self.orders.loc[buy_id]['error'])
 
         return order_id
 
@@ -1414,6 +1418,19 @@ class PredictBot(PSMPredictBot):
         self.socket.close()
         self.websocket_thread.join()
 
+    def is_possible_bubble(self, sym):
+        fit_coeff = {
+            ticker: np.polyfit(np.arange(0, len(self.raw_data[ticker])), self.raw_data[ticker] / np.mean(self.raw_data[ticker]), 1) for
+            ticker in self.raw_data.keys()
+        }
+        current_mvt = fit_coeff[sym][0]
+        mean_mvt = np.array([fit_coeff[ticker][0] for ticker in fit_coeff.keys()])
+        lower_cutoff = -4.167e-05
+        upper_cutoff = np.mean(mean_mvt) + 2 * np.std(mean_mvt)
+        if (current_mvt < lower_cutoff) or (current_mvt > upper_cutoff):
+            return True
+        return False
+
     def cancel_old_orders(self):
         # First remove old placeholder orders
         for sym in self.symbols:
@@ -1421,7 +1438,7 @@ class PredictBot(PSMPredictBot):
                 placeholder_order = self.place_holder_orders[sym][side]
                 if not placeholder_order is None:
                     placement_time = placeholder_order['time']
-                    if (time() - placement_time) > 2*ORDER_TIMEOUT: self.place_holder_orders[sym][side] = None
+                    if (time() - placement_time) > ORDER_TIMEOUT: self.place_holder_orders[sym][side] = None
 
         # Next remove old current orders
         for id in self.orders.index:
@@ -1430,40 +1447,33 @@ class PredictBot(PSMPredictBot):
             if (self.orders.loc[id]['side'] == 'sell') and ((time() - order_time) > ORDER_TIMEOUT):
                 corresponding_id = self.orders.loc[id]['corresponding_order']
                 sym = self.orders.loc[id]['product_id'][0:-4]
-                new_sell_price, _, _, _, _ = self.determine_trade_price(sym, 1, side='sell')
-                if new_sell_price is None:
+                old_err = self.orders.loc[id]['error']
+                new_err = self.errors[sym]
+                new_sell_price, _, _, _, _ = self.determine_trade_price(sym, 1, side='sell', max_predict_len=NEAR_PREDICTION_LEN)
+                product = self.portfolio.wallets[sym].product
+
+                if (new_sell_price is None) or (old_err < new_err):
                     continue
-
-                # Is the new price far enough above the mean to be deemed unlikely to reach
-                is_selling_unlikely = self.is_sell_order_fill_unlikely(new_sell_price, sym, std_coeff=1)
-
-                # Is the new price far enough above the mean that even selling at a loss would be considered acceptable
-                can_sell_at_a_loss = self.is_sell_order_fill_unlikely(new_sell_price, sym, std_coeff=1.5)
-
-                # Will the buy price be within the standard variation assumed
-                is_buying_at_profit_likely = self.is_buy_order_fill_likely(new_sell_price * (2 - MIN_SPREAD), sym)
 
                 # Check if new price will still make a profit
                 buy_price = self.orders.loc[corresponding_id]['price']
-                current_spread = self.orders.loc[corresponding_id]['spread']
+                whale_price = product.detect_whale_price()
                 new_spread = calculate_spread(buy_price, new_sell_price)
+                current_spread = self.orders.loc[corresponding_id]['spread']
+                max_spread = calculate_spread(buy_price, whale_price) - WHALE_MARGIN
 
-                can_lower_price_below_MIN_SPREAD = False  # is_selling_unlikely and is_buying_at_profit_likely and (new_spread < current_spread)
-                can_raise_price = (not is_selling_unlikely) and is_buying_at_profit_likely and (new_spread > current_spread)
-                can_lower_price = (new_spread > MIN_SPREAD) and (new_spread < current_spread)
-                can_sell_at_a_loss = False  # can_sell_at_a_loss and is_buying_at_profit_likely and (new_spread < current_spread)
+                # Don't move the sell price above a whale order
+                if (new_spread > current_spread) and (new_spread >= max_spread):
+                    continue
+                # Don't cancel the old order if the new order is identical
+                elif (new_spread == current_spread):
+                    continue
 
-                if can_raise_price or can_lower_price or can_lower_price_below_MIN_SPREAD or can_sell_at_a_loss:
-                    if can_lower_price:
-                        print('Lowering sell price for ' + sym)
-                    elif can_lower_price_below_MIN_SPREAD:
-                        print('Lowering sell price for ' + sym + ' BELOW defined profit margins')
-                    elif can_sell_at_a_loss:
-                        print('Lowering sell price for ' + sym + ' to sell at a LOSS')
-                    else:
-                        print('Raising sell price for ' + sym)
-                    self.cancel_single_order(id, remove_index=True)
-                    self.orders.at[corresponding_id, 'spread'] = new_spread
+                if new_spread < MIN_SPREAD:
+                    new_spread = MIN_SPREAD
+
+                self.cancel_single_order(id, remove_index=True)
+                self.orders.at[corresponding_id, 'spread'] = new_spread
 
             elif self.orders.loc[id]['filled_size'] == self.orders.loc[id]['size']:
                 continue
@@ -1471,7 +1481,7 @@ class PredictBot(PSMPredictBot):
                 self.orders.at[id, 'size'] = self.orders.loc[id]['filled_size']
                 self.cancel_single_order(id)
 
-    def buy_single_place_holder(self, com_wallet, tkr_fee, available, sym, time_out):
+    def buy_single_place_holder(self, com_wallet, tkr_fee, available_queue : Queue, sym, time_out):
         # This method turns place holders into live orders once the price is near the predicted
         order = self.place_holder_orders[sym]['buy']
         t0 = time()
@@ -1484,40 +1494,56 @@ class PredictBot(PSMPredictBot):
         nominal_price = order['price']
         nominal_size = order['size']
         wallet = self.portfolio.wallets[sym]
-        current_price = wallet.product.get_top_order('asks')
 
         # Periodically check to see if the price is near the purchase price
         q = self.queque_dict[sym]
-        price = q.get()
-        while (price > nominal_price * (1 + tkr_fee)) and ((time() - t0) < time_out):
-            price = q.get()
+        order_data = q.get()
+        price = float(order_data['price'])
+        print('Watching ' + sym + ' for buy trigger')
+        sleep(0.01)
+        while (price > nominal_price) and ((time() - t0) < time_out):
+            order_data = q.get()
+            price = float(order_data['price'])
+            # print('trigger ' + sym + ' price: ' + num2str(price))
 
+        print('Watching ' + sym + ' for bounce')
+        sleep(0.01)
         # Periodically check to see if the price has risen
         while (price_bounce_tracker < 2) and ((time() - t0) < time_out):
             last_price = price
-            price = q.get()
+            order_data = q.get()
+            price = float(order_data['price'])
+            # print('bounce ' + sym + ' price: ' + num2str(price))
 
             # Check to see if the price has been rising for multiple trades
-            if (price < last_price):
+            if (order_data['side'] == 'buy') and (price >= last_price):
                 price_bounce_tracker += 1
             else:
                 price_bounce_tracker -= 1
 
-        # Determine whether the price is low enough, if so set the limit and stop prices
-        if current_price < nominal_price * (1 - STOP_SPREAD):
-            limit_price = current_price * (1 + STOP_SPREAD)
-            stop_price = current_price * (1 + STOP_SPREAD)
+        # If the conditions were not met, don't place a buy order
+        if (time() - t0) > time_out:
+            print(sym + ' watch timeout')
+            sleep(0.01)
+            return
+
+        current_price = float(order_data["best_bid"])
+        # If the price is lower than nominal place at that price
+        if current_price < nominal_price:
+            limit_price = current_price
         else:
             limit_price = nominal_price
-            stop_price = None
+        stop_price = None
 
         # Check to see risk of not filling sell order
         product = self.portfolio.wallets[sym].product
         max_sell_price = product.detect_whale_price()
         # dont_buy = self.is_buy_order_fill_likely(nominal_price, sym)
-        max_spread = calculate_spread(nominal_price, max_sell_price)
+        max_spread = calculate_spread(limit_price, max_sell_price) - WHALE_MARGIN
 
         if (max_spread < MIN_SPREAD):  # or dont_buy:
+            print('Cannot buy ' + sym + ' due to whale')
+            sleep(0.01)
             return
         elif (max_spread < order['spread']):
             order['spread'] = max_spread
@@ -1525,15 +1551,21 @@ class PredictBot(PSMPredictBot):
         # Scale the size based on the new price
         size = (nominal_price * nominal_size) / limit_price
         # Only buy the determined size if it's less than available, else buy all available
+        available = available_queue.get() # get the available amount of crypto from the queue, this also pauses any other thread trying to place an order (and therefore change the amount available
         if size * (limit_price * (1 + tkr_fee)) > available:
             size = available / (limit_price * (1 + tkr_fee))
 
         # Place the order and print the status
+        print('Buying ' + sym + '\n' + 'price: ' + num2str(limit_price, wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
+            size, 3) + '\n' + 'projected spread: ' + num2str(order['spread'], 6) + '\n')
+        sleep(0.01)
         order_id = self.place_order(limit_price, 'buy', size, sym, post_only=False, stop_price=stop_price)
         if order_id is None:
             print(sym + ' buy Order rejected\n')
+            sleep(0.01)
         else:
             print(sym + ' buy Order placed\n')
+            sleep(0.01)
             for i in range(0, 10):
                 self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'])
                 if order_id in self.orders.index:
@@ -1545,22 +1577,27 @@ class PredictBot(PSMPredictBot):
             self.place_holder_orders[sym]['buy'] = None
             com_wallet.update_value()
             available = com_wallet.get_amnt_available('buy')
-        return available
+            available_queue.put(available)
+        return
 
     def continuous_sell(self, time_out):
         t0 = time()
         while (time() - t0) < time_out:
+            self.update_orders()
             self.place_limit_sells()
 
     def buy_place_holders(self, time_out=ORDER_TIMEOUT):
         com_wallet = self.portfolio.get_common_wallet()
         com_wallet.update_value()
         available = com_wallet.get_amnt_available('buy')
+        available_queue = Queue()
+        available_queue.put(available)
         mkr_fee, tkr_fee = self.portfolio.get_fee_rate()
 
         place_holder_ids = []
         for sym in self.place_holder_orders.keys():
-            place_holder_ids.append(self.portfolio.wallets[sym].product.product_id)
+            if not self.place_holder_orders[sym]['buy'] is None:
+                place_holder_ids.append(self.portfolio.wallets[sym].product.product_id)
         sell_thread = Thread(target=self.continuous_sell, args=(time_out,))
         sell_thread.start()
         if available > QUOTE_ORDER_MIN:
@@ -1568,14 +1605,120 @@ class PredictBot(PSMPredictBot):
             self.listen_for_price()
             sym_threads = []
             for sym in self.place_holder_orders.keys():
-                current_sym_thread = Thread(target=self.buy_single_place_holder, args=(com_wallet, tkr_fee, available, sym, time_out))
+                current_sym_thread = Thread(target=self.buy_single_place_holder, args=(com_wallet, tkr_fee, available_queue, sym, time_out))
                 current_sym_thread.start()
                 sym_threads.append(current_sym_thread)
 
-            for current_thread in  sym_threads:
-                current_thread.join(timeout=2*time_out)
+            for current_thread in sym_threads:
+                current_thread.join(timeout=time_out)
             self.stop_listening()
         sell_thread.join(timeout=time_out)
+
+    def determine_trade_price(self, sym, usd_available, side, mean_multiplier=1, max_predict_len=TRADE_LEN):
+        _, _, coeff = self.get_side_depedent_vars(side)
+        price_p, wallet, size_p, std, mu = self.determine_price_based_on_std(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=1.0, max_predict_len=TRADE_LEN)
+        price_s, size_s = self.determine_price_based_on_fill_size(sym, usd_available, side, mu_mult=mean_multiplier, std_mult=1.0)
+        return price_p, wallet, size_p, std, mu
+
+    def place_order_for_top_currencies(self):
+        # Ensure to update portfolio value before running
+        self.update_orders()
+        usd_hold = self.portfolio.get_usd_held()
+        usd_available = self.portfolio.get_usd_available()
+        desired_number_of_currencies = 5  # How many currecies (excluding USD) to hold
+        sym_indices = list(
+            range(0, desired_number_of_currencies))  # This chooses the indices to use for determining trades
+        buy_prices, wallets, sizes, top_syms, stds, mus, spreads = self.rank_currencies(usd_available, print_sym=False,
+                                                                                        sym_ind=sym_indices)
+        no_viable_trade = False
+
+        # Cancel bad buy orders before continuing
+        self.cancel_old_orders()
+        if top_syms is None:
+            no_viable_trade = True
+            top_syms = self.symbols  # If no viable trades are found then allow any symbol to remain
+        if usd_hold > QUOTE_ORDER_MIN:
+            private_pause()
+            PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+
+        # Check available cash after canceling the non_optimal buy orders and place the next order
+        self.portfolio.update_value()
+        full_portfolio_value = self.get_full_portfolio_value()
+        num_orders = len(top_syms)
+        num_currencies_to_loop = np.min(np.array([len(top_syms) + 1, desired_number_of_currencies + 1]))
+        # Update fee rate
+        mkr_fee, tkr_fee = self.portfolio.get_fee_rate()
+        self.update_min_spread(mkr_fee, tkr_fee=tkr_fee)
+
+        for ind in range(1, num_currencies_to_loop):
+            i = num_orders - ind
+            usd_available = self.portfolio.get_usd_available()
+            top_sym = top_syms[i]
+            current_placeholder = self.place_holder_orders[top_sym]['buy']
+            if current_placeholder is not None:
+                # Don't have more than one placeholder order out at a time
+                continue
+            if self.errors[top_sym] > 0.05:
+                continue
+            # Only continue if there are viable trades
+            if (usd_available > QUOTE_ORDER_MIN) and (not no_viable_trade):
+
+                # Determine order size
+                nominal_order_size = full_portfolio_value / desired_number_of_currencies
+                if nominal_order_size < QUOTE_ORDER_MIN:
+                    # never try to place an order smaller than the minimum
+                    nominal_order_size = QUOTE_ORDER_MIN
+
+                if nominal_order_size > (usd_available - QUOTE_ORDER_MIN):
+                    # If placing the nominal order leaves an unusable amount of money then only use available
+                    order_size = usd_available
+                else:
+                    order_size = nominal_order_size
+
+                # Determine order properties
+                buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy', max_predict_len=NEAR_PREDICTION_LEN)
+                sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
+                dont_buy = self.is_possible_bubble(top_sym) #self.is_buy_order_fill_likely(buy_price, top_sym)
+                if dont_buy:
+                    continue
+
+                # Always insure the order is small enough to go through in a reasonable amount of time
+                mean_size, _, _ = wallet.product.get_mean_and_std_of_fill_sizes('asks', weighted=False)
+                if order_size > (buy_price * mean_size):
+                    order_size = buy_price * mean_size
+
+                if buy_price is None:
+                    continue
+
+                existing_size = (wallet.value['SYM'])
+                orders = self.portfolio.wallets[top_sym].product.get_open_orders()
+                for order in orders:
+                    if order['side'] == 'buy':
+                        existing_size += float(order['size'])
+
+                amnt_held = existing_size * buy_price
+
+                # Scale size based on existing holdings
+                if amnt_held <= (order_size - QUOTE_ORDER_MIN):
+                    size -= existing_size
+                # Don't place order if you already hold greater than or euqal to the nominal_order_size (within the QUOTE_ORDER_MIN)
+                else:
+                    continue
+
+                # If the spread is too small don't place the order
+                spread = calculate_spread(buy_price, sell_price)
+                if spread < MIN_SPREAD:
+                    print('Cannot place by order because projected sell price dropped\n')
+                    continue
+
+                # Adjust the size to account for the fee rate
+                size = size / (1 + tkr_fee)
+
+                # Place order
+                self.place_order_for_nth_currency(buy_price, sell_price, wallet, size, std, mu, top_sym)
+                self.portfolio.update_value()
+            else:
+                break
 
     def run(self, drop_box_key):
         global OPEN_ORDERS
@@ -1610,6 +1753,7 @@ class PredictBot(PSMPredictBot):
                     self.portfolio.update_value()
                     last_check = datetime.now().timestamp()
                     self.place_order_for_top_currencies()
+                    self.buy_place_holders()
                     self.place_limit_sells()
 
                     # Update Settings
@@ -1855,9 +1999,31 @@ def run_bot(bot_type='psm'):
 
     print('Loop END')
 
+def run_predict_bot():
+    global OPEN_ORDERS
+    # -- Secret/changing variable declerations
+    if len(sys.argv) > 2:
+        # Definition from a shell file
+        api_input = sys.argv[1]
+        secret_input = sys.argv[2]
+        passphrase_input = sys.argv[3]
+        drop_box_key = sys.argv[4]
+    else:
+        api_input = input('What is the Coinbase api key? ')
+        secret_input = input('What is the Coinbase secret key? ')
+        passphrase_input = input('What is the Coinbase passphrase? ')
+        drop_box_key = input('What is the DropBox Key? ')
+
+    # Setup initial variables
+    print('Initializing bot')
+    bot = PredictBot(api_input, secret_input, passphrase_input)
+    bot.run(drop_box_key)
+
 
 if __name__ == "__main__":
-    run_type = 'run'
+    run_type = 'run_predict_bot'
+    if run_type == 'run_predict_bot':
+        run_predict_bot()
     if run_type == 'run':
         run_bot()
     elif run_type == 'other':
