@@ -9,9 +9,9 @@ from time import sleep
 from time import time
 from CryptoBot.CryptoBot_Shared_Functions import num2str, str_list_to_timestamp, private_pause, public_pause
 from typing import Dict
-from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PUBLIC_SLEEP, PRIVATE_SLEEP, TRADE_LEN, PRIVATE_SLEEP_QUEQUE, PUBLIC_SLEEP_QUEQUE
+from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PUBLIC_SLEEP, PRIVATE_SLEEP, TRADE_LEN, PRIVATE_SLEEP_QUEQUE, PUBLIC_SLEEP_QUEQUE, OPEN_ORDERS
 
-OPEN_ORDERS = None
+
 
 # These classes collect raw data
 
@@ -331,11 +331,14 @@ class Product:
     def update_orders(self):
         # Update still open orders
         open_orders = self.get_open_orders()
-        open_ids = [x['id'] for x in open_orders]
+        open_ids = []
+        for x in open_orders:
+            if type(x) == dict:
+                open_ids.append(x['id'])
         for order in open_orders:
             id = order['id']
             # Check to ensure the order was placed by this bot
-            if (id in self.orders['buy'].keys()) or (id in self.orders['sell'].keys()):
+            if (not id in self.orders['buy'].keys()) or (not id in self.orders['sell'].keys()):
                 side = order['side']
                 self.orders[side][id] = order
 

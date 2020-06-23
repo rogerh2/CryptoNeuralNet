@@ -36,7 +36,7 @@ from CryptoBot.CryptoBot_Shared_Functions import offset_current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import convert_coinbase_timestr_to_timestamp
 from CryptoBot.CryptoBot_Shared_Functions import calculate_spread
 from CryptoBot.CryptoBot_Shared_Functions import save_file_to_dropbox, private_pause
-from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PRIVATE_SLEEP, MIN_PORTFOLIO_VALUE, TRADE_LEN, PRIVATE_SLEEP_QUEQUE
+from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PRIVATE_SLEEP, MIN_PORTFOLIO_VALUE, TRADE_LEN, PRIVATE_SLEEP_QUEQUE, OPEN_ORDERS
 from CryptoPredict.CryptoPredict import CryptoCompare
 from CryptoBot.Coinbase_API import Wallet, CombinedPortfolio, Websocket
 from ODESolvers.PSM import create_multifrequency_propogator_from_data
@@ -60,15 +60,16 @@ SYMBOLS = tuple(SYMBOLS)
 
 SETTINGS_FILE_PATH = r'./spread_bot_settings.txt'
 SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
-MIN_SPREAD = 1.011 # This is the minnimum spread before a trade can be made
+MIN_SPREAD = 1.01 # This is the minnimum spread before a trade can be made
 MAX_LIMIT_SPREAD = 1.11 # This is the maximum spread before stop limit orders are utilized
 STOP_PROFIT = 0.1 # This is the additional profit needed for the bot to begin using stop limit orders
-MIN_PROFIT = 0.001 # This is the minnimum value (net profit) to get per buy-sell pair
+MIN_PROFIT = 0 # This is the minnimum value (net profit) to get per buy-sell pair, set to 0 to beat fees faster
 STOP_SPREAD = 0.001 # This is the delta for limits in stop-limit orders, this is relevant for sell prices
 NEAR_PREDICTION_LEN = 30
 PSM_EVAL_STEP_SIZE = 1.8 # This is the step size for PSM
-ORDER_TIMEOUT = 600
-WHALE_MARGIN = 0.005
+ORDER_TIMEOUT = NEAR_PREDICTION_LEN * 60
+CYCLE_TIME = 600
+WHALE_MARGIN = 0.001
 
 if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
@@ -952,7 +953,8 @@ class PSMPredictBot(PSMSpreadBot):
                     order = None
                 else:
                     size = float(order['filled_size'])
-                    if np.abs(float(corresponding_buy_id) - size) <= 2*self.portfolio.wallets[sym].product.crypto_res:
+                    if np.abs(float(corresponding_buy_id) - size) <= 2 * self.portfolio.wallets[sym].product.crypto_res:
+                        order = None
                         order = None
             except Exception as e:
                 _ = print_err_msg('find new data', e, 1)
@@ -1015,7 +1017,7 @@ class PSMPredictBot(PSMSpreadBot):
             size = order['size']
             spread = order['spread']
             err = order['error']
-            self.update_id_in_order_df(id, sym, side, place_time, size, corresponding_buy_id=corresponding_order_id, spread=spread)
+            self.update_id_in_order_df(id, sym, side, place_time, size, corresponding_buy_id=corresponding_order_id, spread=spread, err=err)
 
         self.orders.to_csv(self.order_path)
 
@@ -1477,7 +1479,7 @@ class PredictBot(PSMPredictBot):
 
             elif self.orders.loc[id]['filled_size'] == self.orders.loc[id]['size']:
                 continue
-            elif (time() - order_time) > 2*ORDER_TIMEOUT:
+            elif (time() - order_time) > ORDER_TIMEOUT:
                 self.orders.at[id, 'size'] = self.orders.loc[id]['filled_size']
                 self.cancel_single_order(id)
 
@@ -1583,10 +1585,10 @@ class PredictBot(PSMPredictBot):
     def continuous_sell(self, time_out):
         t0 = time()
         while (time() - t0) < time_out:
-            self.update_orders()
             self.place_limit_sells()
+            self.update_orders()
 
-    def buy_place_holders(self, time_out=ORDER_TIMEOUT):
+    def buy_place_holders(self, time_out=CYCLE_TIME):
         com_wallet = self.portfolio.get_common_wallet()
         com_wallet.update_value()
         available = com_wallet.get_amnt_available('buy')
@@ -1600,7 +1602,7 @@ class PredictBot(PSMPredictBot):
                 place_holder_ids.append(self.portfolio.wallets[sym].product.product_id)
         sell_thread = Thread(target=self.continuous_sell, args=(time_out,))
         sell_thread.start()
-        if available > QUOTE_ORDER_MIN:
+        if (available > QUOTE_ORDER_MIN) and (len(place_holder_ids) > 0):
             self.socket = Websocket(self.queque_dict, products=place_holder_ids)
             self.listen_for_price()
             sym_threads = []
@@ -1655,11 +1657,8 @@ class PredictBot(PSMPredictBot):
             usd_available = self.portfolio.get_usd_available()
             top_sym = top_syms[i]
             current_placeholder = self.place_holder_orders[top_sym]['buy']
-            if current_placeholder is not None:
-                # Don't have more than one placeholder order out at a time
-                continue
-            if self.errors[top_sym] > 0.05:
-                continue
+            # if self.errors[top_sym] > 0.05:
+            #     continue
             # Only continue if there are viable trades
             if (usd_available > QUOTE_ORDER_MIN) and (not no_viable_trade):
 
@@ -1676,10 +1675,13 @@ class PredictBot(PSMPredictBot):
                     order_size = nominal_order_size
 
                 # Determine order properties
-                buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy', max_predict_len=NEAR_PREDICTION_LEN)
+                buy_price, wallet, size, std, mu = self.determine_trade_price(top_sym, order_size, side='buy')
                 sell_price, _, _, _, _ = self.determine_trade_price(top_sym, order_size, side='sell')
                 dont_buy = self.is_possible_bubble(top_sym) #self.is_buy_order_fill_likely(buy_price, top_sym)
                 if dont_buy:
+                    continue
+                elif (current_placeholder is not None) and (current_placeholder['price'] < buy_price):
+                    # Don't have more than one placeholder order out at a time
                     continue
 
                 # Always insure the order is small enough to go through in a reasonable amount of time
@@ -1735,12 +1737,13 @@ class PredictBot(PSMPredictBot):
         last_portfolio_refresh = datetime.now().timestamp()
         plot_period = 60
         check_period = 60
-        propogator_update_period = ORDER_TIMEOUT
+        propogator_update_period = CYCLE_TIME
         portfolio_refresh_period = 24 * 3600
         err_counter = 0
 
         while (MIN_PORTFOLIO_VALUE < portfolio_value) and (err_counter < 10):
             current_time = datetime.now().timestamp()
+            #loop
             if (current_time > (last_check + check_period)):
                 try:
                     private_pause()
