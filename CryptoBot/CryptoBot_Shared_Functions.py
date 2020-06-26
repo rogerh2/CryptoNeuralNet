@@ -23,6 +23,7 @@ from keras.layers import Dense
 from keras.layers import LeakyReLU
 from keras.layers import LSTM
 from keras.layers import Dropout
+from queue import Queue
 
 
 
@@ -200,6 +201,14 @@ def public_pause():
     sleep_time = np.min(np.array([time_till_run-t0, PUBLIC_SLEEP]))
     if sleep_time > 0:
         sleep(time_till_run-t0)
+
+
+def safe_get(q : Queue, timeout, msg):
+    try:
+        return q.get(timeout=timeout)
+    except:
+        print(msg)
+        return
 
 
 def nth_max_peaks(arr, n=1):

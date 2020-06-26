@@ -78,18 +78,35 @@ class Product:
 
     def detect_whale_price(self):
         self.get_current_book()
-        size_arr = np.array([float(order[1]) for order in self.order_book['asks']])
-        price_arr = np.array([float(order[0]) for order in self.order_book['asks']])
-        max_size = np.mean(size_arr) + 2.5 * np.std(size_arr)
-        for i in range(0, len(size_arr)):
-            size = size_arr[i]
+        ask_size_arr = np.array([])
+        bid_size_arr = np.array([float(order[1]) for order in self.order_book['bids']])
+        price_arr = np.array([])
+        for order in self.order_book['asks']:
+            price = float(order[0])
+            size = float(order[1])
+            if price*size < 15:
+                continue
+            ask_size_arr = np.append(ask_size_arr, size)
+            price_arr = np.append(ask_size_arr, price)
+
+        max_size = np.mean(ask_size_arr) + 2.5 * np.std(ask_size_arr)
+
+        bid_sum = np.sum(bid_size_arr)
+        ask_sum = np.sum(ask_size_arr)
+        if bid_sum > 1.5*ask_sum:
+            max_size = np.mean(ask_size_arr) + 3.5 * np.std(ask_size_arr)
+        elif bid_sum > ask_sum:
+            max_size = np.mean(ask_size_arr) + 3 * np.std(ask_size_arr)
+
+        for i in range(0, len(ask_size_arr)):
+            size = ask_size_arr[i]
             if i > 0:
                 price = price_arr[i-1]
             else:
                 price = price_arr[0]
             if size > max_size:
                 return price
-        return None
+        return price_arr[-1]
 
 
     def get_top_order(self, side, refresh=True):
@@ -332,11 +349,11 @@ class Product:
         # Update still open orders
         open_orders = self.get_open_orders()
         open_ids = []
-        for x in open_orders:
-            if type(x) == dict:
-                open_ids.append(x['id'])
         for order in open_orders:
+            if type(order) != dict:
+                continue
             id = order['id']
+            open_ids.append(id)
             # Check to ensure the order was placed by this bot
             if (not id in self.orders['buy'].keys()) or (not id in self.orders['sell'].keys()):
                 side = order['side']

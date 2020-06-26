@@ -34,7 +34,7 @@ from CryptoBot.CryptoBot_Shared_Functions import current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import print_err_msg
 from CryptoBot.CryptoBot_Shared_Functions import offset_current_est_time
 from CryptoBot.CryptoBot_Shared_Functions import convert_coinbase_timestr_to_timestamp
-from CryptoBot.CryptoBot_Shared_Functions import calculate_spread
+from CryptoBot.CryptoBot_Shared_Functions import calculate_spread, safe_get
 from CryptoBot.CryptoBot_Shared_Functions import save_file_to_dropbox, private_pause
 from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PRIVATE_SLEEP, MIN_PORTFOLIO_VALUE, TRADE_LEN, PRIVATE_SLEEP_QUEQUE, OPEN_ORDERS
 from CryptoPredict.CryptoPredict import CryptoCompare
@@ -1100,10 +1100,10 @@ class PSMPredictBot(PSMSpreadBot):
                 self.orders.at[id,'size'] = self.orders.loc[id]['filled_size']
                 self.cancel_single_order(id)
 
-    def place_order_for_nth_currency(self, buy_price, sell_price, wallet, size, std, mu, top_sym):
+    def place_order_for_nth_currency(self, buy_price, sell_price, wallet, size, std, mu, top_sym, err=None):
         # This method creates placeholder orders
         spread = calculate_spread(buy_price, sell_price)
-        self.place_holder_orders[top_sym]['buy'] = {'price':buy_price, 'size':size, 'time':time(), 'spread':spread}
+        self.place_holder_orders[top_sym]['buy'] = {'price':buy_price, 'size':size, 'time':time(), 'spread':spread, 'error':err}
         print('\n' + top_sym + ' Chosen as best buy')
         print('watching\n' + 'price: ' + num2str(buy_price,
                                                       wallet.product.usd_decimal_num) + '\n' + 'size: ' + num2str(
@@ -1454,7 +1454,7 @@ class PredictBot(PSMPredictBot):
                 new_sell_price, _, _, _, _ = self.determine_trade_price(sym, 1, side='sell', max_predict_len=NEAR_PREDICTION_LEN)
                 product = self.portfolio.wallets[sym].product
 
-                if (new_sell_price is None) or (old_err < new_err):
+                if (new_sell_price is None) or ((old_err < new_err) and (not (time() - order_time) > 6*ORDER_TIMEOUT)):
                     continue
 
                 # Check if new price will still make a profit
@@ -1467,12 +1467,11 @@ class PredictBot(PSMPredictBot):
                 # Don't move the sell price above a whale order
                 if (new_spread > current_spread) and (new_spread >= max_spread):
                     continue
-                # Don't cancel the old order if the new order is identical
-                elif (new_spread == current_spread):
-                    continue
-
                 if new_spread < MIN_SPREAD:
                     new_spread = MIN_SPREAD
+                # Don't cancel the old order if the new order is identical
+                if np.isclose(new_spread, current_spread, atol=1e-5):
+                    continue
 
                 self.cancel_single_order(id, remove_index=True)
                 self.orders.at[corresponding_id, 'spread'] = new_spread
@@ -1499,21 +1498,31 @@ class PredictBot(PSMPredictBot):
 
         # Periodically check to see if the price is near the purchase price
         q = self.queque_dict[sym]
-        order_data = q.get()
+        order_data = safe_get(q, time_out, sym + ' initial get timeout')
+        if order_data is None:
+            return
         price = float(order_data['price'])
         print('Watching ' + sym + ' for buy trigger')
         sleep(0.01)
         while (price > nominal_price) and ((time() - t0) < time_out):
-            order_data = q.get()
+            order_data = safe_get(q, time_out, sym + ' trigger get timeout')
+            if order_data is None:
+                return
             price = float(order_data['price'])
             # print('trigger ' + sym + ' price: ' + num2str(price))
+        if (time() - t0) >= time_out:
+            print(sym + ' watch timeout')
+            sleep(0.01)
+            return
 
         print('Watching ' + sym + ' for bounce')
         sleep(0.01)
         # Periodically check to see if the price has risen
         while (price_bounce_tracker < 2) and ((time() - t0) < time_out):
             last_price = price
-            order_data = q.get()
+            order_data = safe_get(q, time_out, sym + ' bounce get timeout')
+            if order_data is None:
+                return
             price = float(order_data['price'])
             # print('bounce ' + sym + ' price: ' + num2str(price))
 
@@ -1524,7 +1533,7 @@ class PredictBot(PSMPredictBot):
                 price_bounce_tracker -= 1
 
         # If the conditions were not met, don't place a buy order
-        if (time() - t0) > time_out:
+        if (time() - t0) >= time_out:
             print(sym + ' watch timeout')
             sleep(0.01)
             return
@@ -1553,7 +1562,9 @@ class PredictBot(PSMPredictBot):
         # Scale the size based on the new price
         size = (nominal_price * nominal_size) / limit_price
         # Only buy the determined size if it's less than available, else buy all available
-        available = available_queue.get() # get the available amount of crypto from the queue, this also pauses any other thread trying to place an order (and therefore change the amount available
+        available = safe_get(available_queue, time_out, sym + ' available get timeout') # get the available amount of crypto from the queue, this also pauses any other thread trying to place an order (and therefore change the amount available
+        if available is None:
+            return
         if size * (limit_price * (1 + tkr_fee)) > available:
             size = available / (limit_price * (1 + tkr_fee))
 
@@ -1569,7 +1580,7 @@ class PredictBot(PSMPredictBot):
             print(sym + ' buy Order placed\n')
             sleep(0.01)
             for i in range(0, 10):
-                self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'])
+                self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'], err=order['error'])
                 if order_id in self.orders.index:
                     break
                 else:
@@ -1580,6 +1591,7 @@ class PredictBot(PSMPredictBot):
             com_wallet.update_value()
             available = com_wallet.get_amnt_available('buy')
             available_queue.put(available)
+            print('available queue filled by ' + sym)
         return
 
     def continuous_sell(self, time_out):
@@ -1612,9 +1624,9 @@ class PredictBot(PSMPredictBot):
                 sym_threads.append(current_sym_thread)
 
             for current_thread in sym_threads:
-                current_thread.join(timeout=time_out)
+                current_thread.join()
             self.stop_listening()
-        sell_thread.join(timeout=time_out)
+        sell_thread.join()
 
     def determine_trade_price(self, sym, usd_available, side, mean_multiplier=1, max_predict_len=TRADE_LEN):
         _, _, coeff = self.get_side_depedent_vars(side)
@@ -1717,7 +1729,7 @@ class PredictBot(PSMPredictBot):
                 size = size / (1 + tkr_fee)
 
                 # Place order
-                self.place_order_for_nth_currency(buy_price, sell_price, wallet, size, std, mu, top_sym)
+                self.place_order_for_nth_currency(buy_price, sell_price, wallet, size, std, mu, top_sym, err=self.errors[top_sym])
                 self.portfolio.update_value()
             else:
                 break
