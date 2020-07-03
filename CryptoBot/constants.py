@@ -6,10 +6,10 @@ PRIVATE_SLEEP = 0.21
 MIN_PORTFOLIO_VALUE = 50 # This is the value that will trigger the bot to stop trading
 TRADE_LEN = 120 # This is the amount of time I desire for trades to be filled in
 OPEN_ORDERS = None
-PRIVATE_SLEEP_QUEQUE = Queue()
-PRIVATE_SLEEP_QUEQUE.put(0)
-PUBLIC_SLEEP_QUEQUE = Queue()
-PUBLIC_SLEEP_QUEQUE.put(0)
+PRIVATE_SLEEP_QUEUE = Queue()
+PRIVATE_SLEEP_QUEUE.put(0)
+PUBLIC_SLEEP_QUEUE = Queue()
+PUBLIC_SLEEP_QUEUE.put(0)
 
 EXCHANGE_CONSTANTS = {
  'LINK-USD':{'base order min': 1.0, 'base resolution': 2, 'resolution': 5, 'avoid': False},

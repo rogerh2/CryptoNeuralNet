@@ -7,9 +7,9 @@ from itertools import islice
 from itertools import compress
 from time import sleep
 from time import time
-from CryptoBot.CryptoBot_Shared_Functions import num2str, str_list_to_timestamp, private_pause, public_pause
+from CryptoBot.CryptoBot_Shared_Functions import num2str, str_list_to_timestamp, private_pause, public_pause, print_err_msg
 from typing import Dict
-from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PUBLIC_SLEEP, PRIVATE_SLEEP, TRADE_LEN, PRIVATE_SLEEP_QUEQUE, PUBLIC_SLEEP_QUEQUE, OPEN_ORDERS
+from CryptoBot.constants import EXCHANGE_CONSTANTS, QUOTE_ORDER_MIN, PUBLIC_SLEEP, PRIVATE_SLEEP, TRADE_LEN, PRIVATE_SLEEP_QUEUE, PUBLIC_SLEEP_QUEUE, OPEN_ORDERS
 
 
 
@@ -68,7 +68,7 @@ class Product:
     def get_current_book(self):
         public_pause()
         order_book = self.pub_client.get_product_order_book(self.product_id, level=2)
-        PUBLIC_SLEEP_QUEQUE.put(time() + PUBLIC_SLEEP)
+        PUBLIC_SLEEP_QUEUE.put(time() + PUBLIC_SLEEP)
         ts = time()
         if not ('bids' in order_book.keys()):
             print('Get order book error, the returned dict is: ' + str(order_book))
@@ -124,7 +124,7 @@ class Product:
             for i in range(0, 10):
                 public_pause()
                 recent_fills = list(islice(self.pub_client.get_product_trades(product_id=self.product_id), fill_number))
-                PUBLIC_SLEEP_QUEQUE.put(time() + PUBLIC_SLEEP)
+                PUBLIC_SLEEP_QUEUE.put(time() + PUBLIC_SLEEP)
                 if 'message' in recent_fills:
                     sleep(1)
                 else:
@@ -322,7 +322,7 @@ class Product:
             order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only, time_in_force='GTT', cancel_after='hour')
         else:
             order_info = self.auth_client.place_limit_order(product_id=self.product_id, side=side, price=price_str, size=size_str, post_only=post_only)
-        PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+        PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
 
         if type(order_info) == dict:
             if "price" in order_info.keys():
@@ -338,7 +338,7 @@ class Product:
         if OPEN_ORDERS is None:
             private_pause()
             orders = list(self.auth_client.get_orders(self.product_id))
-            PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+            PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
         else:
             orders = []
             for order in OPEN_ORDERS:
@@ -425,12 +425,12 @@ class CombinedPortfolio:
             api_base = 'https://api-public.sandbox.pro.coinbase.com'
             private_pause()
             auth_client = cbpro.AuthenticatedClient(api_key, secret_key, passphrase, api_url=api_base)
-            PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+            PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
             pub_client = cbpro.PublicClient(api_url=api_base)
         else:
             private_pause()
             auth_client = cbpro.AuthenticatedClient(api_key, secret_key, passphrase)
-            PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+            PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
             pub_client = cbpro.PublicClient()
 
         self.auth = auth_client
@@ -503,7 +503,7 @@ class CombinedPortfolio:
     def remove_order(self, id):
         private_pause()
         self.auth.cancel_order(id)
-        PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+        PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
 
     def update_value(self):
         wallet = self.get_common_wallet()
@@ -516,16 +516,20 @@ class CombinedPortfolio:
     def get_fee_rate(self):
         private_pause()
         fee_rates = self.auth._send_message('get', '/fees')
-        PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+        PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
         maker_rate = float(fee_rates['maker_fee_rate'])
         taker_rate = float(fee_rates['taker_fee_rate'])
         return maker_rate, taker_rate
 
     def get_all_open_orders(self):
+        orders = None
         if OPEN_ORDERS is None:
             private_pause()
-            orders = list(self.auth.get_orders())
-            PRIVATE_SLEEP_QUEQUE.put(time() + PRIVATE_SLEEP)
+            try:
+                orders = list(self.auth.get_orders())
+            except Exception as e:
+                print_err_msg('Failed to get open orders', e, 0)
+            PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
         else:
             orders = OPEN_ORDERS
         return orders

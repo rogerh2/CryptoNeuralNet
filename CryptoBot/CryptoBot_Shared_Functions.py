@@ -7,7 +7,7 @@ import sys
 import keras
 import pickle
 import pandas as pd
-from CryptoBot.constants import PRIVATE_SLEEP_QUEQUE, PUBLIC_SLEEP_QUEQUE, PRIVATE_SLEEP, PUBLIC_SLEEP
+from CryptoBot.constants import PRIVATE_SLEEP_QUEUE, PUBLIC_SLEEP_QUEUE, PRIVATE_SLEEP, PUBLIC_SLEEP
 from CryptoPredict.CryptoPredict import CryptoCompare
 from tzlocal import get_localzone
 from datetime import datetime
@@ -188,27 +188,28 @@ def zero(data):
 def nth_max_ind(arr, n=1):
     return arr.argsort()[::-1][n-1]
 
-def private_pause():
-    time_till_run = PRIVATE_SLEEP_QUEQUE.get()
-    t0 = time()
-    sleep_time = np.min(np.array([time_till_run - t0, PRIVATE_SLEEP]))
-    if sleep_time > 0:
-        sleep(time_till_run - t0)
-
-def public_pause():
-    time_till_run = PUBLIC_SLEEP_QUEQUE.get()
-    t0 = time()
-    sleep_time = np.min(np.array([time_till_run-t0, PUBLIC_SLEEP]))
-    if sleep_time > 0:
-        sleep(time_till_run-t0)
-
-
 def safe_get(q : Queue, timeout, msg):
     try:
         return q.get(timeout=timeout)
     except:
         print(msg)
         return
+
+def queue_pause(q, max_timeout, queue_type):
+    time_till_run = safe_get(q, max_timeout, '\n' + queue_type + ' Queue Timeout\n')
+    sleep_time = max_timeout
+    if time_till_run:
+        t0 = time()
+        sleep_time = np.min(np.array([time_till_run - t0, max_timeout]))
+    if sleep_time > 0:
+        sleep(sleep_time)
+
+def private_pause():
+    queue_pause(PRIVATE_SLEEP_QUEUE, PRIVATE_SLEEP, 'Private')
+
+
+def public_pause():
+    queue_pause(PUBLIC_SLEEP_QUEUE, PUBLIC_SLEEP, 'Public')
 
 
 def nth_max_peaks(arr, n=1):
