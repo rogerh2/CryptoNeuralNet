@@ -26,6 +26,7 @@ from keras.layers import Dropout
 from queue import Queue
 
 
+QUEUE_WAIT_TIME = 120
 
 def num2str(num, digits=2, round_down=True):
     # This function formats numbers as strings with the desired number of digits
@@ -196,7 +197,7 @@ def safe_get(q : Queue, timeout, msg):
         return
 
 def queue_pause(q, max_timeout, queue_type):
-    time_till_run = safe_get(q, max_timeout, '\n' + queue_type + ' Queue Timeout\n')
+    time_till_run = safe_get(q, QUEUE_WAIT_TIME, '\n' + queue_type + ' Queue Timeout\n')
     sleep_time = max_timeout
     if time_till_run:
         t0 = time()
