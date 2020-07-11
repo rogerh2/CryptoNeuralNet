@@ -1806,6 +1806,8 @@ class PredictBot(PSMPredictBot):
                         err_counter = print_err_msg(' complete main loop', e, err_counter)
 
         print('Loop END')
+        portfolio_tracker.move_data_to_drop_box(mk_new_dir=False)
+        print('Portfolio Data moved to DropBox\n')
 
 class PortfolioTracker:
 
@@ -1906,7 +1908,7 @@ class PortfolioTracker:
 
         return portfolio_value
 
-    def move_data_to_drop_box(self):
+    def move_data_to_drop_box(self, mk_new_dir=True):
         global SAVED_DATA_FILE_PATH
 
         # Define the dropbox path
@@ -1929,7 +1931,7 @@ class PortfolioTracker:
         os.rmdir(SAVED_DATA_FILE_PATH)
         SAVED_DATA_FILE_PATH = portfolio_file_path_generator()
 
-        if not os.path.exists(SAVED_DATA_FILE_PATH):
+        if (not os.path.exists(SAVED_DATA_FILE_PATH)) and (mk_new_dir):
             os.mkdir(SAVED_DATA_FILE_PATH)
 
 def run_bot(bot_type='psm'):
