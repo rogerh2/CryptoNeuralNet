@@ -75,7 +75,7 @@ if not os.path.exists(SAVED_DATA_FILE_PATH):
     os.mkdir(SAVED_DATA_FILE_PATH)
 else:
     override_saved_data = input('Override data in current saved data folder? (yes/no)' )
-    if override_saved_data != 'yes': # TODO change to allow inclusion of a new file name (also print old one)
+    if override_saved_data != 'yes':
         raise ValueError('Folder for saved plots already taken')
 
 OPEN_ORDERS = None
@@ -696,7 +696,6 @@ class SpreadBot(Bot):
             else:
                 print('\nSell Order placed')
 
-# TODO complete PSMBot
 class PSMSpreadBot(SpreadBot):
     # class variables
     # propogator: the object that predicts future prices
@@ -890,12 +889,12 @@ class PSMSpreadBot(SpreadBot):
             ranking_dict[sym] = (spread, mu, buy_price, wallet, std, rank, size)
 
         # sort (by mean first then standard deviation)
-        sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True) #TODO check if ranking highest value first or lowest
+        sorted_syms = sorted(ranking_dict.items(), key=itemgetter(1), reverse=True)
 
         return sorted_syms
 
     def cancel_old_orders(self):
-        # TODO make it such that buy_cancel_times updates when an order is placed
+
         for sym in self.symbols:
             # Timed out orders
             self.cancel_timed_out_orders('buy', self.buy_cancel_times[sym] * 60, sym)
@@ -935,7 +934,15 @@ class PSMPredictBot(PSMSpreadBot):
         product = self.portfolio.wallets[sym].product
 
         if refresh:
-            product.update_orders()
+            refresh_err_count = 0
+            for i in range(0, 10):
+                try:
+                    product.update_orders()
+                except Exception as e:
+                    refresh_err_count = print_err_msg('Order refresh', e, refresh_err_count)
+                    if i==9:
+                        print(sym + ' order id ' + id + ' did not save')
+
         order = None
 
         # If the id is in the stored orders grab the data
@@ -943,22 +950,25 @@ class PSMPredictBot(PSMSpreadBot):
             order = product.orders[side][id]
         # If the id is for a buy order check past data as well
         elif side == 'buy':
-            try:
-                private_pause()
-                order = product.auth_client.get_order(id)
-                PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
-                # Check if the buy order has already been taken care of
-                if 'filled_size' not in order.keys():
-                    print(sym + ' removed from tracking due to ' + order['message'] + '\n')
-                    order = None
-                else:
-                    size = float(order['filled_size'])
-                    if np.abs(float(corresponding_buy_id) - size) <= 2 * self.portfolio.wallets[sym].product.crypto_res:
+            err_count = 0
+            for i in range(0, 10):
+                try:
+                    private_pause()
+                    order = product.auth_client.get_order(id)
+                    PRIVATE_SLEEP_QUEUE.put(time() + PRIVATE_SLEEP)
+                    # Check if the buy order has already been taken care of
+                    if 'filled_size' not in order.keys():
+                        print(sym + ' removed from tracking due to ' + order['message'] + '\n')
                         order = None
-                        order = None
-            except Exception as e:
-                _ = print_err_msg('find new data', e, 1)
-                order = None
+                    else:
+                        size = float(order['filled_size'])
+                        if np.abs(float(corresponding_buy_id) - size) <= 2 * self.portfolio.wallets[sym].product.crypto_res:
+                            order = None
+                    break
+                except Exception as e:
+                    err_count = print_err_msg('Add order', e, err_count)
+                    if i==9:
+                        print(sym + ' order id ' + id + ' did not save')
         # Add the order info to the dataframe
         if (order is not None) and ('message' not in order.keys()):
             new_row_str_headers = ['product_id', 'side']
@@ -997,7 +1007,9 @@ class PSMPredictBot(PSMSpreadBot):
             stored_ids = self.orders.index
             if (id in stored_ids):
                 self.orders = self.orders.drop(id)
+
         self.add_order(id, sym, side, place_time, corresponding_buy_id, spread=spread, err=err)
+
         # Check if a sell order was cancelled, if so add its size to the buy irder corresponding order
         stored_ids = self.orders.index
         if (id not in stored_ids) and (corresponding_buy_id in stored_ids):
@@ -1157,14 +1169,9 @@ class PSMPredictBot(PSMSpreadBot):
                     print(sym + ' buy Order rejected\n')
                 else:
                     print(sym + ' buy Order placed\n')
-                    for i in range(0, 10):
-                        self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'], err=self.errors[sym])
-                        if order_id in self.orders.index:
-                            break
-                        else:
-                            sleep(5)
-                    if i == 9:
-                        print(sym + ' order id ' + order_id + ' did not save')
+
+                    self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'], err=self.errors[sym])
+
                     self.place_holder_orders[sym]['buy'] = None
                     com_wallet.update_value()
                     available = com_wallet.get_amnt_available('buy')
@@ -1295,6 +1302,7 @@ class PSMPredictBot(PSMSpreadBot):
             print('\nSell Order placed\n')
             # Do not refresh the orders just in case the sell order was filled immediately
             self.add_order(order_id, sym, 'sell', time(), buy_id, refresh=False, err=self.orders.loc[buy_id]['error'])
+
 
         return order_id
 
@@ -1577,14 +1585,9 @@ class PredictBot(PSMPredictBot):
             else:
                 print(sym + ' buy Order placed\n')
                 sleep(0.01)
-                for i in range(0, 10):
-                    self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'], err=order['error'])
-                    if order_id in self.orders.index:
-                        break
-                    else:
-                        sleep(5)
-                if i == 9:
-                    print(sym + ' order id ' + order_id + ' did not save')
+
+                self.add_order(order_id, sym, 'buy', time(), 0, spread=order['spread'], err=order['error'])
+
                 self.place_holder_orders[sym]['buy'] = None
                 com_wallet.update_value()
                 available = com_wallet.get_amnt_available('buy')
