@@ -82,7 +82,7 @@ OPEN_ORDERS = None
 
 class LiveRunSettings:
 
-    settings = {'portfolio value offset':None, 'minnimum_spread':MIN_SPREAD, 'std':2, 'buy std':0.85, 'sell std':1}
+    settings = {'portfolio value offset':None, 'minnimum_spread':MIN_SPREAD, 'std':2, 'buy std':0.85, 'sell std':1, "full stop":0}
 
     def __init__(self, settings_file_path):
         self.fname = settings_file_path
@@ -124,7 +124,7 @@ class Bot:
     settings = LiveRunSettings(SETTINGS_FILE_PATH)
     spread = 1.01
 
-    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD'):
+    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD', add_all_syms_to_settings=True):
         # strategy is a class that tells to bot to either buy or sell or hold, and at what price to do so
         self.settings.update_settings()
         self.min_spread = MIN_SPREAD
@@ -134,11 +134,12 @@ class Bot:
         self.current_price = {}
         self.spread_price_limits = {}
 
-        for sym in syms:
-            current_sell = self.settings.read_setting_from_file(sym + ' limit sell')
-            current_buy = self.settings.read_setting_from_file(sym + ' limit buy')
-            self.current_price[sym] = {'asks': None, 'bids': None}
-            self.spread_price_limits[sym] = {'sell': current_sell, 'buy': current_buy}
+        if add_all_syms_to_settings:
+            for sym in syms:
+                current_sell = self.settings.read_setting_from_file(sym + ' limit sell')
+                current_buy = self.settings.read_setting_from_file(sym + ' limit buy')
+                self.current_price[sym] = {'asks': None, 'bids': None}
+                self.spread_price_limits[sym] = {'sell': current_sell, 'buy': current_buy}
 
     def update_current_prices(self):
         for side in ['asks', 'bids']:
@@ -702,8 +703,8 @@ class PSMSpreadBot(SpreadBot):
     # predicted_prices: this contains the max, min, standard deviation of prices, and the mean offset for the true and predicted prices
     # del_len: the number of samples to average over for the price
 
-    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD', slope_avg_len=5, train_len=480):
-        super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
+    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD', slope_avg_len=5, train_len=480, add_all_syms_to_settings=True):
+        super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency, add_all_syms_to_settings=add_all_syms_to_settings)
         raw_data = {}
         self.fmt = '%Y-%m-%d %H:%M:%S %Z'
         self.train_len = train_len
@@ -901,8 +902,8 @@ class PSMSpreadBot(SpreadBot):
 
 class PSMPredictBot(PSMSpreadBot):
 
-    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv'):
-        super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency)
+    def __init__(self, api_key, secret_key, passphrase, syms=SYMBOLS, is_sandbox_api=False, base_currency='USD', order_csv_path = './orders_tracking.csv', add_all_syms_to_settings=False):
+        super().__init__(api_key, secret_key, passphrase, syms, is_sandbox_api, base_currency, add_all_syms_to_settings=add_all_syms_to_settings)
         # Read dataframe from file if it exists and use that to initialize the product orders as well
         if order_csv_path is None:
             self.orders = pd.DataFrame(columns=['product_id', 'side', 'price', 'size', 'filled_size', 'corresponding_order', 'time', 'spread', 'error'])
@@ -1796,6 +1797,11 @@ class PredictBot(PSMPredictBot):
 
                     err_counter = 0
 
+                    end_loop = int(self.settings.settings['full stop'])
+                    if end_loop:
+                        print('User commanded full stop\n')
+                        break
+
                 except Exception as e:
                     if type(e) == JSONDecodeError:
                         print_err_msg(' get data', e, 0)
@@ -1805,9 +1811,9 @@ class PredictBot(PSMPredictBot):
                     else:
                         err_counter = print_err_msg(' complete main loop', e, err_counter)
 
-        print('Loop END')
+        print('Loop END\n')
         portfolio_tracker.move_data_to_drop_box(mk_new_dir=False)
-        print('Portfolio Data moved to DropBox\n')
+        print('Portfolio Data moved to DropBox')
 
 class PortfolioTracker:
 

@@ -3,6 +3,7 @@ matplotlib.use('Agg')
 from queue import Queue
 import cbpro
 import numpy as np
+import warnings
 from itertools import islice
 from itertools import compress
 from time import sleep
@@ -380,7 +381,12 @@ class Wallet:
 
     def get_wallet_values(self, currency, data):
         # Data should come from self.auth_client.get_accounts()
-        ind = [acc["currency"] == currency for acc in data]
+        ind = []
+        for acc in data:
+            if type(acc) is str:
+                print('WARNING: string found in account data: ' + acc)
+                continue
+            ind.append(acc["currency"] == currency)
         wallet = data[ind.index(True)]
         balance = wallet["balance"]
         hold_balance = wallet["hold"]
