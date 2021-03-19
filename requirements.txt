@@ -42,7 +42,7 @@ opt-einsum==3.2.1
 pandas==1.0.3
 pandastable==0.12.2.post1
 pathos==0.2.3
-Pillow==7.1.2
+Pillow==8.1.1
 pox==0.2.5
 ppft==1.6.4.9
 protobuf==3.11.3
