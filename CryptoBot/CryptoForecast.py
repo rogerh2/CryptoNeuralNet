@@ -348,7 +348,7 @@ class FormattedData:
 
              else:
                  current_scrape = current_scrape.drop(['date'], axis=1)
-                 self.raw_data = pd.concat([self.raw_data, current_scrape], axis=1, join_axes=[self.raw_data.index])
+                 self.raw_data = pd.concat([self.raw_data, current_scrape], axis=1).reindex(current_scrape.index)
 
         if 'BTC' in self.sym_list:
             self.raw_news = news_scraper.iteratively_scrape_news(self.sym_list)
@@ -405,7 +405,7 @@ class FormattedData:
 
         sentiment_col, count_col = self.collect_news_counts_and_sentiments()
         news_data_frame = pd.DataFrame({'Sentiment':sentiment_col, 'Count':count_col})
-        self.raw_data = pd.concat([self.raw_data, news_data_frame], axis=1, join_axes=[news_data_frame.index])\
+        self.raw_data = pd.concat([self.raw_data, news_data_frame], axis=1).reindex(news_data_frame.index)
 
     def str_list_to_timestamp(self, datetime_str_list):
         fmt = '%Y-%m-%dT%H:%M:%S.%fZ'
@@ -487,7 +487,7 @@ class FormattedData:
         temp_input_arr = self.raw_data.drop(columns='date').values
         temp_input_arr = temp_input_arr[0:-(forecast_offset), ::]
         temp_input_arr = scaler.fit_transform(temp_input_arr)
-        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], 1, temp_input_arr.shape[1])
 
         # Create x labels (which are datetime objects)
         x_labels = self.raw_data.date.values[forecast_offset::]
@@ -515,7 +515,7 @@ class FormattedData:
         scaler = StandardScaler()
         temp_input_arr = self.raw_data.drop(columns='date').values
         temp_input_arr = scaler.fit_transform(temp_input_arr)
-        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], 1, temp_input_arr.shape[1])
 
         return input_arr
 
@@ -786,7 +786,7 @@ class FormattedCoinbaseProData:
 
         # Use standard scalar on input
         temp_input_arr = scaler.fit_transform(temp_input_arr)
-        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+        input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], 1, temp_input_arr.shape[1])
 
         return output_vec, input_arr, x_labels
 
@@ -830,7 +830,7 @@ class FormattedCoinbaseProData:
 
         elif data_type == 'forecast':
             _, temp_input_arr = self.normalize_fill_array_and_order_book()
-            input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], temp_input_arr.shape[1], 1)
+            input_arr = temp_input_arr.reshape(temp_input_arr.shape[0], 1, temp_input_arr.shape[1])
             pred_data['input'] = input_arr
 
         return pred_data
@@ -1240,12 +1240,12 @@ def increase_saved_dataset_length(original_ds_path, sym, date_to=None, forecast_
 
 if __name__ == '__main__':
 
-    obj_type = 'CoinFillModel'
+    obj_type = 'CoinPriceModel'
 
     # For CoinPriceModel
     if obj_type == 'CoinPriceModel':
         should_use_existing_data_set_path = False
-        should_use_existing_model = True
+        should_use_existing_model = False
         file_name = None
         model_path = None
 
@@ -1254,9 +1254,9 @@ if __name__ == '__main__':
         if should_use_existing_model:
             model_path = '/Users/rjh2nd/PycharmProjects/CryptoNeuralNet/CryptoBot/Models/BTC/BTCmodel_3layers_30min_leakyreluact_adamopt_mean_absolute_percentage_errorloss_92neurons_2epochs1545192453.197662.h5'
 
-        date_from = '2018-12-18_20:00:00'.replace('_', ' ')
-        date_to = '2019-01-01_09:11:00'.replace('_', ' ')
-        sym_list = ['BTC']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
+        date_from = '2021-10-26_20:00:00'.replace('_', ' ')
+        date_to = '2021-10-26_09:11:00'.replace('_', ' ')
+        sym_list = ['ETH']#['BCH', 'BTC', 'ETC', 'ETH', 'LTC', 'ZRX']
 
         for sym in sym_list:
             model_obj = CryptoPriceModel(date_from, date_to, sym, forecast_offset=30, model_path=model_path)
